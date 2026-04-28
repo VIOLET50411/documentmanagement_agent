@@ -1,0 +1,76 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.python-version
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Environment variables
+.env
+.env.local
+.env.production
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node
+node_modules/
+frontend/dist/
+.npm/
+
+# Docker
+docker-compose.override.yml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+*.pid
+
+# Data
+data/
+uploads/
+backend/runtime/
+reports/
+backend/reports/
+
+# Coverage
+htmlcov/
+.coverage
+.pytest_cache/
+coverage/
+
+# Alembic
+alembic/versions/*.pyc
+
+# Local environment and generated state
+backend/celerybeat-schedule
+backend/68.0.0
+.env.*.local
+
+# Local planning / debugging artifacts
+task_plan.md
+progress.md
+findings.md
+bad_upload.txt
+blocked_chat.json
+chat_request*.json
+tmp_upload*.csv

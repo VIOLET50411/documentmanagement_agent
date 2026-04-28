@@ -1,0 +1,81 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Lint backend
+        run: ruff check app tests
+      - name: Run backend tests
+        run: pytest
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Build frontend
+        run: npm run build
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Prepare env
+        run: cp .env.example .env
+      - name: Start stack
+        run: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+      - name: Wait backend healthy
+        run: |
+          for i in {1..60}; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health || true)
+            if [ "$code" = "200" ]; then
+              echo "backend ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "backend not ready in time"
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml logs backend --tail 200
+          exit 1
+      - name: Install gate dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install httpx
+      - name: Run smoke e2e
+        run: python scripts/smoke_e2e.py --base-url http://localhost:8000
+      - name: Run delivery gate
+        run: python scripts/ci_gate.py --base-url http://localhost:8000
+      - name: Dump compose status
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.dev.yml ps
+      - name: Teardown
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.dev.yml down -v

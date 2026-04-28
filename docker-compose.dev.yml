@@ -1,0 +1,180 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    container_name: docmind-backend
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      MILVUS_HOST: milvus
+      ES_HOST: elasticsearch
+      NEO4J_URI: bolt://neo4j:7687
+      MINIO_ENDPOINT: minio:9000
+      LLM_PROVIDER: ollama
+      LLM_API_BASE_URL: http://ollama:11434/v1
+      EMBEDDING_PROVIDER: ollama
+      EMBEDDING_API_BASE_URL: http://ollama:11434/v1
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      CLAMAV_ENABLED: "true"
+      CLAMAV_FAIL_CLOSED: "true"
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: "3310"
+      GUARDRAILS_SIDECAR_URL: http://guardrails-sidecar:8090
+      RAGAS_API_BASE_URL: http://ragas-sidecar:8091
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ./backend:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${BACKEND_WORKERS:-4}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      clamav:
+        condition: service_started
+      ollama:
+        condition: service_started
+      guardrails-sidecar:
+        condition: service_started
+      ragas-sidecar:
+        condition: service_started
+
+  celery-worker:
+    build:
+      context: ./backend
+    container_name: docmind-celery-worker
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      MILVUS_HOST: milvus
+      ES_HOST: elasticsearch
+      NEO4J_URI: bolt://neo4j:7687
+      MINIO_ENDPOINT: minio:9000
+      LLM_PROVIDER: ollama
+      LLM_API_BASE_URL: http://ollama:11434/v1
+      EMBEDDING_PROVIDER: ollama
+      EMBEDDING_API_BASE_URL: http://ollama:11434/v1
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      CLAMAV_ENABLED: "true"
+      CLAMAV_FAIL_CLOSED: "true"
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: "3310"
+      GUARDRAILS_SIDECAR_URL: http://guardrails-sidecar:8090
+      RAGAS_API_BASE_URL: http://ragas-sidecar:8091
+    volumes:
+      - ./backend:/app
+    command: celery -A celery_app worker --loglevel=info --autoscale=8,2 -Q default,ingestion,reindex,maintenance
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+      clamav:
+        condition: service_started
+      ollama:
+        condition: service_started
+      guardrails-sidecar:
+        condition: service_started
+      ragas-sidecar:
+        condition: service_started
+
+  celery-beat:
+    build:
+      context: ./backend
+    container_name: docmind-celery-beat
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      MILVUS_HOST: milvus
+      ES_HOST: elasticsearch
+      NEO4J_URI: bolt://neo4j:7687
+      MINIO_ENDPOINT: minio:9000
+      EMBEDDING_PROVIDER: ollama
+      EMBEDDING_API_BASE_URL: http://ollama:11434/v1
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      CLAMAV_ENABLED: "true"
+      CLAMAV_FAIL_CLOSED: "true"
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: "3310"
+      GUARDRAILS_SIDECAR_URL: http://guardrails-sidecar:8090
+      RAGAS_API_BASE_URL: http://ragas-sidecar:8091
+    volumes:
+      - ./backend:/app
+    command: celery -A celery_app beat --loglevel=info
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+      clamav:
+        condition: service_started
+      guardrails-sidecar:
+        condition: service_started
+      ragas-sidecar:
+        condition: service_started
+
+  flower:
+    build:
+      context: ./backend
+    container_name: docmind-flower
+    env_file:
+      - .env
+    environment:
+      REDIS_HOST: redis
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    ports:
+      - "${FLOWER_PORT:-5555}:5555"
+    volumes:
+      - ./backend:/app
+    command: celery -A celery_app flower --port=5555
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: docmind-frontend
+    environment:
+      VITE_DEV_PROXY_TARGET: http://backend:8000
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: npm run dev -- --host 0.0.0.0 --port 5173
+    depends_on:
+      - backend
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: docmind-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    command: serve
+
+volumes:
+  ollama_data:
