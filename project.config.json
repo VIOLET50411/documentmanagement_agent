@@ -1,0 +1,28 @@
+{
+  "description": "DocMind 微信小程序工作区入口",
+  "miniprogramRoot": "docmind-miniapp/",
+  "setting": {
+    "es6": true,
+    "postcss": true,
+    "minified": true,
+    "uglifyFileName": false,
+    "enhance": true,
+    "packNpmRelationList": [],
+    "babelSetting": {
+      "ignore": [],
+      "disablePlugins": [],
+      "outputPath": ""
+    },
+    "useCompilerPlugins": false,
+    "minifyWXML": true
+  },
+  "compileType": "miniprogram",
+  "srcMiniprogramRoot": "docmind-miniapp/",
+  "simulatorPluginLibVersion": {},
+  "packOptions": {
+    "ignore": [],
+    "include": []
+  },
+  "appid": "wxa40cb8c61b74751f",
+  "editorSetting": {}
+}

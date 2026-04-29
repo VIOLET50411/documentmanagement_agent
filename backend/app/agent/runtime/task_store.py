@@ -31,6 +31,7 @@ class TaskRecord:
     tenant_id: str | None = None
     session_id: str | None = None
     stage: str | None = None
+    stage_payload: dict[str, Any] | None = None
     error: str | None = None
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None).isoformat())
 
@@ -197,6 +198,8 @@ class TaskStore:
             payload = json.loads(raw)
         except json.JSONDecodeError:
             return None
+        allowed = set(TaskRecord.__dataclass_fields__.keys())
+        payload = {key: value for key, value in payload.items() if key in allowed}
         record = TaskRecord(**payload)
         self._memory[task_id] = record
         return record

@@ -1,6 +1,6 @@
 ﻿"""Database model exports."""
 
-from app.models.db.auth import EmailVerificationCode, PasswordResetToken, UserInvitation
+from app.models.db.auth import EmailVerificationCode, OAuthAuthorizationCode, PasswordResetToken, UserInvitation
 from app.models.db.base import Base as Base
 from app.models.db.document import Document as Document, DocumentChunk as DocumentChunk
 from app.models.db.feedback import Feedback as Feedback
@@ -17,6 +17,7 @@ __all__ = [
     "UserInvitation",
     "EmailVerificationCode",
     "PasswordResetToken",
+    "OAuthAuthorizationCode",
     "Document",
     "DocumentChunk",
     "Feedback",

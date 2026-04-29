@@ -1,0 +1,159 @@
+﻿"""Mobile OAuth2/OIDC service with PKCE support."""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+from datetime import datetime, timedelta, timezone
+
+from jose import jwt
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import settings
+from app.models.db.auth import OAuthAuthorizationCode
+from app.models.db.user import User
+from app.services.auth_service import AuthService
+
+
+class MobileOAuthService:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.auth_service = AuthService(db)
+
+    async def authorize(
+        self,
+        *,
+        username: str,
+        password: str,
+        client_id: str,
+        redirect_uri: str,
+        code_challenge: str,
+        code_challenge_method: str,
+        scope: str,
+        state: str | None = None,
+    ) -> OAuthAuthorizationCode:
+        self._validate_client(client_id=client_id, redirect_uri=redirect_uri)
+        user = await self.auth_service.authenticate(username, password)
+        if user is None:
+            raise ValueError("用户名或密码错误")
+
+        record = OAuthAuthorizationCode(
+            tenant_id=user.tenant_id,
+            user_id=user.id,
+            client_id=client_id,
+            redirect_uri=redirect_uri,
+            code_challenge=code_challenge,
+            code_challenge_method=code_challenge_method,
+            scope=scope or "openid profile email offline_access",
+            expires_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=max(settings.auth_mobile_authorization_code_expire_minutes, 1)),
+        )
+        self.db.add(record)
+        await self.db.flush()
+        return record
+
+    async def exchange_code(
+        self,
+        *,
+        code: str,
+        client_id: str,
+        redirect_uri: str,
+        code_verifier: str,
+    ) -> dict:
+        self._validate_client(client_id=client_id, redirect_uri=redirect_uri)
+        result = await self.db.execute(
+            select(OAuthAuthorizationCode).where(
+                OAuthAuthorizationCode.code == code,
+                OAuthAuthorizationCode.client_id == client_id,
+                OAuthAuthorizationCode.redirect_uri == redirect_uri,
+                OAuthAuthorizationCode.consumed.is_(False),
+            )
+        )
+        record = result.scalar_one_or_none()
+        if record is None or record.expires_at < datetime.now(timezone.utc).replace(tzinfo=None):
+            raise ValueError("授权码无效或已过期")
+        if not self._verify_pkce(record.code_challenge, record.code_challenge_method, code_verifier):
+            raise ValueError("PKCE 校验失败")
+
+        user_result = await self.db.execute(
+            select(User).where(User.id == record.user_id, User.tenant_id == record.tenant_id, User.is_active.is_(True))
+        )
+        user = user_result.scalar_one_or_none()
+        if user is None:
+            raise ValueError("用户不存在或已停用")
+
+        record.consumed = True
+        tokens = self.auth_service.create_tokens(user)
+        tokens["id_token"] = self._create_id_token(user=user, client_id=client_id, scope=record.scope)
+        tokens["scope"] = record.scope
+        return tokens
+
+    async def userinfo(self, user_id: str) -> dict:
+        result = await self.db.execute(select(User).where(User.id == user_id, User.is_active.is_(True)))
+        user = result.scalar_one_or_none()
+        if user is None:
+            raise ValueError("用户不存在")
+        return {
+            "sub": user.id,
+            "username": user.username,
+            "email": user.email,
+            "email_verified": bool(user.email_verified),
+            "tenant_id": user.tenant_id,
+            "role": user.role,
+            "department": user.department,
+        }
+
+    def discovery_document(self, issuer: str) -> dict:
+        issuer = issuer.rstrip("/")
+        mobile_base = f"{issuer}/api/v1/auth/mobile"
+        return {
+            "issuer": issuer,
+            "authorization_endpoint": f"{mobile_base}/authorize",
+            "token_endpoint": f"{mobile_base}/token",
+            "userinfo_endpoint": f"{mobile_base}/userinfo",
+            "jwks_uri": f"{mobile_base}/jwks",
+            "response_types_supported": ["code"],
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+            "subject_types_supported": ["public"],
+            "id_token_signing_alg_values_supported": [settings.jwt_algorithm],
+            "scopes_supported": ["openid", "profile", "email", "offline_access"],
+            "token_endpoint_auth_methods_supported": ["none"],
+            "code_challenge_methods_supported": ["S256", "plain"],
+        }
+
+    def jwks(self) -> dict:
+        return {"keys": []}
+
+    def _validate_client(self, *, client_id: str, redirect_uri: str) -> None:
+        if not settings.auth_mobile_oauth_enabled:
+            raise ValueError("移动 OAuth 未启用")
+        if client_id not in settings.auth_mobile_oauth_client_list:
+            raise ValueError("client_id 不在允许列表中")
+        if redirect_uri not in settings.auth_mobile_oauth_redirect_uri_list:
+            raise ValueError("redirect_uri 不在允许列表中")
+
+    def _verify_pkce(self, expected_challenge: str, method: str, verifier: str) -> bool:
+        if method == "plain":
+            return verifier == expected_challenge
+        if method != "S256":
+            return False
+        digest = hashlib.sha256(verifier.encode("utf-8")).digest()
+        challenge = base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
+        return challenge == expected_challenge
+
+    def _create_id_token(self, *, user: User, client_id: str, scope: str) -> str:
+        now = datetime.now(timezone.utc)
+        payload = {
+            "sub": user.id,
+            "aud": client_id,
+            "iss": settings.app_name,
+            "iat": int(now.timestamp()),
+            "exp": int((now + timedelta(minutes=settings.jwt_access_token_expire_minutes)).timestamp()),
+            "email": user.email,
+            "email_verified": bool(user.email_verified),
+            "preferred_username": user.username,
+            "tenant_id": user.tenant_id,
+            "role": user.role,
+            "scope": scope,
+        }
+        return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)

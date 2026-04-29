@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from collections.abc import Awaitable, Callable
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,9 +31,26 @@ class EvaluationService:
         self.report_generator = ReportGenerator()
         self.audit = SecurityAuditService(redis_client, db)
 
-    async def run(self, tenant_id: str, *, sample_limit: int = 100, actor: User | None = None) -> dict[str, Any]:
+    async def run(
+        self,
+        tenant_id: str,
+        *,
+        sample_limit: int = 100,
+        actor: User | None = None,
+        progress_callback: Callable[[str, dict[str, Any]], Awaitable[None] | None] | None = None,
+    ) -> dict[str, Any]:
+        await self._notify_progress(
+            progress_callback,
+            "dataset_building",
+            {"tenant_id": tenant_id, "sample_limit": max(sample_limit, 1)},
+        )
         documents = await self._load_documents(tenant_id, sample_limit=max(sample_limit, 1))
         dataset = await self.dataset_generator.generate(documents, count=max(sample_limit, 1))
+        await self._notify_progress(
+            progress_callback,
+            "evaluating",
+            {"tenant_id": tenant_id, "dataset_size": len(dataset), "document_count": len(documents)},
+        )
         metrics = await self.runner.evaluate(dataset=dataset)
         gate = self._build_gate(metrics)
 
@@ -52,6 +70,11 @@ class EvaluationService:
                 "document_count": len(documents),
             },
         }
+        await self._notify_progress(
+            progress_callback,
+            "reporting",
+            {"tenant_id": tenant_id, "dataset_size": len(dataset), "gate_passed": gate["passed"]},
+        )
         self.report_generator.generate_json_report(payload, output_path=str(json_path))
         self.report_generator.generate_markdown_report(payload, output_path=str(markdown_path))
         dataset_path.write_text(json.dumps(dataset, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -69,6 +92,11 @@ class EvaluationService:
                 "gate": gate,
                 "metrics": metrics,
             },
+        )
+        await self._notify_progress(
+            progress_callback,
+            "completed",
+            {"tenant_id": tenant_id, "dataset_size": len(dataset), "gate_passed": gate["passed"]},
         )
 
         return payload | {
@@ -167,3 +195,15 @@ class EvaluationService:
             "generated_from": {"tenant_id": None, "sample_limit": None, "document_count": None, "legacy_report": True},
             "dataset_size": metrics.get("sample_count", 0),
         }
+
+    async def _notify_progress(
+        self,
+        callback: Callable[[str, dict[str, Any]], Awaitable[None] | None] | None,
+        stage: str,
+        payload: dict[str, Any],
+    ) -> None:
+        if callback is None:
+            return
+        result = callback(stage, payload)
+        if result is not None:
+            await result

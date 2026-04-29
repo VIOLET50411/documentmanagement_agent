@@ -1,0 +1,12 @@
+<view class="page">
+  <view class="hero">
+    <view class="title">DocMind 移动入口</view>
+    <view class="subtitle">使用移动端 OAuth2 登录，访问文档检索与智能问答。</view>
+  </view>
+  <view class="form-card">
+    <input class="field" value="{{username}}" bindinput="onUsernameInput" placeholder="用户名" />
+    <input class="field" password value="{{password}}" bindinput="onPasswordInput" placeholder="密码" />
+    <button class="submit" loading="{{loading}}" bindtap="submit">登录</button>
+    <view wx:if="{{error}}" class="error">{{error}}</view>
+  </view>
+</view>

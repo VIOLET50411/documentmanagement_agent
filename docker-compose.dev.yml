@@ -24,10 +24,12 @@ services:
       CLAMAV_PORT: "3310"
       GUARDRAILS_SIDECAR_URL: http://guardrails-sidecar:8090
       RAGAS_API_BASE_URL: http://ragas-sidecar:8091
+      PUSH_FCM_SERVICE_ACCOUNT_FILE: /run/secrets/docmind/firebase-service-account.json
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
       - ./backend:/app
+      - ./secrets:/run/secrets/docmind:ro
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${BACKEND_WORKERS:-4}
     depends_on:
       postgres:
@@ -74,8 +76,10 @@ services:
       CLAMAV_PORT: "3310"
       GUARDRAILS_SIDECAR_URL: http://guardrails-sidecar:8090
       RAGAS_API_BASE_URL: http://ragas-sidecar:8091
+      PUSH_FCM_SERVICE_ACCOUNT_FILE: /run/secrets/docmind/firebase-service-account.json
     volumes:
       - ./backend:/app
+      - ./secrets:/run/secrets/docmind:ro
     command: celery -A celery_app worker --loglevel=info --autoscale=8,2 -Q default,ingestion,reindex,maintenance
     depends_on:
       redis:
@@ -116,8 +120,10 @@ services:
       CLAMAV_PORT: "3310"
       GUARDRAILS_SIDECAR_URL: http://guardrails-sidecar:8090
       RAGAS_API_BASE_URL: http://ragas-sidecar:8091
+      PUSH_FCM_SERVICE_ACCOUNT_FILE: /run/secrets/docmind/firebase-service-account.json
     volumes:
       - ./backend:/app
+      - ./secrets:/run/secrets/docmind:ro
     command: celery -A celery_app beat --loglevel=info
     depends_on:
       redis:

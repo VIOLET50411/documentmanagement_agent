@@ -24,6 +24,7 @@ class RetrievalIntegrityService:
         self.db = db
 
     async def evaluate(self, tenant_id: str, sample_size: int = 12) -> dict:
+        vector_path_required = bool(settings.hybrid_vector_enabled)
         pg_docs = int(
             await self.db.scalar(select(func.count()).select_from(Document).where(Document.tenant_id == tenant_id)) or 0
         )
@@ -125,9 +126,11 @@ class RetrievalIntegrityService:
             effective_samples = max(len([item for item in samples if self._build_probe_query(item[2], section_title=item[3], document_title=item[4])]), 1)
             es_recall = round(es_hits / effective_samples, 4)
             milvus_recall = round(milvus_hits / effective_samples, 4)
-            milvus_threshold = 0.0 if local_embedding_mode else 0.4
+            milvus_threshold = 0.0 if (local_embedding_mode or not vector_path_required) else 0.4
             milvus_check_message = (
-                "Milvus 处于本地向量降级模式时允许召回率为 0"
+                "默认检索路径未启用向量召回，Milvus 结果仅作诊断参考"
+                if not vector_path_required
+                else "Milvus 处于本地向量降级模式时允许召回率为 0"
                 if local_embedding_mode
                 else "Milvus 样本召回率需达到 40%"
             )
@@ -141,8 +144,11 @@ class RetrievalIntegrityService:
                 },
                 {
                     "id": "milvus_presence",
-                    "ok": bool(milvus_health.get("available")) and milvus_health.get("entities", 0) >= max(int(pg_chunks * 0.8), 0),
-                    "severity": "warning" if local_embedding_mode else "critical",
+                    "ok": True
+                    if not vector_path_required
+                    else bool(milvus_health.get("available")) and milvus_health.get("entities", 0) >= max(int(pg_chunks * 0.8), 0),
+                    "severity": "info" if not vector_path_required else ("warning" if local_embedding_mode else "critical"),
+                    "applicable": vector_path_required,
                     "message": "Milvus 向量量应与 PostgreSQL 分块量基本一致",
                 },
                 {
@@ -153,8 +159,9 @@ class RetrievalIntegrityService:
                 },
                 {
                     "id": "milvus_sample_recall",
-                    "ok": milvus_recall >= milvus_threshold,
-                    "severity": "warning" if local_embedding_mode else "critical",
+                    "ok": True if not vector_path_required else milvus_recall >= milvus_threshold,
+                    "severity": "info" if not vector_path_required else ("warning" if local_embedding_mode else "critical"),
+                    "applicable": vector_path_required,
                     "message": milvus_check_message,
                 },
                 {
@@ -165,9 +172,10 @@ class RetrievalIntegrityService:
                 },
             ]
 
-            blockers = [item for item in checks if not item["ok"]]
+            scored_checks = [item for item in checks if item.get("applicable", True)]
+            blockers = [item for item in scored_checks if not item["ok"]]
             critical_blockers = [item for item in blockers if item.get("severity") == "critical"]
-            score = round((len(checks) - len(blockers)) / len(checks) * 100, 2)
+            score = round((len(scored_checks) - len(blockers)) / max(len(scored_checks), 1) * 100, 2)
 
             return {
                 "score": score,
@@ -195,9 +203,12 @@ class RetrievalIntegrityService:
                         "embedding": embedding_health,
                     },
                 },
-                "mode": "local_embedding_relaxed" if local_embedding_mode else "strict_embedding",
+                "mode": "keyword_graph_default" if not vector_path_required else ("local_embedding_relaxed" if local_embedding_mode else "strict_embedding"),
             }
         finally:
+            close = getattr(es, "close", None)
+            if close is not None:
+                await close()
             neo4j.close()
 
     def _build_probe_query(self, content: str | None, *, section_title: str | None = None, document_title: str | None = None) -> str:

@@ -53,3 +53,20 @@ class PasswordResetToken(Base):
     consumed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class OAuthAuthorizationCode(Base):
+    __tablename__ = "oauth_authorization_codes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    client_id: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    redirect_uri: Mapped[str] = mapped_column(String(500), nullable=False)
+    code: Mapped[str] = mapped_column(String(128), nullable=False, unique=True, index=True, default=lambda: secrets.token_urlsafe(32))
+    code_challenge: Mapped[str] = mapped_column(String(256), nullable=False)
+    code_challenge_method: Mapped[str] = mapped_column(String(16), nullable=False, default="S256")
+    scope: Mapped[str] = mapped_column(String(255), nullable=False, default="openid profile email offline_access")
+    consumed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

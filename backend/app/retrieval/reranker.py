@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from datetime import datetime, timezone
@@ -23,6 +24,10 @@ class Reranker:
         "legal": ("\u6cd5\u52a1", "\u5408\u89c4", "\u5408\u540c", "\u76d1\u7ba1", "legal", "compliance", "contract"),
         "procurement": ("\u91c7\u8d2d", "\u4f9b\u5e94\u5546", "\u62db\u6807", "vendor", "purchase", "supplier"),
     }
+    REMOTE_CONCURRENCY_LIMIT = 4
+    REMOTE_ACQUIRE_TIMEOUT_SECONDS = 0.05
+    REMOTE_LLM_TIMEOUT_SECONDS = 1.2
+    _remote_semaphore = asyncio.Semaphore(REMOTE_CONCURRENCY_LIMIT)
 
     def __init__(self):
         self.provider = (settings.reranker_provider or "local").lower()
@@ -92,42 +97,54 @@ class Reranker:
         if not docs:
             return []
 
-        if self.provider == "llm":
-            return await self._rerank_by_llm(query, candidates, top_k, docs)
-
+        semaphore = self.__class__._remote_semaphore
+        acquired = False
         try:
-            timeout = httpx.Timeout(6.0, connect=1.0)
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                endpoint = self.base_url + "/rerank"
-                payload = {"model": self.model, "query": query, "documents": docs, "top_n": max(top_k, 1)}
-                resp = await client.post(endpoint, json=payload, headers=self._headers())
-                resp.raise_for_status()
-                data: dict[str, Any] = resp.json()
-                results = data.get("results") or data.get("data") or []
-                if not isinstance(results, list):
-                    return None
-
-                ranked: list[dict] = []
-                for row in results:
-                    if not isinstance(row, dict):
-                        continue
-                    idx = row.get("index")
-                    score = row.get("relevance_score", row.get("score", 0.0))
-                    if isinstance(idx, int) and 0 <= idx < len(candidates):
-                        item = {
-                            **candidates[idx],
-                            "rerank_score": float(score or 0.0),
-                            "source_type": candidates[idx].get("source_type", "reranker"),
-                        }
-                        ranked.append(item)
-
-                if ranked:
-                    ranked.sort(key=lambda x: x.get("rerank_score", 0.0), reverse=True)
-                    return ranked[:top_k]
+            try:
+                await asyncio.wait_for(semaphore.acquire(), timeout=self.REMOTE_ACQUIRE_TIMEOUT_SECONDS)
+                acquired = True
+            except asyncio.TimeoutError:
                 return None
-        except (httpx.HTTPError, TypeError, ValueError):
-            self._remote_circuit_open_until = time.monotonic() + 30.0
-            return None
+
+            if self.provider == "llm":
+                return await self._rerank_by_llm(query, candidates, top_k, docs)
+
+            try:
+                timeout = httpx.Timeout(6.0, connect=1.0)
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    endpoint = self.base_url + "/rerank"
+                    payload = {"model": self.model, "query": query, "documents": docs, "top_n": max(top_k, 1)}
+                    resp = await client.post(endpoint, json=payload, headers=self._headers())
+                    resp.raise_for_status()
+                    data: dict[str, Any] = resp.json()
+                    results = data.get("results") or data.get("data") or []
+                    if not isinstance(results, list):
+                        return None
+
+                    ranked: list[dict] = []
+                    for row in results:
+                        if not isinstance(row, dict):
+                            continue
+                        idx = row.get("index")
+                        score = row.get("relevance_score", row.get("score", 0.0))
+                        if isinstance(idx, int) and 0 <= idx < len(candidates):
+                            item = {
+                                **candidates[idx],
+                                "rerank_score": float(score or 0.0),
+                                "source_type": candidates[idx].get("source_type", "reranker"),
+                            }
+                            ranked.append(item)
+
+                    if ranked:
+                        ranked.sort(key=lambda x: x.get("rerank_score", 0.0), reverse=True)
+                        return ranked[:top_k]
+                    return None
+            except (httpx.HTTPError, TypeError, ValueError):
+                self._remote_circuit_open_until = time.monotonic() + 30.0
+                return None
+        finally:
+            if acquired:
+                semaphore.release()
 
     async def _rerank_by_llm(self, query: str, candidates: list[dict], top_k: int, docs: list[str]) -> list[dict] | None:
         prompt_lines = [f"query: {query}", "documents:"]
@@ -135,12 +152,19 @@ class Reranker:
             prompt_lines.append(f"{idx}. {doc[:500]}")
         prompt_lines.append("\u8f93\u51fa JSON \u6570\u7ec4\uff0c\u4ec5\u5305\u542b\u6309\u76f8\u5173\u6027\u6392\u5e8f\u7684\u6587\u6863\u7f16\u53f7\uff0c\u4f8b\u5982 [3,1,2]\u3002")
 
-        llm_text = await LLMService().generate(
-            system_prompt="\u4f60\u662f\u68c0\u7d22\u91cd\u6392\u5668\uff0c\u53ea\u8f93\u51fa JSON \u6570\u7ec4\u3002",
-            user_prompt="\\n".join(prompt_lines),
-            temperature=0.0,
-            max_tokens=200,
-        )
+        try:
+            llm_text = await asyncio.wait_for(
+                LLMService().generate(
+                    system_prompt="\u4f60\u662f\u68c0\u7d22\u91cd\u6392\u5668\uff0c\u53ea\u8f93\u51fa JSON \u6570\u7ec4\u3002",
+                    user_prompt="\\n".join(prompt_lines),
+                    temperature=0.0,
+                    max_tokens=200,
+                ),
+                timeout=self.REMOTE_LLM_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            self._remote_circuit_open_until = time.monotonic() + 30.0
+            return None
         if not llm_text:
             self._remote_circuit_open_until = time.monotonic() + 30.0
             return None

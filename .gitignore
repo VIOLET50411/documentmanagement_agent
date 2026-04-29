@@ -74,3 +74,5 @@ bad_upload.txt
 blocked_chat.json
 chat_request*.json
 tmp_upload*.csv
+
+secrets/

@@ -1,10 +1,11 @@
 ﻿import axios, { type AxiosError, type AxiosRequestConfig } from "axios"
 import { useAuthStore } from "@/stores/auth"
+import { getApiBaseUrl } from "@/mobile/capacitor"
 
 type ApiResponse<T> = T
 
 const http = axios.create({
-  baseURL: "/api/v1",
+  baseURL: getApiBaseUrl(),
   timeout: 30000,
   headers: { "Content-Type": "application/json" },
 })

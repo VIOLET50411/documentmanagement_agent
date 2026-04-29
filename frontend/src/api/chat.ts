@@ -1,14 +1,15 @@
 import { apiGet, apiPost } from "./http"
 import { chatHistorySchema, type ChatHistoryResponse } from "./schemas"
+import { getAbsoluteApiBaseUrl } from "@/mobile/capacitor"
 import { useAuthStore } from "@/stores/auth"
 
 export const chatApi = {
   streamChat(message: string, threadId: string | null = null) {
     const authStore = useAuthStore()
     const body = JSON.stringify({ message, thread_id: threadId })
-    const base = import.meta.env.VITE_API_BASE_URL || ""
+    const base = getAbsoluteApiBaseUrl()
 
-    return fetch(`${base}/api/v1/chat/stream`, {
+    return fetch(`${base}/chat/stream`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

@@ -10,6 +10,8 @@ from typing import Any
 
 import httpx
 from redis import Redis
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import RedisError, TimeoutError as RedisTimeoutError
 import structlog
 
 from app.config import settings
@@ -71,6 +73,17 @@ class DocumentEmbedder:
         """Embed a single query for retrieval."""
         if self._should_use_remote(tenant_key):
             remote = self._embed_remote(query)
+            if remote:
+                self._update_detected_dim(len(remote))
+                sparse = self._sparse_from_tokens(query)
+                return {"dense": remote, "sparse": sparse}
+
+        return self._embed_local(query)
+
+    async def aembed_query(self, query: str, tenant_key: str = "default") -> dict:
+        """Async query embedding for request-path retrieval timeouts."""
+        if self._should_use_remote(tenant_key):
+            remote = await self._embed_remote_async(query)
             if remote:
                 self._update_detected_dim(len(remote))
                 sparse = self._sparse_from_tokens(query)
@@ -186,6 +199,40 @@ class DocumentEmbedder:
             self._remote_circuit_open_until = time.monotonic() + 30.0
             return None
 
+    async def _embed_remote_async(self, text: str) -> list[float] | None:
+        if self._remote_circuit_open_until > time.monotonic():
+            return None
+        try:
+            timeout = httpx.Timeout(8.0, connect=1.5)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                if self.provider == "ollama":
+                    endpoint = self.base_url.replace("/v1", "") + "/api/embeddings"
+                    resp = await client.post(endpoint, json={"model": self.model, "prompt": text})
+                    resp.raise_for_status()
+                    payload = resp.json()
+                    vector = payload.get("embedding")
+                    if isinstance(vector, list):
+                        self._update_detected_dim(len(vector))
+                        return [float(x) for x in vector]
+                    return None
+
+                endpoint = self.base_url + "/embeddings"
+                resp = await client.post(endpoint, json={"model": self.model, "input": text}, headers=self._headers())
+                resp.raise_for_status()
+                payload: dict[str, Any] = resp.json()
+                data = payload.get("data") or []
+                if not data:
+                    return None
+                vector = (data[0] or {}).get("embedding")
+                if isinstance(vector, list):
+                    self._update_detected_dim(len(vector))
+                    return [float(x) for x in vector]
+                return None
+        except (httpx.HTTPError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning("embedder.async_remote_failed", error=str(exc))
+            self._remote_circuit_open_until = time.monotonic() + 30.0
+            return None
+
     def _embed_remote_batch(self, texts: list[str]) -> list[list[float]] | None:
         """Batch embed multiple texts in one request."""
         if self._remote_circuit_open_until > time.monotonic():
@@ -255,7 +302,7 @@ class DocumentEmbedder:
                 return None
             parsed = int(value)
             return parsed if parsed > 0 else None
-        except (OSError, RuntimeError, TypeError, ValueError):
+        except (OSError, RuntimeError, TypeError, ValueError, RedisError, RedisConnectionError, RedisTimeoutError):
             return None
 
     def _persist_detected_dim(self, dim: int) -> None:
@@ -263,6 +310,6 @@ class DocumentEmbedder:
             client = Redis.from_url(settings.redis_url, decode_responses=True, socket_timeout=1)
             client.set(EMBEDDING_DIM_KEY, str(dim), ex=7 * 24 * 3600)
             client.close()
-        except (OSError, RuntimeError, TypeError, ValueError):
+        except (OSError, RuntimeError, TypeError, ValueError, RedisError, RedisConnectionError, RedisTimeoutError):
             # Persist best-effort only; local process state still keeps detected dim.
             return

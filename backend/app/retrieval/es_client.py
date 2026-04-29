@@ -19,7 +19,7 @@ class ESClient:
     def __init__(self):
         self.index = settings.es_index
         self.sync_client = Elasticsearch(hosts=[settings.es_url], request_timeout=5)
-        self.async_client = AsyncElasticsearch(hosts=[settings.es_url], request_timeout=5)
+        self._async_client: AsyncElasticsearch | None = None
 
     async def search(self, query: str, filters: dict, top_k: int = 20) -> list[dict]:
         await self._ensure_index_async()
@@ -100,6 +100,17 @@ class ESClient:
             return {"available": True, "index": self.index, "documents": int(count)}
         except (ApiError, TransportError, ESConnectionError, NotFoundError, OSError, RuntimeError) as exc:
             return {"available": False, "index": self.index, "documents": 0, "error": str(exc)}
+
+    async def close(self) -> None:
+        if self._async_client is not None:
+            await self._async_client.close()
+            self._async_client = None
+
+    @property
+    def async_client(self) -> AsyncElasticsearch:
+        if self._async_client is None:
+            self._async_client = AsyncElasticsearch(hosts=[settings.es_url], request_timeout=5)
+        return self._async_client
 
     async def _ensure_index_async(self):
         if ESClient._index_ready:

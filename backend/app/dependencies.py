@@ -11,7 +11,8 @@ from elasticsearch import TransportError
 from minio import Minio
 from minio.error import S3Error
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy import text
+from sqlalchemy import event, text
+from sqlalchemy.orm import Session
 from redis.asyncio import Redis
 import structlog
 
@@ -24,6 +25,17 @@ class ResourceRegistry:
 
 
 _resources = ResourceRegistry()
+STARTUP_SCHEMA_COMPATIBILITY_STATEMENTS = (
+    "ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS invited_by_id VARCHAR(36)",
+    "ALTER TABLE IF EXISTS user_invitations ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMP NULL",
+    "CREATE INDEX IF NOT EXISTS idx_push_devices_tenant_user_active ON push_devices (tenant_id, user_id, is_active)",
+)
+
+
+@event.listens_for(Session, "after_flush")
+def _mark_session_has_writes(session: Session, _flush_context) -> None:
+    session.info["has_writes"] = True
 
 
 def _remember_app(app) -> None:
@@ -84,11 +96,17 @@ async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
     if session_factory is None:
         raise RuntimeError("Database session factory is not initialized.")
     async with session_factory() as session:
+        session.info["has_writes"] = False
         try:
             yield session
-            await session.commit()
+            has_writes = bool(session.info.get("has_writes")) or bool(session.new or session.dirty or session.deleted)
+            if has_writes:
+                await session.commit()
+            elif session.in_transaction():
+                await session.rollback()
         except BaseException:
-            await session.rollback()
+            if session.in_transaction():
+                await session.rollback()
             raise
 
 
@@ -165,6 +183,12 @@ async def init_elasticsearch(app=None):
     try:
         es_client = AsyncElasticsearch(hosts=[settings.es_url], request_timeout=5)
         await es_client.ping()
+        from app.retrieval.es_client import ESClient
+
+        exists = await es_client.indices.exists(index=settings.es_index)
+        if not exists:
+            await es_client.indices.create(index=settings.es_index, mappings=ESClient()._mapping())
+        ESClient._index_ready = True
     except (TransportError, OSError, RuntimeError, ValueError) as exc:
         structlog.get_logger("docmind.dependencies").warning(
             "elasticsearch.init_failed",
@@ -267,13 +291,8 @@ async def ensure_row_level_security() -> None:
 async def ensure_startup_schema_compatibility() -> None:
     """Apply idempotent schema patches for drifted local databases."""
     engine = get_engine()
-    statements = [
-        "ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE",
-        "ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS invited_by_id VARCHAR(36)",
-        "CREATE INDEX IF NOT EXISTS idx_push_devices_tenant_user_active ON push_devices (tenant_id, user_id, is_active)",
-    ]
     async with engine.begin() as conn:
-        for statement in statements:
+        for statement in STARTUP_SCHEMA_COMPATIBILITY_STATEMENTS:
             await conn.execute(text(statement))
 
 

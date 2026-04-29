@@ -1,0 +1,31 @@
+{
+  "pages": [
+    "pages/login/index",
+    "pages/docs/index",
+    "pages/chat/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "DocMind",
+    "navigationBarBackgroundColor": "#0f172a",
+    "navigationBarTextStyle": "white",
+    "backgroundTextStyle": "light"
+  },
+  "tabBar": {
+    "color": "#64748b",
+    "selectedColor": "#0f172a",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "black",
+    "list": [
+      {
+        "pagePath": "pages/docs/index",
+        "text": "文档"
+      },
+      {
+        "pagePath": "pages/chat/index",
+        "text": "对话"
+      }
+    ]
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

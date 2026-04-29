@@ -376,6 +376,28 @@ a:hover {
   box-shadow: var(--shadow-md);
 }
 
+/* Android WebView on emulators is fragile around large blur/filter stacks.
+   Use a simpler surface model there so the first screen renders reliably. */
+.native-app body::before,
+.native-app .bg-orb {
+  display: none !important;
+}
+
+.native-app .card-glass,
+.native-app .card,
+.native-app .settings-panel,
+.native-app .settings-nav-card,
+.native-app .event-item {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background: var(--bg-surface-strong) !important;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
+}
+
+.native-app .login-page {
+  background: linear-gradient(180deg, var(--bg-app) 0%, var(--bg-app-accent) 100%);
+}
+
 .badge {
   display: inline-flex;
   align-items: center;

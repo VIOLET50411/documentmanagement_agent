@@ -80,7 +80,8 @@ class RagasRunner:
         if not base_url:
             return None
         try:
-            async with httpx.AsyncClient(timeout=240.0) as client:
+            timeout_seconds = max(float(settings.ragas_timeout_seconds), 30.0)
+            async with httpx.AsyncClient(timeout=timeout_seconds + 30.0) as client:
                 headers = {"Content-Type": "application/json"}
                 if settings.ragas_api_key:
                     headers["Authorization"] = f"Bearer {settings.ragas_api_key}"

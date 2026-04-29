@@ -1,0 +1,19 @@
+{
+  "description": "DocMind miniapp project config",
+  "appid": "wxa40cb8c61b74751f",
+  "projectname": "docmind-miniapp",
+  "miniprogramRoot": "./",
+  "compileType": "miniprogram",
+  "setting": {
+    "es6": true,
+    "enhance": true,
+    "postcss": true,
+    "minified": true,
+    "urlCheck": false
+  },
+  "simulatorPluginLibVersion": {},
+  "packOptions": {
+    "ignore": [],
+    "include": []
+  }
+}

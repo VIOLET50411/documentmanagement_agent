@@ -26,7 +26,15 @@ from app.models.schemas.user import (
     UserResponse,
     VerifyEmailRequest,
 )
+from app.models.schemas.mobile_auth import (
+    MobileAuthorizeRequest,
+    MobileAuthorizeResponse,
+    MobileTokenRequest,
+    MobileTokenResponse,
+    MobileUserInfoResponse,
+)
 from app.services.auth_service import AuthService
+from app.services.mobile_oauth_service import MobileOAuthService
 from app.services.security_audit_service import SecurityAuditService
 
 router = APIRouter()
@@ -241,3 +249,59 @@ async def confirm_password_reset(payload: ResetPasswordRequest, db: AsyncSession
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return GenericMessage(message="密码已更新")
+
+
+@router.get("/mobile/.well-known/openid-configuration")
+async def mobile_openid_configuration(request: Request, db: AsyncSession = Depends(get_db)):
+    issuer = str(request.base_url).rstrip("/")
+    return MobileOAuthService(db).discovery_document(issuer)
+
+
+@router.get("/mobile/jwks")
+async def mobile_openid_jwks(db: AsyncSession = Depends(get_db)):
+    return MobileOAuthService(db).jwks()
+
+
+@router.post("/mobile/authorize", response_model=MobileAuthorizeResponse)
+async def mobile_authorize(payload: MobileAuthorizeRequest, db: AsyncSession = Depends(get_db)):
+    try:
+        record = await MobileOAuthService(db).authorize(
+            username=payload.username,
+            password=payload.password,
+            client_id=payload.client_id,
+            redirect_uri=payload.redirect_uri,
+            code_challenge=payload.code_challenge,
+            code_challenge_method=payload.code_challenge_method,
+            scope=payload.scope,
+            state=payload.state,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return MobileAuthorizeResponse(
+        code=record.code,
+        expires_at=record.expires_at,
+        redirect_uri=record.redirect_uri,
+        state=payload.state,
+    )
+
+
+@router.post("/mobile/token", response_model=MobileTokenResponse)
+async def mobile_token(payload: MobileTokenRequest, db: AsyncSession = Depends(get_db)):
+    try:
+        tokens = await MobileOAuthService(db).exchange_code(
+            code=payload.code,
+            client_id=payload.client_id,
+            redirect_uri=payload.redirect_uri,
+            code_verifier=payload.code_verifier,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return MobileTokenResponse(**tokens)
+
+
+@router.get("/mobile/userinfo", response_model=MobileUserInfoResponse)
+async def mobile_userinfo(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    try:
+        return await MobileOAuthService(db).userinfo(current_user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

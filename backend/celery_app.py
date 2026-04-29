@@ -35,6 +35,7 @@ celery.conf.update(
     task_routes={
         "app.ingestion.tasks.process_document": {"queue": settings.celery_ingestion_queue},
         "app.maintenance.tasks.runtime_maintenance_job": {"queue": settings.celery_maintenance_queue},
+        "app.evaluation.tasks.run_evaluation_job": {"queue": settings.celery_maintenance_queue},
     },
     beat_schedule={
         "runtime-maintenance-hourly": {
@@ -46,4 +47,4 @@ celery.conf.update(
 )
 
 # Auto-discover tasks
-celery.autodiscover_tasks(["app.ingestion", "app.maintenance"])
+celery.autodiscover_tasks(["app.ingestion", "app.maintenance", "app.evaluation"])

@@ -9,9 +9,18 @@
     "preview": "vite preview",
     "type-check": "vue-tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "mobile:sync": "npm run build && npx cap sync",
+    "mobile:android": "npm run mobile:sync && npx cap open android",
+    "mobile:ios": "npm run mobile:sync && npx cap open ios"
   },
   "dependencies": {
+    "@capacitor/android": "^6.2.1",
+    "@capacitor/browser": "^6.0.0",
+    "@capacitor/core": "^6.2.1",
+    "@capacitor/filesystem": "^6.0.0",
+    "@capacitor/ios": "^6.2.1",
+    "@capacitor/push-notifications": "^6.0.0",
     "axios": "^1.7.0",
     "dayjs": "^1.11.0",
     "highlight.js": "^11.10.0",
@@ -22,6 +31,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@capacitor/cli": "^6.2.1",
     "@pinia/testing": "^0.1.7",
     "@vitejs/plugin-vue": "^5.1.0",
     "@vue/test-utils": "^2.4.6",

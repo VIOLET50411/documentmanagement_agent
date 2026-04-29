@@ -34,8 +34,11 @@ class HybridSearcher:
     """Orchestrates multi-path retrieval: keyword + vector + graph."""
 
     GRAPH_HINTS = ("\u5173\u7cfb", "\u5173\u8054", "\u5f15\u7528", "\u4fee\u8ba2", "\u8d1f\u8d23", "\u4e0a\u7ea7", "\u4e0b\u7ea7", "\u5bf9\u6bd4", "\u6bd4\u8f83")
-    KEYWORD_TIMEOUT_SECONDS = 3.0
-    VECTOR_TIMEOUT_SECONDS = 2.5
+    KEYWORD_TIMEOUT_SECONDS = 2.0
+    VECTOR_TIMEOUT_SECONDS = 0.35
+    VECTOR_CONCURRENCY_LIMIT = 1
+    VECTOR_ACQUIRE_TIMEOUT_SECONDS = 0.005
+    _vector_semaphore = asyncio.Semaphore(VECTOR_CONCURRENCY_LIMIT)
 
     def __init__(self):
         self.embedder = DocumentEmbedder()
@@ -64,10 +67,16 @@ class HybridSearcher:
                     timeout_seconds=self.KEYWORD_TIMEOUT_SECONDS,
                 )
             )
-        if settings.hybrid_vector_enabled and search_type in {"hybrid", "vector"}:
+        if search_type == "vector" or (settings.hybrid_vector_enabled and search_type == "hybrid"):
             vector_task = asyncio.create_task(
                 self._run_with_timeout(
-                    self._search_vector_path(db, filters, query, top_k=max(top_k * 4, 20)),
+                    self._search_vector_path(
+                        db,
+                        filters,
+                        query,
+                        top_k=max(top_k * 4, 20),
+                        allow_fast_skip=False,
+                    ),
                     timeout_seconds=self.VECTOR_TIMEOUT_SECONDS,
                 )
             )
@@ -164,14 +173,29 @@ class HybridSearcher:
         )
         return [self._result_payload(chunk, document, float(score or 0), "keyword") for chunk, document, score in rows.all()]
 
-    async def _search_vector_path(self, db, filters: dict, query: str, top_k: int) -> list[dict]:
+    async def _search_vector_path(self, db, filters: dict, query: str, top_k: int, allow_fast_skip: bool = False) -> list[dict]:
         started = time.perf_counter()
+        tenant_key = filters.get("tenant_id") or "default"
+        semaphore = self.__class__._vector_semaphore
+        acquired = False
         try:
-            live_results = await self.milvus_client.search(
-                query_embedding=self.embedder.embed_query(query, tenant_key=filters.get("tenant_id") or "default"),
-                filters=filters,
-                top_k=top_k,
-            )
+            try:
+                await asyncio.wait_for(semaphore.acquire(), timeout=self.VECTOR_ACQUIRE_TIMEOUT_SECONDS if allow_fast_skip else self.VECTOR_TIMEOUT_SECONDS)
+                acquired = True
+            except asyncio.TimeoutError:
+                await RetrievalObservabilityService(get_redis()).record(
+                    filters["tenant_id"],
+                    "milvus",
+                    success=False,
+                    empty=True,
+                    timeout=True,
+                    latency_ms=int((time.perf_counter() - started) * 1000),
+                    error="vector_queue_saturated",
+                )
+                return []
+
+            query_embedding = self.embedder.local_embed_query(query) if allow_fast_skip else await self.embedder.aembed_query(query, tenant_key)
+            live_results = await self.milvus_client.search(query_embedding=query_embedding, filters=filters, top_k=top_k)
             await RetrievalObservabilityService(get_redis()).record(
                 filters["tenant_id"],
                 "milvus",
@@ -194,34 +218,36 @@ class HybridSearcher:
                 error=str(exc),
             )
 
-        conditions = self._build_access_conditions(filters)
-        rows = await db.execute(
-            select(DocumentChunk, Document)
-            .join(Document, Document.id == DocumentChunk.doc_id)
-            .where(and_(*conditions))
-            .order_by(Document.updated_at.desc(), DocumentChunk.chunk_index.asc())
-            .limit(max(top_k * 3, 60))
-        )
+            conditions = self._build_access_conditions(filters)
+            rows = await db.execute(
+                select(DocumentChunk, Document)
+                .join(Document, Document.id == DocumentChunk.doc_id)
+                .where(and_(*conditions))
+                .order_by(Document.updated_at.desc(), DocumentChunk.chunk_index.asc())
+                .limit(max(top_k * 3, 60))
+            )
 
-        tenant_key = filters.get("tenant_id") or "default"
-        query_embedding = self.embedder.embed_query(query, tenant_key=tenant_key)
-        scored = []
-        query_terms = self._extract_terms(query)
-        for chunk, document in rows.all():
-            metadata = self._safe_load_metadata(chunk.metadata_json)
-            local_chunk_embedding = self.embedder.local_embed_query(chunk.content)
-            chunk_embedding = {
-                "dense": metadata.get("dense_vector") or local_chunk_embedding.get("dense", []),
-                "sparse": metadata.get("sparse_vector") or local_chunk_embedding.get("sparse", {}),
-            }
-            score = self._dense_similarity(query_embedding["dense"], chunk_embedding["dense"])
-            score += self._sparse_overlap(query_embedding["sparse"], chunk_embedding["sparse"])
-            score += 0.15 if metadata.get("is_parent") else 0.0
-            score += 0.1 if chunk.section_title and any(term in chunk.section_title for term in query_terms) else 0.0
-            scored.append(self._result_payload(chunk, document, round(score, 6), "vector"))
+            query_embedding = self.embedder.local_embed_query(query) if allow_fast_skip else await self.embedder.aembed_query(query, tenant_key)
+            scored = []
+            query_terms = self._extract_terms(query)
+            for chunk, document in rows.all():
+                metadata = self._safe_load_metadata(chunk.metadata_json)
+                local_chunk_embedding = self.embedder.local_embed_query(chunk.content)
+                chunk_embedding = {
+                    "dense": metadata.get("dense_vector") or local_chunk_embedding.get("dense", []),
+                    "sparse": metadata.get("sparse_vector") or local_chunk_embedding.get("sparse", {}),
+                }
+                score = self._dense_similarity(query_embedding["dense"], chunk_embedding["dense"])
+                score += self._sparse_overlap(query_embedding["sparse"], chunk_embedding["sparse"])
+                score += 0.15 if metadata.get("is_parent") else 0.0
+                score += 0.1 if chunk.section_title and any(term in chunk.section_title for term in query_terms) else 0.0
+                scored.append(self._result_payload(chunk, document, round(score, 6), "vector"))
 
-        scored.sort(key=lambda item: item.get("score", 0.0), reverse=True)
-        return [item for item in scored if item["score"] > 0][:top_k]
+            scored.sort(key=lambda item: item.get("score", 0.0), reverse=True)
+            return [item for item in scored if item["score"] > 0][:top_k]
+        finally:
+            if acquired:
+                semaphore.release()
 
     def _build_access_conditions(self, filters: dict):
         conditions = [DocumentChunk.tenant_id == filters["tenant_id"], Document.id == DocumentChunk.doc_id]

@@ -19,9 +19,112 @@ from app.config import settings
 from app.dependencies import get_db, get_redis
 from app.models.db.session import ChatMessage, ChatSession
 from app.models.db.user import User
-from app.models.schemas.chat import ChatRequest
+from app.models.schemas.chat import ChatRequest, ChatResponse
 
 router = APIRouter()
+
+
+@router.post("/message", response_model=ChatResponse)
+async def chat_message(
+    request: ChatRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Non-streaming chat endpoint for clients that cannot use SSE/WebSocket reliably."""
+    await rate_limit_check(None, f"chat:{current_user.id}", limit=60, window=60)
+    redis_client = get_redis()
+
+    session = await _get_or_create_session(db, current_user, request.thread_id, request.message)
+    user_message = ChatMessage(session_id=session.id, role="user", content=request.message)
+    db.add(user_message)
+    await db.flush()
+
+    assistant_message = ChatMessage(session_id=session.id, role="assistant", content="", agent_used="agent_runtime_v2_http")
+    db.add(assistant_message)
+    await db.flush()
+
+    from app.agent.runtime import AgentRuntime, RuntimeRequest
+    from app.retrieval.semantic_cache import SemanticCache
+    from app.security.input_guard import InputGuard
+    from app.security.output_guard import OutputGuard
+    from app.security.pii_masker import PIIMasker
+
+    cache = SemanticCache(redis_client)
+    cached = await cache.get(request.message, user_id=current_user.id)
+    if cached:
+        assistant_message.content = cached["answer"]
+        assistant_message.citations_json = json.dumps(cached.get("citations", []), ensure_ascii=False)
+        assistant_message.agent_used = "cache"
+        return ChatResponse(
+            message_id=assistant_message.id,
+            answer=cached["answer"],
+            citations=cached.get("citations", []),
+            agent_used="cache",
+            cached=True,
+            thread_id=session.id,
+        )
+
+    guard_result = await InputGuard().check(request.message)
+    if not guard_result["safe"]:
+        assistant_message.content = guard_result["reason"]
+        assistant_message.agent_used = "input_guard"
+        return ChatResponse(
+            message_id=assistant_message.id,
+            answer=guard_result["reason"],
+            citations=[],
+            agent_used="input_guard",
+            cached=False,
+            thread_id=session.id,
+        )
+
+    masker = PIIMasker()
+    masked_query, pii_mapping = masker.mask(request.message)
+    history_rows = await db.execute(select(ChatMessage).where(ChatMessage.session_id == session.id).order_by(ChatMessage.created_at.asc()))
+    history_messages = [
+        {"role": item.role, "content": item.content}
+        for item in history_rows.scalars().all()
+        if item.id != assistant_message.id
+    ]
+
+    runtime = AgentRuntime(redis_client)
+    runtime_request = RuntimeRequest(
+        query=masked_query,
+        thread_id=session.id,
+        search_type=request.search_type,
+        user_context={"user_id": current_user.id, "tenant_id": current_user.tenant_id, "role": current_user.role},
+        history=history_messages,
+    )
+
+    final_answer = ""
+    citations: list[dict] = []
+    final_agent = "agent_runtime_v2_http"
+    async for event in runtime.run(runtime_request, db=db, current_user=current_user):
+        if event.get("status") == "done":
+            final_answer = event.get("answer", "")
+            citations = event.get("citations", [])
+            final_agent = event.get("agent_used") or final_agent
+            break
+
+    restored_answer = masker.restore(final_answer, pii_mapping)
+    guarded_output = await OutputGuard().check(restored_answer)
+    if not guarded_output["safe"]:
+        restored_answer = "输出内容命中安全规则，系统已拦截。"
+        citations = []
+        final_agent = "output_guard"
+
+    assistant_message.content = restored_answer
+    assistant_message.citations_json = json.dumps(citations, ensure_ascii=False)
+    assistant_message.agent_used = final_agent
+    await cache.put(request.message, restored_answer, citations, user_id=current_user.id)
+
+    return ChatResponse(
+        message_id=assistant_message.id,
+        answer=restored_answer,
+        citations=citations,
+        agent_used=final_agent,
+        cached=False,
+        thread_id=session.id,
+    )
 
 
 @router.post("/stream")

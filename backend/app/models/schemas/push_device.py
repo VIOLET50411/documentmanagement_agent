@@ -14,6 +14,16 @@ class PushDeviceRegisterRequest(BaseModel):
     app_version: str | None = Field(default=None, max_length=40)
 
 
+class PushDeviceHeartbeatRequest(BaseModel):
+    device_token: str = Field(min_length=8, max_length=4096)
+    app_version: str | None = Field(default=None, max_length=40)
+
+
+class PushNotificationTestRequest(BaseModel):
+    title: str = Field(default="DocMind 推送测试", min_length=2, max_length=120)
+    body: str = Field(default="移动端推送链路已联通。", min_length=2, max_length=500)
+
+
 class PushDeviceResponse(BaseModel):
     id: str
     tenant_id: str

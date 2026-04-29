@@ -77,6 +77,7 @@ class PIIMasker:
         r"((?:地址|住址|联系地址|办公地址)[:：]?\s*[^\n，。；;]{4,60}(?:省|市|区|县|路|街|号|楼|室)[^\n，。；;]{0,40})"
     )
     NAME_RE = re.compile(r"((?:姓名|联系人|申请人|员工|负责人)[:：]?\s*[\u4e00-\u9fff]{2,4})")
+    PRESIDIO_ENTITY_LABELS = ("PHONE", "ID", "MONEY", "EMAIL", "BANK", "ADDRESS", "NAME")
 
     def __init__(self):
         self.enabled = settings.pii_masking_enabled
@@ -116,7 +117,7 @@ class PIIMasker:
             results = analyzer.analyze(
                 text=text,
                 language="zh",
-                entities=[label for label, _recognizer in self._recognizers],
+                entities=[label for label, _recognizer in self._recognizers] or list(self.PRESIDIO_ENTITY_LABELS),
             )
         except (AttributeError, TypeError, ValueError, RuntimeError, KeyError):
             return []

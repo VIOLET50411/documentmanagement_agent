@@ -5,7 +5,7 @@
         <p class="settings-eyebrow">工作台设置</p>
         <h1>设置</h1>
       </div>
-      <p class="settings-summary">统一管理账户、外观、回答偏好、设备与通知。</p>
+      <p class="settings-summary">统一管理账号、外观、回答偏好、设备与推送通知。</p>
     </header>
 
     <div class="settings-shell">
@@ -29,7 +29,7 @@
           <div class="block-head">
             <div>
               <h2>通用</h2>
-              <p>控制外观、提示方式和个人资料展示。</p>
+              <p>控制外观、界面提示和个人资料展示方式。</p>
             </div>
           </div>
 
@@ -38,7 +38,7 @@
               <h3>基础资料</h3>
               <div class="form-grid">
                 <label class="field">
-                  <span>用户名</span>
+                  <span>登录账号</span>
                   <input class="input" :value="user?.username || ''" readonly />
                 </label>
                 <label class="field">
@@ -58,12 +58,12 @@
                 <button class="theme-card" :class="{ active: !themeStore.isDark }" @click="themeStore.setTheme('light')">
                   <span class="theme-preview theme-light"></span>
                   <strong>浅色模式</strong>
-                  <small>适合日间浏览和长时间阅读</small>
+                  <small>适合白天浏览和长时间阅读。</small>
                 </button>
                 <button class="theme-card" :class="{ active: themeStore.isDark }" @click="themeStore.setTheme('dark')">
                   <span class="theme-preview theme-dark-preview"></span>
                   <strong>深色模式</strong>
-                  <small>低照环境下更稳定，界面对比更克制</small>
+                  <small>适合低光环境，减少眩光与视觉疲劳。</small>
                 </button>
               </div>
             </section>
@@ -83,8 +83,8 @@
               </div>
               <div class="toggle-item">
                 <div>
-                  <strong>侧边状态提示</strong>
-                  <p>对话阶段变化时，在顶部显示简短状态反馈。</p>
+                  <strong>对话状态提示</strong>
+                  <p>在搜索、阅读、生成等阶段切换时显示简洁状态反馈。</p>
                 </div>
                 <button class="toggle-switch" :class="{ on: statusHintsEnabled }" @click="statusHintsEnabled = !statusHintsEnabled">
                   <span></span>
@@ -97,18 +97,18 @@
         <div v-else-if="activeSection === 'account'" class="content-block">
           <div class="block-head">
             <div>
-              <h2>账户</h2>
-              <p>查看当前登录身份、租户信息和邮箱状态。</p>
+              <h2>账号</h2>
+              <p>查看当前登录身份、租户信息和邮箱验证状态。</p>
             </div>
           </div>
 
           <section class="settings-panel">
             <div class="info-list">
-              <div class="info-row"><span>用户名</span><strong>{{ user?.username || '-' }}</strong></div>
+              <div class="info-row"><span>登录账号</span><strong>{{ user?.username || '-' }}</strong></div>
               <div class="info-row"><span>角色</span><strong>{{ roleLabel(user?.role) }}</strong></div>
               <div class="info-row"><span>邮箱</span><strong>{{ user?.email || '-' }}</strong></div>
               <div class="info-row"><span>邮箱状态</span><strong>{{ user?.email_verified ? '已验证' : '未验证' }}</strong></div>
-              <div class="info-row"><span>租户</span><strong>{{ user?.tenant_id || '-' }}</strong></div>
+              <div class="info-row"><span>租户 ID</span><strong>{{ user?.tenant_id || '-' }}</strong></div>
             </div>
           </section>
         </div>
@@ -117,7 +117,7 @@
           <div class="block-head">
             <div>
               <h2>回答偏好</h2>
-              <p>定义默认输出风格、语言和引用偏好。</p>
+              <p>定义默认输出风格、语言和回答基准。</p>
             </div>
           </div>
 
@@ -152,7 +152,7 @@
           <div class="block-head">
             <div>
               <h2>设备</h2>
-              <p>登记推送设备，用于后续 App、移动端或 Web 提醒。</p>
+              <p>登记推送设备，用于移动端、桌面端或 Web 的状态提醒。</p>
             </div>
             <button class="btn btn-ghost btn-sm" @click="loadPushData" :disabled="loadingDevices || loadingEvents">
               {{ loadingDevices || loadingEvents ? '刷新中…' : '刷新' }}
@@ -160,6 +160,21 @@
           </div>
 
           <section class="settings-panel">
+            <h3>当前设备推送注册</h3>
+            <p class="panel-copy">Android 原生应用内点击下方按钮，会向 Firebase 申请真实设备 token 并自动登记到后端。</p>
+            <div class="device-actions">
+              <button class="btn btn-primary" :disabled="registeringNativePush" @click="registerCurrentDevicePush">
+                {{ registeringNativePush ? '注册中…' : '自动注册当前设备' }}
+              </button>
+              <span class="helper-text">
+                {{ isNativeRuntime ? `当前运行环境：${nativePlatformLabel}` : '当前不是原生 App 环境，自动注册不可用。' }}
+              </span>
+            </div>
+            <p v-if="nativePushMessage" class="feedback-message">{{ nativePushMessage }}</p>
+          </section>
+
+          <section class="settings-panel">
+            <h3>手动登记设备</h3>
             <form class="device-form" @submit.prevent="registerDevice">
               <label class="field">
                 <span>平台</span>
@@ -167,17 +182,18 @@
                   <option value="android">Android</option>
                   <option value="ios">iOS</option>
                   <option value="web">Web</option>
+                  <option value="wechat">微信小程序</option>
                 </select>
               </label>
 
               <label class="field">
                 <span>设备名称</span>
-                <input v-model="deviceForm.device_name" class="input" type="text" placeholder="例如 Pixel 8 / iPhone 15" />
+                <input v-model="deviceForm.device_name" class="input" type="text" placeholder="例如 Pixel 8 / iPhone 15 / 浏览器" />
               </label>
 
               <label class="field span-2">
                 <span>设备 Token</span>
-                <textarea v-model="deviceForm.device_token" class="input large-input" rows="3" placeholder="请输入移动推送 token"></textarea>
+                <textarea v-model="deviceForm.device_token" class="input large-input" rows="3" placeholder="请输入移动端、WebPush 或小程序的真实设备 token"></textarea>
               </label>
 
               <label class="field">
@@ -226,14 +242,14 @@
                 </tr>
               </tbody>
             </table>
-            <p v-else class="empty-text">当前还没有登记推送设备。</p>
+            <p v-else class="empty-text">当前还没有登记过推送设备。</p>
           </section>
         </div>
 
         <div v-else class="content-block">
           <div class="block-head">
             <div>
-              <h2>通知</h2>
+              <h2>通知记录</h2>
               <p>查看最近的推送记录和文档处理事件。</p>
             </div>
             <button class="btn btn-ghost btn-sm" @click="loadEvents" :disabled="loadingEvents">
@@ -268,6 +284,8 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { notificationsApi, type PushDevicePayload } from '@/api/notifications'
+import { isNativeApp, platformName } from '@/mobile/capacitor'
+import { registerPushDevice } from '@/mobile/push'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 
@@ -298,7 +316,7 @@ const user = computed(() => authStore.user)
 
 const sections = [
   { key: 'general', label: '通用', description: '外观、资料与提示' },
-  { key: 'account', label: '账户', description: '身份、角色与租户' },
+  { key: 'account', label: '账号', description: '身份、角色与租户' },
   { key: 'preferences', label: '偏好', description: '回答风格与语言' },
   { key: 'devices', label: '设备', description: '推送登记与状态' },
   { key: 'events', label: '通知', description: '最近推送事件' },
@@ -309,12 +327,18 @@ const responseStyle = ref('direct')
 const responseLanguage = ref('zh-CN')
 const notificationsEnabled = ref(true)
 const statusHintsEnabled = ref(true)
+const registeringNativePush = ref(false)
+const nativePushMessage = ref('')
+
+const isNativeRuntime = isNativeApp()
+const nativePlatform = platformName()
+const nativePlatformLabel = nativePlatform === 'android' ? 'Android' : nativePlatform === 'ios' ? 'iOS' : nativePlatform
 
 const deviceForm = reactive<PushDevicePayload>({
-  platform: 'android',
+  platform: nativePlatform === 'android' || nativePlatform === 'ios' ? nativePlatform : 'android',
   device_token: '',
   device_name: '',
-  app_version: '',
+  app_version: '1.0.0',
 })
 
 const devices = ref<PushDeviceRecord[]>([])
@@ -341,7 +365,12 @@ function setSection(section: string) {
 }
 
 function roleLabel(role?: string) {
-  const map: Record<string, string> = { ADMIN: '管理员', MANAGER: '经理', EMPLOYEE: '员工', VIEWER: '访客' }
+  const map: Record<string, string> = {
+    ADMIN: '管理员',
+    MANAGER: '经理',
+    EMPLOYEE: '员工',
+    VIEWER: '访客',
+  }
   return role ? map[role] || role : '-'
 }
 
@@ -381,6 +410,34 @@ async function loadPushData() {
   await Promise.all([loadDevices(), loadEvents()])
 }
 
+async function registerCurrentDevicePush() {
+  if (!isNativeRuntime) {
+    nativePushMessage.value = '当前运行环境不是原生 App，无法自动申请 Firebase 设备 token。'
+    return
+  }
+  registeringNativePush.value = true
+  nativePushMessage.value = ''
+  try {
+    const result = await registerPushDevice({
+      platform: nativePlatform,
+      deviceName: user.value?.username ? `${user.value.username} 的${nativePlatformLabel}设备` : `${nativePlatformLabel} 设备`,
+      appVersion: deviceForm.app_version || '1.0.0',
+    })
+    if (result && typeof result === 'object' && 'token' in result && typeof result.token === 'string') {
+      deviceForm.platform = nativePlatform
+      deviceForm.device_token = result.token
+      nativePushMessage.value = `当前设备已自动注册，token 已同步到后端：${maskToken(result.token)}`
+      await loadPushData()
+      return
+    }
+    nativePushMessage.value = '推送权限未授予，未能获取设备 token。'
+  } catch (error: any) {
+    nativePushMessage.value = error?.message || error?.response?.data?.detail || '自动注册当前设备失败，请稍后重试。'
+  } finally {
+    registeringNativePush.value = false
+  }
+}
+
 async function registerDevice() {
   if (!deviceForm.device_token.trim()) {
     deviceMessage.value = '请先填写设备 token。'
@@ -398,7 +455,6 @@ async function registerDevice() {
     deviceMessage.value = '设备登记成功。'
     deviceForm.device_token = ''
     deviceForm.device_name = ''
-    deviceForm.app_version = ''
     await loadPushData()
   } catch (error: any) {
     deviceMessage.value = error?.response?.data?.detail || '设备登记失败，请重试。'
@@ -426,7 +482,6 @@ async function unregisterDevice(device: PushDeviceRecord) {
 
 onMounted(loadPushData)
 </script>
-
 <style scoped>
 .settings-page {
   height: 100%;
@@ -731,6 +786,23 @@ onMounted(loadPushData)
   margin-top: 18px;
   color: var(--color-primary-hover);
   font-weight: 600;
+}
+
+.panel-copy {
+  color: var(--text-secondary);
+  margin-bottom: 14px;
+}
+
+.device-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.helper-text {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
 }
 
 .data-table {

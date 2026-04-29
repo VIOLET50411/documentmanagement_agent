@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from app.config import settings
+from app.dependencies import STARTUP_SCHEMA_COMPATIBILITY_STATEMENTS
 from app.services.evaluation_service import EvaluationService
 
 
@@ -97,3 +98,45 @@ async def test_latest_supports_legacy_metrics_only_payload(tmp_path: Path):
     assert result["metrics"]["faithfulness"] == 1.0
     assert result["gate"]["passed"] is False
     assert result["generated_from"]["legacy_report"] is True
+
+
+@pytest.mark.asyncio
+async def test_run_reports_progress_stages(tmp_path: Path):
+    service = EvaluationService(None, None, reports_dir=tmp_path)
+    service._load_documents = _async_return(  # type: ignore[method-assign]
+        [{"id": "doc-1", "title": "文档", "chunks": [{"content": "内容"}]}]
+    )
+    service.dataset_generator.generate = _async_return(  # type: ignore[method-assign]
+        [{"question": "Q", "answer": "A", "contexts": ["C"]}]
+    )
+    service.runner.evaluate = _async_return(  # type: ignore[method-assign]
+        {
+            "faithfulness": settings.ci_gate_min_faithfulness,
+            "answer_relevancy": settings.ci_gate_min_answer_relevancy,
+            "context_precision": settings.ci_gate_min_context_precision,
+            "context_recall": settings.ci_gate_min_context_recall,
+            "_meta": {"real_mode": True, "mode": "ragas_api"},
+        }
+    )
+    service.audit.log_event = _async_return(None)  # type: ignore[method-assign]
+
+    seen: list[str] = []
+
+    async def on_progress(stage: str, _payload: dict):
+        seen.append(stage)
+
+    result = await service.run("tenant-progress", sample_limit=1, progress_callback=on_progress)
+
+    assert result["dataset_size"] == 1
+    assert seen == ["dataset_building", "evaluating", "reporting", "completed"]
+
+
+def test_startup_schema_compatibility_includes_invitation_revocation_column():
+    assert any("user_invitations" in stmt and "revoked_at" in stmt for stmt in STARTUP_SCHEMA_COMPATIBILITY_STATEMENTS)
+
+
+def _async_return(value):
+    async def _inner(*_args, **_kwargs):
+        return value
+
+    return _inner

@@ -142,7 +142,7 @@ services:
       RAGAS_EMBEDDING_BASE_URL: http://ollama:11434/v1
       RAGAS_EMBEDDING_MODEL: nomic-embed-text
       RAGAS_API_KEY: dummy
-      RAGAS_TIMEOUT_SECONDS: "180"
+      RAGAS_TIMEOUT_SECONDS: "${RAGAS_TIMEOUT_SECONDS:-420}"
     ports:
       - "8091:8091"
 

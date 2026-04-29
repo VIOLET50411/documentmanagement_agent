@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -27,7 +27,7 @@ class FakeDB:
 
 @pytest.mark.asyncio
 async def test_runtime_checkpoint_service_summarizes_latest_session_state():
-    now = datetime.utcnow()
+    now = datetime.now(UTC).replace(tzinfo=None)
     items = [
         SimpleNamespace(
             session_id="s-1",

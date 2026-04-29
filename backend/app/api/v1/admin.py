@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.middleware.rbac import require_role
+from app.config import settings
 from app.dependencies import get_db, get_minio_client, get_redis
 from app.models.db.document import Document, DocumentChunk
 from app.models.db.user import User
@@ -677,6 +678,74 @@ async def run_evaluation(sample_limit: int = 100, current_user: User = Depends(r
         sample_limit=max(sample_limit, 1),
         actor=current_user,
     )
+
+
+@router.post("/evaluation/run-async")
+async def run_evaluation_async(sample_limit: int = 100, current_user: User = Depends(require_role("ADMIN"))):
+    from app.evaluation.tasks import run_evaluation_job
+
+    task = run_evaluation_job.apply_async(
+        args=(current_user.tenant_id, max(sample_limit, 1), current_user.id),
+        queue=settings.celery_maintenance_queue,
+    )
+    redis_client = get_redis()
+    if redis_client is not None:
+        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        payload = {
+            "task_id": task.id,
+            "type": "evaluation",
+            "status": "pending",
+            "description": f"评估任务: tenant={current_user.tenant_id}",
+            "tool_use_id": None,
+            "start_time": now,
+            "end_time": None,
+            "output_offset": 0,
+            "retries": 0,
+            "notified": False,
+            "trace_id": task.id,
+            "tenant_id": current_user.tenant_id,
+            "session_id": None,
+            "stage": "queued",
+            "error": None,
+            "updated_at": now,
+        }
+        await redis_client.set(f"runtime:task:{task.id}", json.dumps(payload, ensure_ascii=False), ex=settings.runtime_task_retention_seconds)
+        await redis_client.zadd(f"runtime:tasks:{current_user.tenant_id}", {task.id: datetime.now(timezone.utc).timestamp()})
+        await redis_client.expire(f"runtime:tasks:{current_user.tenant_id}", settings.runtime_task_retention_seconds)
+    return {"task_id": task.id, "status": "pending", "tenant_id": current_user.tenant_id, "sample_limit": max(sample_limit, 1)}
+
+
+@router.get("/evaluation/tasks/{task_id}")
+async def get_evaluation_task(task_id: str, current_user: User = Depends(require_role("ADMIN"))):
+    from dataclasses import asdict
+
+    from app.agent.runtime.task_store import TERMINAL_STATUSES
+    from app.agent.runtime.task_store import TaskStore
+    from celery.result import AsyncResult
+
+    from celery_app import celery
+
+    store = TaskStore(get_redis(), retention_seconds=settings.runtime_task_retention_seconds)
+    record = await store.get(task_id)
+    if record is None or record.tenant_id != current_user.tenant_id or record.type != "evaluation":
+        return {"exists": False, "task_id": task_id}
+    result = AsyncResult(task_id, app=celery)
+    raw = result.result if result.ready() else None
+    if result.ready() and record.status not in TERMINAL_STATUSES:
+        if isinstance(raw, dict) and raw.get("ok", True):
+            await store.complete(task_id)
+        elif isinstance(raw, dict):
+            await store.fail(task_id, str(raw.get("error") or "evaluation_failed"))
+        else:
+            await store.fail(task_id, str(raw))
+        record = await store.get(task_id) or record
+    payload = {"exists": True, "item": asdict(record), "celery_state": result.state}
+    if result.ready():
+        if isinstance(raw, dict):
+            payload["result"] = raw
+        else:
+            payload["result"] = {"value": str(raw)}
+    return payload
 
 
 @router.get("/evaluation/latest")

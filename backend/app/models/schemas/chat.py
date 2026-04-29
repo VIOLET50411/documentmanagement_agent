@@ -24,3 +24,4 @@ class ChatResponse(BaseModel):
     citations: List[Citation] = []
     agent_used: Optional[str] = None
     cached: bool = False
+    thread_id: Optional[str] = None

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -26,6 +27,7 @@ from app.security.file_scanner import FileScanner
 
 router = APIRouter()
 UPLOAD_TMP_ROOT = Path(tempfile.gettempdir()) / "docmind_chunk_uploads"
+UPLOAD_COMPLETE_SEMAPHORE = asyncio.Semaphore(2)
 
 
 @router.post("/upload", response_model=DocumentResponse, status_code=202)
@@ -53,9 +55,7 @@ async def upload_document(file: UploadFile = File(...), department: str | None =
         )
         raise HTTPException(status_code=400, detail=f"Unsupported file type: {file.content_type}")
 
-    file.file.seek(0, 2)
-    size = file.file.tell()
-    file.file.seek(0)
+    size = await _measure_upload_size(file)
     if size > settings.max_upload_size_mb * 1024 * 1024:
         await SecurityAuditService(get_redis(), db).log_event(
             current_user.tenant_id,
@@ -69,10 +69,7 @@ async def upload_document(file: UploadFile = File(...), department: str | None =
         )
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=f"File too large. Max allowed: {settings.max_upload_size_mb}MB")
 
-    scanner = FileScanner()
-    sample = file.file.read(min(size, 1024 * 1024))
-    file.file.seek(0)
-    scan_result = scanner.scan_bytes(sample)
+    scan_result = await _scan_upload_sample(file, size)
     if not scan_result.get("safe", True):
         await SecurityAuditService(get_redis(), db).log_event(
             current_user.tenant_id,
@@ -155,12 +152,7 @@ async def upload_document_chunk(
     upload_dir = Path(session["upload_dir"])
     upload_dir.mkdir(parents=True, exist_ok=True)
     target = upload_dir / f"part-{part_number:05d}.bin"
-    with target.open("wb") as file_obj:
-        while True:
-            data = await chunk.read(1024 * 1024)
-            if not data:
-                break
-            file_obj.write(data)
+    await _write_chunk_to_disk(chunk, target)
     await chunk.close()
 
     await redis.sadd(f"upload:parts:{upload_id}", str(part_number))
@@ -187,18 +179,9 @@ async def complete_chunk_upload(
 
     upload_dir = Path(session["upload_dir"])
     merged_path = upload_dir / "merged.bin"
-    with merged_path.open("wb") as merged:
-        for part_number in range(1, total_parts + 1):
-            part_path = upload_dir / f"part-{part_number:05d}.bin"
-            if not part_path.exists():
-                raise HTTPException(status_code=400, detail=f"缺少分片 {part_number}")
-            with part_path.open("rb") as source:
-                shutil.copyfileobj(source, merged)
-
-    scanner = FileScanner()
-    with merged_path.open("rb") as source:
-        sample = source.read(min(1024 * 1024, merged_path.stat().st_size))
-    scan_result = scanner.scan_bytes(sample)
+    async with UPLOAD_COMPLETE_SEMAPHORE:
+        await asyncio.to_thread(_merge_uploaded_parts, upload_dir, merged_path, total_parts)
+        scan_result = await asyncio.to_thread(_scan_local_file_sample, merged_path)
     if not scan_result.get("safe", True):
         await SecurityAuditService(get_redis(), db).log_event(
             current_user.tenant_id,
@@ -326,3 +309,43 @@ async def _cleanup_upload_session(redis, upload_id: str, upload_dir: Path) -> No
     await redis.delete(f"upload:session:{upload_id}")
     await redis.delete(f"upload:parts:{upload_id}")
     shutil.rmtree(upload_dir, ignore_errors=True)
+
+
+async def _measure_upload_size(file: UploadFile) -> int:
+    file_obj = file.file
+    await asyncio.to_thread(file_obj.seek, 0, 2)
+    size = await asyncio.to_thread(file_obj.tell)
+    await asyncio.to_thread(file_obj.seek, 0)
+    return int(size or 0)
+
+
+async def _scan_upload_sample(file: UploadFile, size: int) -> dict:
+    file_obj = file.file
+    sample = await asyncio.to_thread(file_obj.read, min(size, 1024 * 1024))
+    await asyncio.to_thread(file_obj.seek, 0)
+    return await asyncio.to_thread(FileScanner().scan_bytes, sample)
+
+
+async def _write_chunk_to_disk(chunk: UploadFile, target: Path) -> None:
+    with target.open("wb") as file_obj:
+        while True:
+            data = await chunk.read(1024 * 1024)
+            if not data:
+                break
+            await asyncio.to_thread(file_obj.write, data)
+
+
+def _merge_uploaded_parts(upload_dir: Path, merged_path: Path, total_parts: int) -> None:
+    with merged_path.open("wb") as merged:
+        for part_number in range(1, total_parts + 1):
+            part_path = upload_dir / f"part-{part_number:05d}.bin"
+            if not part_path.exists():
+                raise HTTPException(status_code=400, detail=f"缺少分片 {part_number}")
+            with part_path.open("rb") as source:
+                shutil.copyfileobj(source, merged, length=1024 * 1024)
+
+
+def _scan_local_file_sample(path: Path) -> dict:
+    with path.open("rb") as source:
+        sample = source.read(min(1024 * 1024, path.stat().st_size))
+    return FileScanner().scan_bytes(sample)

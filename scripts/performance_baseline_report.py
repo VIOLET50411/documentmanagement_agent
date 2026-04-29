@@ -22,7 +22,7 @@ def _sample_upload_file() -> str:
     with open(path, "w", encoding="utf-8") as f:
         f.write("title,department,amount\n")
         for i in range(1, 8):
-            f.write(f"报销条目{i},Platform,{i * 100}\n")
+            f.write(f"????{i},Platform,{i * 100}\n")
     return path
 
 
@@ -46,7 +46,7 @@ async def run_upload_round(base_url: str, token: str, total_requests: int, concu
                             files={"file": (f"perf_{i}.csv", f, "text/csv")},
                             data={"department": "Platform", "access_level": "2"},
                         )
-                    if resp.status_code != 200:
+                    if resp.status_code not in (200, 202):
                         errors += 1
                         key = f"http_{resp.status_code}"
                         error_types[key] = error_types.get(key, 0) + 1
@@ -132,8 +132,8 @@ async def main() -> None:
     args = parser.parse_args()
 
     token = await login_with_retry(args.base_url, args.username, args.password)
-    search_metric = await run_search_round(args.base_url, token, args.search_requests, args.search_concurrency, "员工手册")
-    chat_metric = await run_chat_first_event_round(args.base_url, token, args.chat_requests, args.chat_concurrency, "请总结员工手册")
+    search_metric = await run_search_round(args.base_url, token, args.search_requests, args.search_concurrency, "????")
+    chat_metric = await run_chat_first_event_round(args.base_url, token, args.chat_requests, args.chat_concurrency, "???????")
     upload_metric = await run_upload_round(args.base_url, token, args.upload_requests, args.upload_concurrency)
 
     payload = {

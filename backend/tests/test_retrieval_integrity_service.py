@@ -76,10 +76,11 @@ async def test_retrieval_integrity_marks_warning_only_backends_as_non_blocking(m
 
     result = await service.evaluate("tenant-1", sample_size=2)
 
-    assert result["score"] == 60.0
+    assert result["score"] == 66.67
     assert result["healthy"] is True
     assert all(item["severity"] != "critical" for item in result["critical_blockers"])
     assert result["stats"]["backend_health"]["milvus"]["available"] is False
+    assert result["mode"] == "keyword_graph_default"
 
 
 @pytest.mark.asyncio

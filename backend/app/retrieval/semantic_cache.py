@@ -125,7 +125,7 @@ class SemanticCache:
             return None
         try:
             return await asyncio.to_thread(self._search_vector_match_sync, query, user_id)
-        except (MilvusException, OSError, RuntimeError, TypeError, ValueError):
+        except (ImportError, ModuleNotFoundError, MilvusException, OSError, RuntimeError, TypeError, ValueError):
             self._milvus_available = False
             self._degraded_until = time.monotonic() + 30.0
             return None
@@ -154,7 +154,7 @@ class SemanticCache:
             return
         try:
             await asyncio.to_thread(self._upsert_vector_entry_sync, cache_key, normalized_query, user_id, ttl)
-        except (MilvusException, OSError, RuntimeError, TypeError, ValueError):
+        except (ImportError, ModuleNotFoundError, MilvusException, OSError, RuntimeError, TypeError, ValueError):
             self._milvus_available = False
             self._degraded_until = time.monotonic() + 30.0
 
@@ -178,7 +178,7 @@ class SemanticCache:
             return
         try:
             await asyncio.to_thread(self._delete_vector_entries_sync, cache_keys)
-        except (MilvusException, OSError, RuntimeError, TypeError, ValueError):
+        except (ImportError, ModuleNotFoundError, MilvusException, OSError, RuntimeError, TypeError, ValueError):
             self._milvus_available = False
             self._degraded_until = time.monotonic() + 30.0
 

@@ -1,0 +1,31 @@
+<view class="page">
+  <view class="toolbar">
+    <input class="search" value="{{query}}" bindinput="onQueryInput" placeholder="搜索制度、合同、流程" />
+    <button class="btn" size="mini" loading="{{searchLoading}}" bindtap="searchDocuments">检索</button>
+  </view>
+  <view class="actions">
+    <button class="ghost" size="mini" bindtap="loadDocuments">刷新文档</button>
+    <button class="ghost" size="mini" bindtap="goChat">进入对话</button>
+    <button class="ghost danger" size="mini" bindtap="logout">退出</button>
+  </view>
+  <view wx:if="{{error}}" class="error">{{error}}</view>
+
+  <view class="section-title">文档列表</view>
+  <view wx:if="{{loading}}" class="muted">正在加载文档...</view>
+  <block wx:for="{{documents}}" wx:key="id">
+    <view class="card">
+      <view class="card-title">{{item.title}}</view>
+      <view class="meta">状态：{{item.status}} · 部门：{{item.department || 'public'}}</view>
+      <view class="meta">大小：{{item.file_size || 0}} 字节</view>
+    </view>
+  </block>
+
+  <view class="section-title">检索结果</view>
+  <block wx:for="{{searchResults}}" wx:key="chunk_id">
+    <view class="card result">
+      <view class="card-title">{{item.document_title}}</view>
+      <view class="meta">章节：{{item.section_title || '未标注'}} · 分数：{{item.score}}</view>
+      <view class="snippet">{{item.snippet}}</view>
+    </view>
+  </block>
+</view>
