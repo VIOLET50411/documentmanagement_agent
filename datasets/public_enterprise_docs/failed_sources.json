@@ -1,0 +1,86 @@
+[
+  {
+    "filename": "02_sasac_budget_management_measures.pdf",
+    "title": "??????????????",
+    "category": "budget",
+    "source_type": "official",
+    "url": "https://www.sasac.gov.cn/n2588035/n22302962/n22302967/c22704654/attr/25875486.pdf",
+    "error": "('Connection aborted.', ConnectionResetError(10054, '远程主机强迫关闭了一个现有的连接。', None, 10054, None))"
+  },
+  {
+    "filename": "11_uic_procurement_regulations_en.pdf",
+    "title": "2024 Purchasing Management Regulations",
+    "category": "procurement",
+    "source_type": "education",
+    "url": "https://po.uic.edu.cn/virtual_attach_file.vsb?afc=1LlLmbM498nmlZUN8Q7M8MfLlWRozfT2M7-bMlLZnzvDL7-0gihFp2hmCIa0LkhfnSy8MkyYLzvin7CsU4Tknl-4nmNbLmV2o7LYM8rRnRnFL778UN7PMlnFUzlZMR7Jv2nto40XAZFwxHsjK%2FdjN-pT1XetOb500-9YLR-8bZt-eeYWgjfNQmOe6ITm5sf0gDTJQty0LzGaL1yPLRL8gtA8pUtcc&e=.pdf&nid=1034&oid=1982955627&tid=1002",
+    "error": "404 Client Error: Not Found for url: https://po.bnbu.edu.cn/virtual_attach_file.vsb?afc=1LlLmbM498nmlZUN8Q7M8MfLlWRozfT2M7-bMlLZnzvDL7-0gihFp2hmCIa0LkhfnSy8MkyYLzvin7CsU4Tknl-4nmNbLmV2o7LYM8rRnRnFL778UN7PMlnFUzlZMR7Jv2nto40XAZFwxHsjK%2FdjN-pT1XetOb500-9YLR-8bZt-eeYWgjfNQmOe6ITm5sf0gDTJQty0LzGaL1yPLRL8gtA8pUtcc&e=.pdf&nid=1034&oid=1982955627&tid=1002"
+  },
+  {
+    "filename": "06_ynctv_procurement_process.pdf",
+    "title": "????",
+    "category": "procurement",
+    "source_type": "education",
+    "url": "https://www.ynctv.edu.cn/system/_content/download.jsp?owner=1911047039&urltype=news.DownloadAttachUrl&wbfileid=11660622",
+    "saved_path": "C:\\Users\\32020\\Desktop\\documentmanagement_agent\\datasets\\public_enterprise_docs\\raw\\06_ynctv_procurement_process.pdf",
+    "bytes": 3805,
+    "content_type": "text/html;charset=UTF-8",
+    "error": "returned_html_instead_of_document"
+  },
+  {
+    "filename": "07_ynctv_procurement_methods.docx",
+    "title": "??????????????",
+    "category": "procurement",
+    "source_type": "education",
+    "url": "https://www.ynctv.edu.cn/system/_content/download.jsp?owner=1911047039&urltype=news.DownloadAttachUrl&wbfileid=11660635",
+    "saved_path": "C:\\Users\\32020\\Desktop\\documentmanagement_agent\\datasets\\public_enterprise_docs\\raw\\07_ynctv_procurement_methods.docx",
+    "bytes": 3805,
+    "content_type": "text/html;charset=UTF-8",
+    "error": "returned_html_instead_of_document"
+  },
+  {
+    "filename": "08_ynctv_procurement_requirements.docx",
+    "title": "?????20???????",
+    "category": "procurement",
+    "source_type": "education",
+    "url": "https://www.ynctv.edu.cn/system/_content/download.jsp?owner=1911047039&urltype=news.DownloadAttachUrl&wbfileid=11660624",
+    "saved_path": "C:\\Users\\32020\\Desktop\\documentmanagement_agent\\datasets\\public_enterprise_docs\\raw\\08_ynctv_procurement_requirements.docx",
+    "bytes": 3805,
+    "content_type": "text/html;charset=UTF-8",
+    "error": "returned_html_instead_of_document"
+  },
+  {
+    "filename": "09_ynctv_contract_review_form.docx",
+    "title": "???????????",
+    "category": "approval",
+    "source_type": "education",
+    "url": "https://www.ynctv.edu.cn/system/_content/download.jsp?owner=1911047039&urltype=news.DownloadAttachUrl&wbfileid=11660626",
+    "saved_path": "C:\\Users\\32020\\Desktop\\documentmanagement_agent\\datasets\\public_enterprise_docs\\raw\\09_ynctv_contract_review_form.docx",
+    "bytes": 3805,
+    "content_type": "text/html;charset=UTF-8",
+    "error": "returned_html_instead_of_document"
+  },
+  {
+    "filename": "15_hangzhou_internal_control_guidelines.pdf",
+    "title": "????????",
+    "category": "compliance",
+    "source_type": "government",
+    "url": "https://czj.hangzhou.gov.cn/module/download/downfile.jsp?classid=0&filename=12b8227d48384e959d949cf31b92f3e4.pdf",
+    "error": "404 Client Error: Not Found for url: https://czj.hangzhou.gov.cn/module/download/downfile.jsp?classid=0&filename=12b8227d48384e959d949cf31b92f3e4.pdf"
+  },
+  {
+    "filename": "16_lixin_budget_rules.pdf",
+    "title": "??????????",
+    "category": "budget",
+    "source_type": "education",
+    "url": "https://www.lixin.edu.cn/__local/1/11/6B/0C89AC7DA4D3E58EEB79B4A953F_2E5D4D52_31A8A.pdf?e=.pdf",
+    "error": "404 Client Error: Not Found for url: https://www.lixin.edu.cn/__local/1/11/6B/0C89AC7DA4D3E58EEB79B4A953F_2E5D4D52_31A8A.pdf?e=.pdf"
+  },
+  {
+    "filename": "17_cusx_einvoice_rules.pdf",
+    "title": "??????????",
+    "category": "budget",
+    "source_type": "education",
+    "url": "https://jhcwb.cusx.edu.cn/__local/5/5B/9D/88A7D42CA383CB70A30C294A66A_46035A1A_1367A.pdf?e=.pdf",
+    "error": "404 Client Error:  for url: https://jhcwb.cusx.edu.cn/__local/5/5B/9D/88A7D42CA383CB70A30C294A66A_46035A1A_1367A.pdf?e=.pdf"
+  }
+]

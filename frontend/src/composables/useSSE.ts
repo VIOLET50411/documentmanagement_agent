@@ -7,10 +7,16 @@ interface RuntimeEvent {
   msg?: string
   token?: string
   content?: string
+  answer?: string
   citations?: any[]
   message_id?: string
   thread_id?: string
 }
+
+const transientStreamingContent = new Set([
+  "正在生成回答...",
+  "正在生成回答…",
+])
 
 export function useSSE() {
   const error: Ref<string | null> = ref(null)
@@ -34,13 +40,17 @@ export function useSSE() {
         const { done, value } = await reader.read()
         if (done) break
         buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split("\n\n")
-        buffer = lines.pop() || ""
+        const chunks = buffer.split("\n\n")
+        buffer = chunks.pop() || ""
 
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue
+        for (const chunk of chunks) {
+          const dataLines = chunk
+            .split("\n")
+            .filter((line) => line.startsWith("data: "))
+            .map((line) => line.slice(6))
+          if (dataLines.length === 0) continue
           try {
-            handleEvent(JSON.parse(line.slice(6)) as RuntimeEvent)
+            handleEvent(JSON.parse(dataLines.join("\n")) as RuntimeEvent)
           } catch {
             // Ignore malformed events from interrupted streams.
           }
@@ -64,7 +74,7 @@ export function useSSE() {
         break
       case "streaming":
         chatStore.setStreamState("streaming")
-        if (event.content) {
+        if (event.content && !transientStreamingContent.has(event.content.trim())) {
           chatStore.replaceLastAssistantMessage(event.content, event.citations || [])
         } else if (event.token) {
           chatStore.updateLastAssistantMessage(event.token)
@@ -75,6 +85,9 @@ export function useSSE() {
         chatStore.setStreamState("error", event.msg || "请求失败")
         break
       case "done":
+        if (event.answer) {
+          chatStore.replaceLastAssistantMessage(event.answer, event.citations || [])
+        }
         chatStore.setLastAssistantMeta({ id: event.message_id, citations: event.citations || [] })
         chatStore.ensureSessionById(event.thread_id)
         chatStore.setStreamState("done")

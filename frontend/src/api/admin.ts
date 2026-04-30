@@ -105,4 +105,18 @@ export const adminApi = {
   getRuntimeCheckpointSummary(limit = 50) {
     return apiGet("/admin/runtime/checkpoints/summary", { params: { limit } })
   },
+
+  getLatestPublicCorpusExport(datasetName = "swu_public_docs", tenantId = "public_cold_start") {
+    return apiGet("/admin/llm/public-corpus/latest", { params: { dataset_name: datasetName, tenant_id: tenantId } })
+  },
+
+  exportPublicCorpusAsync(datasetName = "swu_public_docs", tenantId = "public_cold_start", trainRatio = 0.9) {
+    return apiPost("/admin/llm/public-corpus/export-async", null, {
+      params: { dataset_name: datasetName, tenant_id: tenantId, train_ratio: trainRatio },
+    })
+  },
+
+  getPublicCorpusExportTask(taskId: string, tenantId = "public_cold_start") {
+    return apiGet(`/admin/llm/public-corpus/tasks/${taskId}`, { params: { tenant_id: tenantId } })
+  },
 }

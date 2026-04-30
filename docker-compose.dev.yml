@@ -25,10 +25,14 @@ services:
       GUARDRAILS_SIDECAR_URL: http://guardrails-sidecar:8090
       RAGAS_API_BASE_URL: http://ragas-sidecar:8091
       PUSH_FCM_SERVICE_ACCOUNT_FILE: /run/secrets/docmind/firebase-service-account.json
+      DOCMIND_SHARED_DATASETS_DIR: /workspace/datasets
+      DOCMIND_REPORTS_DIR: /workspace/reports
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
       - ./backend:/app
+      - ./datasets:/workspace/datasets
+      - ./reports:/workspace/reports
       - ./secrets:/run/secrets/docmind:ro
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${BACKEND_WORKERS:-4}
     depends_on:
@@ -77,8 +81,12 @@ services:
       GUARDRAILS_SIDECAR_URL: http://guardrails-sidecar:8090
       RAGAS_API_BASE_URL: http://ragas-sidecar:8091
       PUSH_FCM_SERVICE_ACCOUNT_FILE: /run/secrets/docmind/firebase-service-account.json
+      DOCMIND_SHARED_DATASETS_DIR: /workspace/datasets
+      DOCMIND_REPORTS_DIR: /workspace/reports
     volumes:
       - ./backend:/app
+      - ./datasets:/workspace/datasets
+      - ./reports:/workspace/reports
       - ./secrets:/run/secrets/docmind:ro
     command: celery -A celery_app worker --loglevel=info --autoscale=8,2 -Q default,ingestion,reindex,maintenance
     depends_on:
@@ -121,8 +129,12 @@ services:
       GUARDRAILS_SIDECAR_URL: http://guardrails-sidecar:8090
       RAGAS_API_BASE_URL: http://ragas-sidecar:8091
       PUSH_FCM_SERVICE_ACCOUNT_FILE: /run/secrets/docmind/firebase-service-account.json
+      DOCMIND_SHARED_DATASETS_DIR: /workspace/datasets
+      DOCMIND_REPORTS_DIR: /workspace/reports
     volumes:
       - ./backend:/app
+      - ./datasets:/workspace/datasets
+      - ./reports:/workspace/reports
       - ./secrets:/run/secrets/docmind:ro
     command: celery -A celery_app beat --loglevel=info
     depends_on:
@@ -153,6 +165,7 @@ services:
       - "${FLOWER_PORT:-5555}:5555"
     volumes:
       - ./backend:/app
+      - ./reports:/workspace/reports
     command: celery -A celery_app flower --port=5555
     depends_on:
       redis:

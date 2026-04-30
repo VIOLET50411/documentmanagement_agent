@@ -57,6 +57,8 @@
       :format-percent="formatPercent"
       :load-runtime-tool-decision-summary="loadRuntimeToolDecisionSummary"
       :load-runtime-checkpoint-summary="loadRuntimeCheckpointSummary"
+      :load-public-corpus-latest="loadPublicCorpusLatest"
+      :export-public-corpus-async="exportPublicCorpusAsync"
       :download-runtime-tool-summary="downloadRuntimeToolSummary"
     />
     <SecurityAudit
@@ -107,6 +109,8 @@ const {
   retryBySignature,
   loadRuntimeToolDecisionSummary,
   loadRuntimeCheckpointSummary,
+  loadPublicCorpusLatest,
+  exportPublicCorpusAsync,
   downloadRuntimeToolSummary,
   runEvaluation,
   downloadRuntimeMetrics,

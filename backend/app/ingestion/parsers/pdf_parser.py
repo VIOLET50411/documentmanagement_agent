@@ -22,7 +22,9 @@ class PDFParser:
     def parse(self, file_path: str) -> list[dict]:
         path = Path(file_path)
 
-        for parser in (self._parse_with_unstructured, self._parse_with_pypdf):
+        # Prefer the lightweight native-text path first. This avoids public-corpus
+        # exports and ordinary text PDFs blocking on heavy hi-res model downloads.
+        for parser in (self._parse_with_pypdf, self._parse_with_unstructured):
             try:
                 elements = parser(path)
             except (OSError, RuntimeError, ValueError, TypeError):
@@ -75,10 +77,14 @@ class PDFParser:
     def _parse_with_pypdf(self, path: Path) -> list[dict]:
         try:
             from pypdf import PdfReader
+            from pypdf.errors import PdfReadError, PdfStreamError
         except ImportError:
             return []
 
-        reader = PdfReader(str(path))
+        try:
+            reader = PdfReader(str(path))
+        except (OSError, ValueError, PdfReadError, PdfStreamError):
+            return []
         parsed: list[dict] = []
         for page_index, page in enumerate(reader.pages, start=1):
             text = (page.extract_text() or "").strip()

@@ -32,20 +32,18 @@
 - 管理后台总览、管线、安全、评估、检索后端状态
 - 全仓主要用户可见中文乱码修复
 
-### 当前仍为 fallback
+### 当前仍为 fallback / 过渡实现
 
-- 规则版 intent routing / query rewriting / answer generation
-- 本地伪 embedding / reranker / semantic cache
-- 本地图谱关系抽取
-- 本地邮件 outbox 适配器
-- 本地评估指标与报告
+- 部分 agent 节点仍保留规则兜底
+- 语义缓存、部分检索增强与图谱抽取仍存在本地降级路径
+- 邮件默认仍以本地 outbox / 日志适配器为主
+- 评估仍允许在真实 sidecar 不可用时降级到 heuristic
 
-### 待 AI 阶段接入
+### 仍未完成的 AI 深水区
 
-- 真实 LLM 路由、生成、Critic、自我校正
-- 真实 embedding、reranker、OCR、layout analysis
-- 高级 guardrails / PII sidecar
-- 真正 Ragas/TruLens 自动回归评估
+- 企业管理文档领域模型的正式训练、版本管理、灰度上线
+- 更严格的企业 / 金融级策略联动与长期评估门禁
+- 更高保真的生产级 OCR、版面分析、表格结构抽取
 
 ## Phase Status
 
@@ -60,18 +58,20 @@
 | Phase 7 Security | Partial+ | 已达内部系统上线基线，非金融级 |
 | Phase 8 Evaluation | Partial | 保留本地评估与报告框架 |
 
-## Latest Verification Snapshot (2026-04-24)
+## Latest Verification Snapshot (2026-04-29)
 
-- preflight: `100/100` checks passed (`reports/delivery/preflight_20260424_150920.md`)
 - backend health: `GET /health` 正常
 - auth login: `admin_demo / Password123` 正常
-- backend tests: `46 passed`
+- backend tests: `106 passed, 3 skipped`
 - frontend build: `vite build` 正常
-- smoke e2e: `auth -> upload -> status -> search -> chat SSE` 全链路通过
-- mojibake scan: `backend/app + backend/tests + frontend/src + docs + scripts` 未发现新增乱码
-- readiness score: `95`（`ready=False` 主要因离线评估报告尚未生成）
+- frontend tests: `10 passed`
+- real SSE stream: 已验证前端可正确消费标准 `id + data` 事件并正常回显回答
+- retrieval integrity: `score=100, healthy=true`
+- runtime admin APIs: `tasks / metrics / tool-decisions / replay` 正常
+- enterprise domain APIs: `domain-config / domain-corpus/export` 正常
+- mojibake scan: 当前新增改动未发现新的典型乱码扩散
 
-## Overall Completion Estimate (Non-LLM Stage)
+## Overall Completion Estimate
 
 | Scope | Completion |
 | --- | --- |
@@ -82,8 +82,10 @@
 | Agent（规则编排） | 100% |
 | 前端主流程 | 100% |
 | 安全基线 | 100% |
-| 评估与交付验收 | 100% |
-| **全量（非 LLM 范围）** | **100%** |
+| 评估与交付验收 | 95% |
+| 企业领域模型适配（路由 + 语料） | 80% |
+| 企业领域模型正式训练 / 上线 | 20% |
+| **全量（含企业领域模型正式训练目标）** | **约 90%** |
 
 ## Acceptance Criteria Before AI Integration
 

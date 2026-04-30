@@ -1,0 +1,122 @@
+[
+  {
+    "filename": "01_mof_budget_review_measures.pdf",
+    "title": "??????????",
+    "category": "budget",
+    "source_type": "official",
+    "url": "https://www.mof.gov.cn/gkml/caizhengwengao/wg2023/wg202310/202401/P020240110362468451682.pdf",
+    "saved_path": "C:\\Users\\32020\\Desktop\\documentmanagement_agent\\datasets\\public_enterprise_docs\\raw\\01_mof_budget_review_measures.pdf",
+    "bytes": 169660,
+    "content_type": "application/pdf"
+  },
+  {
+    "filename": "03_cninfo_internal_control_manual.pdf",
+    "title": "????????",
+    "category": "compliance",
+    "source_type": "public_company",
+    "url": "https://static.cninfo.com.cn/finalpage/2023-04-27/1216617333.PDF",
+    "saved_path": "C:\\Users\\32020\\Desktop\\documentmanagement_agent\\datasets\\public_enterprise_docs\\raw\\03_cninfo_internal_control_manual.pdf",
+    "bytes": 5385470,
+    "content_type": "application/pdf"
+  },
+  {
+    "filename": "04_cninfo_internal_control_policy.pdf",
+    "title": "????????",
+    "category": "compliance",
+    "source_type": "public_company",
+    "url": "https://static.cninfo.com.cn/finalpage/2012-12-12/61898354.PDF",
+    "saved_path": "C:\\Users\\32020\\Desktop\\documentmanagement_agent\\datasets\\public_enterprise_docs\\raw\\04_cninfo_internal_control_policy.pdf",
+    "bytes": 260151,
+    "content_type": "application/pdf"
+  },
+  {
+    "filename": "05_cninfo_procurement_payment_controls.pdf",
+    "title": "?????????",
+    "category": "procurement",
+    "source_type": "public_company",
+    "url": "https://static.cninfo.com.cn/finalpage/2024-02-24/1219170182.PDF",
+    "saved_path": "C:\\Users\\32020\\Desktop\\documentmanagement_agent\\datasets\\public_enterprise_docs\\raw\\05_cninfo_procurement_payment_controls.pdf",
+    "bytes": 134432,
+    "content_type": "application/pdf"
+  },
+  {
+    "filename": "10_uic_procurement_regulations_cn.pdf",
+    "title": "???????2024??",
+    "category": "procurement",
+    "source_type": "education",
+    "url": "https://po.uic.edu.cn/virtual_attach_file.vsb?afc=1M7MmkL8-4oR-sLNRN4nzf7MRMfL8nTfL4Q2Lm-bLmvDL8C0gihFp2hmCIa0MYyZUYyZUYh7nNnRnRlYoRCiLN7Zoz-DM4lDM778oRffU4nFLzLYMzNZnzVFM8VVLR7Jv2nto4OYLR-8-VfivtMwC5MXptv9zIVJCI6TpIrJ6kfSQI6ip2V8qIhJvYbaQ2CeosrXCihapYhXptQ0g47aLR-0LzG4Mkbw62t8c&e=.pdf&nid=1034&oid=1982955627&tid=1002",
+    "saved_path": "C:\\Users\\32020\\Desktop\\documentmanagement_agent\\datasets\\public_enterprise_docs\\raw\\10_uic_procurement_regulations_cn.pdf",
+    "bytes": 503297,
+    "content_type": "application/pdf"
+  },
+  {
+    "filename": "12_moa_budget_finance_rules.html",
+    "title": "?????????????????",
+    "category": "budget",
+    "source_type": "official",
+    "url": "https://www.moa.gov.cn/govpublic/CWS/201006/t20100606_1533198.htm",
+    "saved_path": "C:\\Users\\32020\\Desktop\\documentmanagement_agent\\datasets\\public_enterprise_docs\\raw\\12_moa_budget_finance_rules.html",
+    "bytes": 65179,
+    "content_type": "text/html"
+  },
+  {
+    "filename": "06_henan_internal_control_guidelines.pdf",
+    "title": "??????????????????",
+    "category": "compliance",
+    "source_type": "government_procurement",
+    "url": "https://zhecheng.zfcg.henan.gov.cn/webfile/xinyang/rootfiles/2021/11/08/1636347742052749-1636347742054187.pdf",
+    "saved_path": "C:\\Users\\32020\\Desktop\\documentmanagement_agent\\datasets\\public_enterprise_docs\\raw\\06_henan_internal_control_guidelines.pdf",
+    "bytes": 491807,
+    "content_type": "application/pdf"
+  },
+  {
+    "filename": "07_sdvcst_finance_management_rules.pdf",
+    "title": "??????",
+    "category": "budget",
+    "source_type": "education",
+    "url": "https://xxgkw.sdvcst.edu.cn/__local/9/0C/2A/0180A89ACE7DD1E962C4DEB4462_6FBBF08C_D4E78.pdf?e=.pdf",
+    "saved_path": "C:\\Users\\32020\\Desktop\\documentmanagement_agent\\datasets\\public_enterprise_docs\\raw\\07_sdvcst_finance_management_rules.pdf",
+    "bytes": 872056,
+    "content_type": "application/pdf"
+  },
+  {
+    "filename": "08_contract_legal_review_notice.pdf",
+    "title": "???????????????",
+    "category": "approval",
+    "source_type": "education",
+    "url": "https://xb.swun.edu.cn/__local/B/D3/2E/F319B219957534CBB47961397DF_A655552B_2077A.pdf",
+    "saved_path": "C:\\Users\\32020\\Desktop\\documentmanagement_agent\\datasets\\public_enterprise_docs\\raw\\08_contract_legal_review_notice.pdf",
+    "bytes": 132986,
+    "content_type": "application/pdf"
+  },
+  {
+    "filename": "09_bid_compliance_checklist.pdf",
+    "title": "??????????",
+    "category": "approval",
+    "source_type": "education",
+    "url": "https://zcc.bbc.edu.cn/_upload/article/files/ac/32/a49638f14a189f42e2e9727e5c3e/fee04f39-dabd-46dd-93a5-a754338be0ff.pdf",
+    "saved_path": "C:\\Users\\32020\\Desktop\\documentmanagement_agent\\datasets\\public_enterprise_docs\\raw\\09_bid_compliance_checklist.pdf",
+    "bytes": 2215930,
+    "content_type": "application/pdf"
+  },
+  {
+    "filename": "13_guizhouu_contract_management_measures.pdf",
+    "title": "??????????",
+    "category": "approval",
+    "source_type": "education",
+    "url": "https://www.gzu.edu.cn/_upload/article/files/73/d6/ab8cf6a04fa1a25c56affb28321c/ef46c7bb-2ff5-4c9d-9944-26a0b8bc15bc.pdf",
+    "saved_path": "C:\\Users\\32020\\Desktop\\documentmanagement_agent\\datasets\\public_enterprise_docs\\raw\\13_guizhouu_contract_management_measures.pdf",
+    "bytes": 228112,
+    "content_type": "application/pdf"
+  },
+  {
+    "filename": "14_bit_finance_management_measures.pdf",
+    "title": "????????????",
+    "category": "budget",
+    "source_type": "education",
+    "url": "https://xxgk.bit.edu.cn/docs/2022-06/08cdcd99b0fc462a8bbbfcfb582ce06b.pdf",
+    "saved_path": "C:\\Users\\32020\\Desktop\\documentmanagement_agent\\datasets\\public_enterprise_docs\\raw\\14_bit_finance_management_measures.pdf",
+    "bytes": 717584,
+    "content_type": "application/pdf"
+  }
+]

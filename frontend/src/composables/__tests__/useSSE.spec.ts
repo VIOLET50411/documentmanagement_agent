@@ -37,9 +37,11 @@ describe("useSSE", () => {
     streamChatMock.mockResolvedValue({
       ok: true,
       body: streamFromChunks([
-        'data: {"status":"thinking","msg":"正在理解您的问题..."}\n\n',
-        'data: {"status":"streaming","token":"你好"}\n\n',
-        'data: {"status":"done","message_id":"m-1","thread_id":"t-1","citations":[{"doc_id":"d-1"}]}\n\n',
+        'id: trace-1:1\ndata: {"status":"thinking","msg":"正在理解您的问题..."}\n\n',
+        'id: trace-1:2\ndata: {"status":"streaming","content":"正在生成回答..."}\n\n',
+        'id: trace-1:3\ndata: {"status":"streaming","token":"你"}\n\n',
+        'id: trace-1:4\ndata: {"status":"streaming","token":"好"}\n\n',
+        'id: trace-1:5\ndata: {"status":"done","message_id":"m-1","thread_id":"t-1","citations":[{"doc_id":"d-1"}]}\n\n',
       ]),
     })
 
@@ -52,6 +54,27 @@ describe("useSSE", () => {
     expect(chatStore.streamStatus).toBe("done")
     expect(chatStore.activeSessionId).toBe("t-1")
     expect(chatStore.messages[1].id).toBe("m-1")
+  })
+
+  it("uses done answer as fallback when no token stream is present", async () => {
+    const { useSSE } = await import("../useSSE")
+    const chatStore = useChatStore()
+
+    streamChatMock.mockResolvedValue({
+      ok: true,
+      body: streamFromChunks([
+        'id: trace-2:1\ndata: {"status":"thinking","msg":"正在理解您的问题..."}\n\n',
+        'id: trace-2:2\ndata: {"status":"done","answer":"最终回答","message_id":"m-2","thread_id":"t-2","citations":[{"doc_id":"d-2"}]}\n\n',
+      ]),
+    })
+
+    const runtime = useSSE()
+    await runtime.sendMessage("只看最终答案")
+
+    expect(chatStore.messages[1].content).toBe("最终回答")
+    expect(chatStore.messages[1].citations).toEqual([{ doc_id: "d-2" }])
+    expect(chatStore.activeSessionId).toBe("t-2")
+    expect(chatStore.streamStatus).toBe("done")
   })
 
   it("records failure state when SSE request fails", async () => {

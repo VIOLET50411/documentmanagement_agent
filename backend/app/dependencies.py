@@ -30,6 +30,8 @@ STARTUP_SCHEMA_COMPATIBILITY_STATEMENTS = (
     "ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS invited_by_id VARCHAR(36)",
     "ALTER TABLE IF EXISTS user_invitations ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMP NULL",
     "CREATE INDEX IF NOT EXISTS idx_push_devices_tenant_user_active ON push_devices (tenant_id, user_id, is_active)",
+    "CREATE INDEX IF NOT EXISTS idx_llm_training_jobs_tenant_status ON llm_training_jobs (tenant_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_llm_model_registry_tenant_active ON llm_model_registry (tenant_id, is_active)",
 )
 
 
@@ -280,6 +282,18 @@ async def ensure_row_level_security() -> None:
         "DROP POLICY IF EXISTS tenant_isolation_push_devices ON push_devices",
         """
         CREATE POLICY tenant_isolation_push_devices ON push_devices
+        USING (tenant_id = current_setting('app.current_tenant', true))
+        """,
+        "ALTER TABLE llm_training_jobs ENABLE ROW LEVEL SECURITY",
+        "DROP POLICY IF EXISTS tenant_isolation_llm_training_jobs ON llm_training_jobs",
+        """
+        CREATE POLICY tenant_isolation_llm_training_jobs ON llm_training_jobs
+        USING (tenant_id = current_setting('app.current_tenant', true))
+        """,
+        "ALTER TABLE llm_model_registry ENABLE ROW LEVEL SECURITY",
+        "DROP POLICY IF EXISTS tenant_isolation_llm_model_registry ON llm_model_registry",
+        """
+        CREATE POLICY tenant_isolation_llm_model_registry ON llm_model_registry
         USING (tenant_id = current_setting('app.current_tenant', true))
         """,
     ]

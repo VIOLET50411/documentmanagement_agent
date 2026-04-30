@@ -8,6 +8,54 @@
     </div>
 
     <div class="card section-card">
+      <div class="section-header">
+        <h2>公开语料冷启动导出</h2>
+        <div class="action-group">
+          <button class="refresh-btn" @click="loadPublicCorpusLatest" :disabled="dashboard.loadingPublicCorpusLatest">
+            {{ dashboard.loadingPublicCorpusLatest ? "加载中..." : "刷新摘要" }}
+          </button>
+          <button class="refresh-btn" @click="exportPublicCorpusAsync" :disabled="dashboard.exportingPublicCorpus">
+            {{ dashboard.exportingPublicCorpus ? "导出中..." : "启动异步导出" }}
+          </button>
+        </div>
+      </div>
+      <div class="filters-grid public-corpus-grid">
+        <input v-model="dashboard.publicCorpusForm.dataset_name" class="input" type="text" placeholder="数据集名称" />
+        <input v-model="dashboard.publicCorpusForm.tenant_id" class="input" type="text" placeholder="租户 ID" />
+        <input v-model.number="dashboard.publicCorpusForm.train_ratio" class="input" type="number" min="0.5" max="0.98" step="0.01" />
+      </div>
+      <div class="stats-grid pipeline-grid">
+        <div class="stat-card card compact">
+          <span class="stat-value small">{{ dashboard.publicCorpusLatest?.record_count ?? 0 }}</span>
+          <span class="stat-label">原始记录数</span>
+        </div>
+        <div class="stat-card card compact">
+          <span class="stat-value small">{{ dashboard.publicCorpusLatest?.chunk_count ?? 0 }}</span>
+          <span class="stat-label">切块数</span>
+        </div>
+        <div class="stat-card card compact">
+          <span class="stat-value small">{{ dashboard.publicCorpusLatest?.training_readiness?.train_records ?? 0 }}</span>
+          <span class="stat-label">训练集样本</span>
+        </div>
+        <div class="stat-card card compact">
+          <span class="stat-value small">{{ dashboard.publicCorpusLatest?.training_readiness?.ready_for_sft ? "READY" : "NOT READY" }}</span>
+          <span class="stat-label">SFT 就绪</span>
+        </div>
+      </div>
+      <ul v-if="dashboard.publicCorpusLatest?.exists" class="list">
+        <li class="list-item stacked">
+          <span class="list-title">最近导出</span>
+          <span class="list-meta">数据集：{{ dashboard.publicCorpusLatest?.dataset_name || dashboard.publicCorpusForm.dataset_name }}</span>
+          <span class="list-meta">导出目录：{{ dashboard.publicCorpusLatest?.export_dir || "-" }}</span>
+          <span class="list-meta">Manifest：{{ dashboard.publicCorpusLatest?.manifest_path || "-" }}</span>
+          <span class="list-meta">生成时间：{{ formatDate(dashboard.publicCorpusLatest?.generated_at) }}</span>
+          <span class="list-meta">任务 ID：{{ dashboard.publicCorpusTaskId || "-" }}</span>
+        </li>
+      </ul>
+      <p v-else class="empty-text">暂无公开语料导出结果。</p>
+    </div>
+
+    <div class="card section-card">
       <h2>平台就绪度</h2>
       <div class="stats-grid pipeline-grid">
         <div class="stat-card card compact">
@@ -225,6 +273,8 @@ defineProps<{
   formatPercent: (value?: number | null) => string
   loadRuntimeToolDecisionSummary: () => Promise<void>
   loadRuntimeCheckpointSummary: () => Promise<void>
+  loadPublicCorpusLatest: () => Promise<void>
+  exportPublicCorpusAsync: () => Promise<void>
   downloadRuntimeToolSummary: () => void
 }>()
 </script>

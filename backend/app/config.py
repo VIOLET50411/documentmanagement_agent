@@ -95,6 +95,24 @@ class Settings(BaseSettings):
     llm_model_name: str = "qwen2.5:1.5b"
     llm_canary_percent: int = 10
     llm_canary_seed: str = "docmind-llm"
+    llm_enterprise_enabled: bool = False
+    llm_enterprise_api_base_url: str = ""
+    llm_enterprise_model_name: str = ""
+    llm_enterprise_api_key: str = ""
+    llm_enterprise_keywords: str = "制度,审批,流程,合规,预算,采购,合同,报销,风控,审计,人事,绩效,会议纪要,管理办法"
+    llm_enterprise_force_tenants: str = ""
+    llm_enterprise_canary_percent: int = 0
+    llm_enterprise_canary_seed: str = "docmind-enterprise-llm"
+    llm_enterprise_corpus_min_chars: int = 80
+    llm_training_provider: str = "mock"
+    llm_training_base_model: str = "qwen2.5:7b"
+    llm_training_artifacts_subdir: str = "model_training"
+    llm_training_min_train_records: int = 20
+    llm_training_auto_activate: bool = True
+    llm_training_executor_api_base_url: str = ""
+    llm_training_executor_api_key: str = ""
+    llm_training_executor_timeout_seconds: int = 1800
+    llm_training_deploy_fail_rollback: bool = True
 
     embedding_provider: str = "local"
     embedding_model_name: str = "BAAI/bge-m3"
@@ -200,6 +218,14 @@ class Settings(BaseSettings):
     @property
     def auth_mobile_oauth_redirect_uri_list(self) -> List[str]:
         return [uri.strip() for uri in self.auth_mobile_oauth_redirect_uris.split(",") if uri.strip()]
+
+    @property
+    def llm_enterprise_keyword_list(self) -> List[str]:
+        return [keyword.strip() for keyword in self.llm_enterprise_keywords.split(",") if keyword.strip()]
+
+    @property
+    def llm_enterprise_force_tenant_list(self) -> List[str]:
+        return [tenant.strip() for tenant in self.llm_enterprise_force_tenants.split(",") if tenant.strip()]
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore")
 

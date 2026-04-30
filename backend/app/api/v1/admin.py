@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 from collections import defaultdict
+from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List
@@ -23,7 +25,8 @@ from app.models.db.user import User
 from app.models.schemas.user import UserResponse
 
 router = APIRouter()
-REPORTS_DIR = Path(__file__).resolve().parents[3] / "reports"
+REPORTS_DIR = Path(os.getenv("DOCMIND_REPORTS_DIR") or (Path(__file__).resolve().parents[3] / "reports"))
+PUBLIC_DATASETS_DIR = Path(os.getenv("DOCMIND_SHARED_DATASETS_DIR") or (Path(__file__).resolve().parents[4] / "datasets"))
 
 
 def _error_signature(error_message: str | None) -> str:
@@ -34,6 +37,127 @@ def _error_signature(error_message: str | None) -> str:
     text = re.sub(r"\d{2,}", "<num>", text)
     text = re.sub(r"\s+", " ", text)
     return text[:120]
+
+
+def _serialize_training_job(item) -> dict:
+    payload = {
+        "id": item.id,
+        "tenant_id": item.tenant_id,
+        "source_tenant_id": item.source_tenant_id,
+        "dataset_name": item.dataset_name,
+        "status": item.status,
+        "stage": item.stage,
+        "provider": item.provider,
+        "base_model": item.base_model,
+        "target_model_name": item.target_model_name,
+        "export_dir": item.export_dir,
+        "manifest_path": item.manifest_path,
+        "artifact_dir": item.artifact_dir,
+        "runtime_task_id": item.runtime_task_id,
+        "activated_model_id": item.activated_model_id,
+        "train_records": item.train_records,
+        "val_records": item.val_records,
+        "activate_on_success": item.activate_on_success,
+        "error_message": item.error_message,
+        "created_by": item.created_by,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+        "completed_at": item.completed_at.isoformat() if item.completed_at else None,
+    }
+    if item.result_json:
+        try:
+            payload["result"] = json.loads(item.result_json)
+        except json.JSONDecodeError:
+            payload["result_raw"] = item.result_json
+    return payload
+
+
+def _serialize_registry_model(item) -> dict:
+    metrics = None
+    if item.metrics_json:
+        try:
+            metrics = json.loads(item.metrics_json)
+        except json.JSONDecodeError:
+            metrics = {"raw": item.metrics_json}
+    return {
+        "id": item.id,
+        "tenant_id": item.tenant_id,
+        "training_job_id": item.training_job_id,
+        "model_name": item.model_name,
+        "provider": item.provider,
+        "serving_base_url": item.serving_base_url,
+        "serving_model_name": item.serving_model_name,
+        "base_model": item.base_model,
+        "artifact_dir": item.artifact_dir,
+        "source_export_dir": item.source_export_dir,
+        "source_dataset_name": item.source_dataset_name,
+        "status": item.status,
+        "is_active": item.is_active,
+        "canary_percent": item.canary_percent,
+        "metrics": metrics,
+        "notes": item.notes,
+        "created_by": item.created_by,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+        "activated_at": item.activated_at.isoformat() if item.activated_at else None,
+    }
+
+
+async def _seed_runtime_task(task_id: str, *, tenant_id: str, task_type: str, description: str, stage: str = "queued") -> None:
+    redis_client = get_redis()
+    if redis_client is None:
+        return
+    now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    payload = {
+        "task_id": task_id,
+        "type": task_type,
+        "status": "pending",
+        "description": description,
+        "tool_use_id": None,
+        "start_time": now,
+        "end_time": None,
+        "output_offset": 0,
+        "retries": 0,
+        "notified": False,
+        "trace_id": task_id,
+        "tenant_id": tenant_id,
+        "session_id": None,
+        "stage": stage,
+        "error": None,
+        "updated_at": now,
+    }
+    await redis_client.set(f"runtime:task:{task_id}", json.dumps(payload, ensure_ascii=False), ex=settings.runtime_task_retention_seconds)
+    await redis_client.zadd(f"runtime:tasks:{tenant_id}", {task_id: datetime.now(timezone.utc).timestamp()})
+    await redis_client.expire(f"runtime:tasks:{tenant_id}", settings.runtime_task_retention_seconds)
+
+
+async def _get_runtime_task_payload(task_id: str, *, tenant_id: str, expected_type: str) -> dict:
+    from app.agent.runtime.task_store import TERMINAL_STATUSES
+    from app.agent.runtime.task_store import TaskStore
+    from celery.result import AsyncResult
+
+    from celery_app import celery
+
+    store = TaskStore(get_redis(), retention_seconds=settings.runtime_task_retention_seconds)
+    record = await store.get(task_id)
+    if record is None or record.tenant_id != tenant_id or record.type != expected_type:
+        return {"exists": False, "task_id": task_id}
+
+    result = AsyncResult(task_id, app=celery)
+    raw = result.result if result.ready() else None
+    if result.ready() and record.status not in TERMINAL_STATUSES:
+        if isinstance(raw, dict) and raw.get("ok", True):
+            await store.complete(task_id)
+        elif isinstance(raw, dict):
+            await store.fail(task_id, str(raw.get("error") or f"{expected_type}_failed"))
+        else:
+            await store.fail(task_id, str(raw))
+        record = await store.get(task_id) or record
+
+    payload = {"exists": True, "item": asdict(record), "celery_state": result.state}
+    if result.ready():
+        payload["result"] = raw if isinstance(raw, dict) else {"value": str(raw)}
+    return payload
 
 
 @router.get("/users", response_model=List[UserResponse])
@@ -332,6 +456,277 @@ async def get_backend_status(current_user: User = Depends(require_role("ADMIN"))
     }
     payload["runtime"] = {"mode": "v2_only"}
     return payload
+
+
+@router.get("/llm/domain-config")
+async def get_llm_domain_config(current_user: User = Depends(require_role("ADMIN"))):
+    return {
+        "enterprise_enabled": settings.llm_enterprise_enabled,
+        "enterprise_model_name": settings.llm_enterprise_model_name,
+        "enterprise_api_base_url": settings.llm_enterprise_api_base_url or settings.llm_api_base_url,
+        "enterprise_keywords": settings.llm_enterprise_keyword_list,
+        "enterprise_force_tenants": settings.llm_enterprise_force_tenant_list,
+        "enterprise_canary_percent": settings.llm_enterprise_canary_percent,
+        "enterprise_corpus_min_chars": settings.llm_enterprise_corpus_min_chars,
+        "tenant_id": current_user.tenant_id,
+        "notes": [
+            "建议将企业制度、审批、合规、采购、预算等高价值文档导出为领域语料后再做 LoRA/SFT。",
+            "若只想先试运行，可先启用 enterprise model 路由，不强制做全量微调。",
+        ],
+    }
+
+
+@router.post("/llm/domain-corpus/export")
+async def export_llm_domain_corpus(
+    doc_limit: int = 200,
+    chunk_limit: int = 4000,
+    keywords: str | None = None,
+    max_access_level: int = 3,
+    deduplicate: bool = True,
+    train_ratio: float = 0.9,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.enterprise_tuning_service import EnterpriseTuningService
+
+    keyword_list = [item.strip() for item in (keywords or "").split(",") if item.strip()]
+    return await EnterpriseTuningService(db, REPORTS_DIR).export_domain_corpus(
+        current_user.tenant_id,
+        doc_limit=max(doc_limit, 1),
+        chunk_limit=max(chunk_limit, 1),
+        keywords=keyword_list or None,
+        max_access_level=max(max_access_level, 1),
+        deduplicate=bool(deduplicate),
+        train_ratio=float(train_ratio),
+    )
+
+
+@router.post("/llm/public-corpus/export")
+async def export_public_corpus(
+    dataset_name: str = "swu_public_docs",
+    tenant_id: str = "public_cold_start",
+    train_ratio: float = 0.9,
+    current_user: User = Depends(require_role("ADMIN")),
+):
+    from app.services.enterprise_tuning_service import EnterpriseTuningService
+    from app.services.public_corpus_service import PublicCorpusService
+
+    dataset_root = PUBLIC_DATASETS_DIR / dataset_name
+    if not dataset_root.exists():
+        return {
+            "ok": False,
+            "message": f"公开语料目录不存在: {dataset_name}",
+            "requested_by": current_user.id,
+            "dataset_name": dataset_name,
+        }
+
+    records = PublicCorpusService(dataset_root).build_records()
+    result = EnterpriseTuningService(db=None, reports_dir=REPORTS_DIR).export_records_bundle(
+        tenant_id=tenant_id,
+        source_label=dataset_name,
+        records=records,
+        train_ratio=float(train_ratio),
+    )
+    result["dataset_name"] = dataset_name
+    result["record_count"] = len(records)
+    result["requested_by"] = current_user.id
+    return result
+
+
+@router.post("/llm/public-corpus/export-async")
+async def export_public_corpus_async(
+    dataset_name: str = "swu_public_docs",
+    tenant_id: str = "public_cold_start",
+    train_ratio: float = 0.9,
+    current_user: User = Depends(require_role("ADMIN")),
+):
+    from app.maintenance.tasks import export_public_corpus_job
+
+    dataset_root = PUBLIC_DATASETS_DIR / dataset_name
+    if not dataset_root.exists():
+        return {
+            "ok": False,
+            "message": f"公开语料目录不存在: {dataset_name}",
+            "requested_by": current_user.id,
+            "dataset_name": dataset_name,
+        }
+
+    task = export_public_corpus_job.apply_async(
+        args=(dataset_name, tenant_id, float(train_ratio), current_user.id),
+        queue=settings.celery_maintenance_queue,
+    )
+    await _seed_runtime_task(
+        task.id,
+        tenant_id=tenant_id,
+        task_type="public_corpus_export",
+        description=f"公开语料导出任务: dataset={dataset_name}, tenant={tenant_id}",
+    )
+    return {
+        "task_id": task.id,
+        "status": "pending",
+        "tenant_id": tenant_id,
+        "dataset_name": dataset_name,
+        "train_ratio": float(train_ratio),
+    }
+
+
+@router.get("/llm/public-corpus/tasks/{task_id}")
+async def get_public_corpus_export_task(
+    task_id: str,
+    tenant_id: str = "public_cold_start",
+    current_user: User = Depends(require_role("ADMIN")),
+):
+    payload = await _get_runtime_task_payload(task_id, tenant_id=tenant_id, expected_type="public_corpus_export")
+    if payload.get("exists"):
+        payload["requested_by"] = current_user.id
+    return payload
+
+
+@router.get("/llm/public-corpus/latest")
+async def get_latest_public_corpus_export(
+    dataset_name: str = "swu_public_docs",
+    tenant_id: str = "public_cold_start",
+    current_user: User = Depends(require_role("ADMIN")),
+):
+    from app.services.public_corpus_service import PublicCorpusService
+
+    dataset_root = PUBLIC_DATASETS_DIR / dataset_name
+    service = PublicCorpusService(dataset_root if dataset_root.exists() else PUBLIC_DATASETS_DIR)
+    summary = service.latest_export_summary(REPORTS_DIR, tenant_id=tenant_id)
+    summary["dataset_name"] = dataset_name
+    summary["requested_by"] = current_user.id
+    return summary
+
+
+@router.post("/llm/training/run-async")
+async def run_llm_training_async(
+    dataset_name: str = "swu_public_docs",
+    source_tenant_id: str = "public_cold_start",
+    target_tenant_id: str | None = None,
+    export_dir: str | None = None,
+    base_model: str | None = None,
+    provider: str | None = None,
+    activate_on_success: bool = True,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.llm_training_service import LLMTrainingService
+    from app.training.tasks import run_training_job
+
+    effective_target_tenant = target_tenant_id or current_user.tenant_id
+    service = LLMTrainingService(db, redis_client=get_redis(), reports_dir=REPORTS_DIR)
+    job, summary = await service.create_job(
+        tenant_id=effective_target_tenant,
+        source_tenant_id=source_tenant_id,
+        dataset_name=dataset_name,
+        export_dir=export_dir,
+        base_model=base_model,
+        provider=provider,
+        activate_on_success=bool(activate_on_success),
+        actor_id=current_user.id,
+    )
+    task = run_training_job.apply_async(args=(job.id,), queue=settings.celery_maintenance_queue)
+    await service.attach_runtime_task(job.id, task.id)
+    await _seed_runtime_task(
+        task.id,
+        tenant_id=effective_target_tenant,
+        task_type="llm_training",
+        description=f"模型训练任务: dataset={dataset_name}, target_tenant={effective_target_tenant}",
+    )
+    return {
+        "ok": True,
+        "job": _serialize_training_job(job),
+        "task_id": task.id,
+        "summary": {
+            "export_dir": summary.get("export_dir"),
+            "manifest_path": summary.get("manifest_path"),
+            "training_readiness": summary.get("training_readiness"),
+        },
+    }
+
+
+@router.get("/llm/training/jobs")
+async def list_llm_training_jobs(
+    tenant_id: str | None = None,
+    limit: int = 50,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.llm_training_service import LLMTrainingService
+
+    effective_tenant = tenant_id or current_user.tenant_id
+    items = await LLMTrainingService(db, redis_client=get_redis(), reports_dir=REPORTS_DIR).list_jobs(effective_tenant, limit=max(limit, 1))
+    return {"items": [_serialize_training_job(item) for item in items], "count": len(items), "tenant_id": effective_tenant}
+
+
+@router.get("/llm/training/jobs/{job_id}")
+async def get_llm_training_job(
+    job_id: str,
+    tenant_id: str | None = None,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.llm_training_service import LLMTrainingService
+
+    effective_tenant = tenant_id or current_user.tenant_id
+    service = LLMTrainingService(db, redis_client=get_redis(), reports_dir=REPORTS_DIR)
+    item = await service.get_job(effective_tenant, job_id)
+    if item is None:
+        return {"exists": False, "job_id": job_id}
+    payload = {"exists": True, "item": _serialize_training_job(item)}
+    if item.runtime_task_id:
+        payload["runtime_task"] = await _get_runtime_task_payload(item.runtime_task_id, tenant_id=effective_tenant, expected_type="llm_training")
+    return payload
+
+
+@router.get("/llm/models")
+async def list_llm_models(
+    tenant_id: str | None = None,
+    limit: int = 50,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.llm_training_service import LLMTrainingService
+
+    effective_tenant = tenant_id or current_user.tenant_id
+    service = LLMTrainingService(db, redis_client=get_redis(), reports_dir=REPORTS_DIR)
+    items = await service.list_models(effective_tenant, limit=max(limit, 1))
+    active = await service.get_active_model(effective_tenant)
+    return {"items": [_serialize_registry_model(item) for item in items], "count": len(items), "tenant_id": effective_tenant, "active": active}
+
+
+@router.post("/llm/models/{model_id}/activate")
+async def activate_llm_model(
+    model_id: str,
+    tenant_id: str | None = None,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.llm_training_service import LLMTrainingService
+
+    effective_tenant = tenant_id or current_user.tenant_id
+    model = await LLMTrainingService(db, redis_client=get_redis(), reports_dir=REPORTS_DIR).activate_model(
+        tenant_id=effective_tenant,
+        model_id=model_id,
+        actor_id=current_user.id,
+    )
+    return {"ok": True, "item": _serialize_registry_model(model)}
+
+
+@router.post("/llm/models/rollback")
+async def rollback_llm_model(
+    tenant_id: str | None = None,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.llm_training_service import LLMTrainingService
+
+    effective_tenant = tenant_id or current_user.tenant_id
+    result = await LLMTrainingService(db, redis_client=get_redis(), reports_dir=REPORTS_DIR).rollback_active_model(
+        tenant_id=effective_tenant,
+        actor_id=current_user.id,
+    )
+    return result
 
 
 @router.get("/system/retrieval-metrics")
@@ -688,64 +1083,13 @@ async def run_evaluation_async(sample_limit: int = 100, current_user: User = Dep
         args=(current_user.tenant_id, max(sample_limit, 1), current_user.id),
         queue=settings.celery_maintenance_queue,
     )
-    redis_client = get_redis()
-    if redis_client is not None:
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
-        payload = {
-            "task_id": task.id,
-            "type": "evaluation",
-            "status": "pending",
-            "description": f"评估任务: tenant={current_user.tenant_id}",
-            "tool_use_id": None,
-            "start_time": now,
-            "end_time": None,
-            "output_offset": 0,
-            "retries": 0,
-            "notified": False,
-            "trace_id": task.id,
-            "tenant_id": current_user.tenant_id,
-            "session_id": None,
-            "stage": "queued",
-            "error": None,
-            "updated_at": now,
-        }
-        await redis_client.set(f"runtime:task:{task.id}", json.dumps(payload, ensure_ascii=False), ex=settings.runtime_task_retention_seconds)
-        await redis_client.zadd(f"runtime:tasks:{current_user.tenant_id}", {task.id: datetime.now(timezone.utc).timestamp()})
-        await redis_client.expire(f"runtime:tasks:{current_user.tenant_id}", settings.runtime_task_retention_seconds)
+    await _seed_runtime_task(task.id, tenant_id=current_user.tenant_id, task_type="evaluation", description=f"评估任务: tenant={current_user.tenant_id}")
     return {"task_id": task.id, "status": "pending", "tenant_id": current_user.tenant_id, "sample_limit": max(sample_limit, 1)}
 
 
 @router.get("/evaluation/tasks/{task_id}")
 async def get_evaluation_task(task_id: str, current_user: User = Depends(require_role("ADMIN"))):
-    from dataclasses import asdict
-
-    from app.agent.runtime.task_store import TERMINAL_STATUSES
-    from app.agent.runtime.task_store import TaskStore
-    from celery.result import AsyncResult
-
-    from celery_app import celery
-
-    store = TaskStore(get_redis(), retention_seconds=settings.runtime_task_retention_seconds)
-    record = await store.get(task_id)
-    if record is None or record.tenant_id != current_user.tenant_id or record.type != "evaluation":
-        return {"exists": False, "task_id": task_id}
-    result = AsyncResult(task_id, app=celery)
-    raw = result.result if result.ready() else None
-    if result.ready() and record.status not in TERMINAL_STATUSES:
-        if isinstance(raw, dict) and raw.get("ok", True):
-            await store.complete(task_id)
-        elif isinstance(raw, dict):
-            await store.fail(task_id, str(raw.get("error") or "evaluation_failed"))
-        else:
-            await store.fail(task_id, str(raw))
-        record = await store.get(task_id) or record
-    payload = {"exists": True, "item": asdict(record), "celery_state": result.state}
-    if result.ready():
-        if isinstance(raw, dict):
-            payload["result"] = raw
-        else:
-            payload["result"] = {"value": str(raw)}
-    return payload
+    return await _get_runtime_task_payload(task_id, tenant_id=current_user.tenant_id, expected_type="evaluation")
 
 
 @router.get("/evaluation/latest")

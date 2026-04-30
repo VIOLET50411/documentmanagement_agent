@@ -4,6 +4,7 @@ from app.models.db.auth import EmailVerificationCode, OAuthAuthorizationCode, Pa
 from app.models.db.base import Base as Base
 from app.models.db.document import Document as Document, DocumentChunk as DocumentChunk
 from app.models.db.feedback import Feedback as Feedback
+from app.models.db.llm_training import LLMModelRegistry as LLMModelRegistry, LLMTrainingJob as LLMTrainingJob
 from app.models.db.push_device import PushDevice as PushDevice
 from app.models.db.runtime_checkpoint import RuntimeCheckpoint as RuntimeCheckpoint
 from app.models.db.security_audit import SecurityAuditEvent as SecurityAuditEvent
@@ -21,6 +22,8 @@ __all__ = [
     "Document",
     "DocumentChunk",
     "Feedback",
+    "LLMTrainingJob",
+    "LLMModelRegistry",
     "PushDevice",
     "RuntimeCheckpoint",
     "SecurityAuditEvent",

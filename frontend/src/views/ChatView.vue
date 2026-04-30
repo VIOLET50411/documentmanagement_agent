@@ -12,12 +12,12 @@
 
         <div class="history-search">
           <span class="search-icon">⌕</span>
-          <input v-model="sessionSearch" class="history-search-input" placeholder="搜索你的对话记录…" />
+          <input v-model="sessionSearch" class="history-search-input" placeholder="搜索你的对话记录" />
         </div>
 
         <div class="history-meta">
           <span>你在 DocMind 中的历史会话</span>
-          <button class="history-select">选择</button>
+          <button class="history-select" @click="startFreshChat">新建</button>
         </div>
 
         <div class="history-list">
@@ -32,7 +32,7 @@
           </button>
           <div v-if="filteredSessions.length === 0" class="history-empty">
             <p>没有匹配的对话记录。</p>
-            <p class="history-empty-hint">可以直接新建一轮问答，或换个关键词继续搜索。</p>
+            <p class="history-empty-hint">可以直接新建一轮问答，或更换关键词继续搜索。</p>
           </div>
         </div>
       </div>
@@ -116,7 +116,7 @@
         </div>
 
         <div v-if="chatStore.isStreaming && chatStore.streamStatus !== 'streaming'" class="status-line">
-          <span class="status-chip">正在处理：{{ chatStore.streamStatusMsg || '准备回答你的问题' }}</span>
+          <span class="status-chip">正在处理：{{ chatStore.streamStatusMsg || '正在准备回答你的问题' }}</span>
         </div>
       </div>
 
@@ -126,7 +126,7 @@
             ref="replyInputRef"
             v-model="inputMessage"
             class="hero-input"
-            placeholder="继续输入你的问题…"
+            placeholder="继续输入你的问题"
             rows="1"
             :disabled="chatStore.isStreaming"
             @keydown.enter.exact.prevent="handleSend"
@@ -158,7 +158,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { marked } from 'marked'
-import { useChatStore, type ChatSession } from '@/stores/chat'
+import { useChatStore } from '@/stores/chat'
 import { useSSE } from '@/composables/useSSE'
 import { useAutoScroll } from '@/composables/useAutoScroll'
 import { chatApi } from '@/api/chat'
@@ -186,7 +186,7 @@ const onboardingItems = [
   '验证一次关键词与混合检索结果',
   '发起一轮带引用的智能问答',
   '检查平台管理页中的运行指标',
-  '完成个人设置与推送设备登记',
+  '完成人员设置与推送设备登记',
 ]
 
 const hasMessages = computed(() => chatStore.messages.length > 0)

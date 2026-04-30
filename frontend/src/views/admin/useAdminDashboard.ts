@@ -41,6 +41,9 @@ export function useAdminDashboard() {
     readiness: null as GenericMap | null,
     runtimeToolDecisionSummary: null as GenericMap | null,
     runtimeCheckpointSummary: [] as GenericMap[],
+    publicCorpusLatest: null as GenericMap | null,
+    loadingPublicCorpusLatest: false,
+    exportingPublicCorpus: false,
     loadingRuntimeToolSummary: false,
     loadingRuntimeCheckpointSummary: false,
     runtimeToolFilters: {
@@ -50,6 +53,12 @@ export function useAdminDashboard() {
       tool_name: "",
       reason: "",
     },
+    publicCorpusForm: {
+      dataset_name: "swu_public_docs",
+      tenant_id: "public_cold_start",
+      train_ratio: 0.9,
+    },
+    publicCorpusTaskId: "",
     evaluationRunning: false,
     inviting: false,
     inviteMessage: "",
@@ -165,6 +174,7 @@ export function useAdminDashboard() {
         retrievalIntegrityRes,
         runtimeToolDecisionSummaryRes,
         runtimeCheckpointSummaryRes,
+        publicCorpusLatestRes,
       ] = await Promise.all([
         adminApi.getAnalytics(),
         adminApi.listUsers(),
@@ -190,6 +200,7 @@ export function useAdminDashboard() {
         adminApi.getRetrievalIntegrity(12),
         adminApi.getRuntimeToolDecisionSummary(dashboard.runtimeToolFilters),
         adminApi.getRuntimeCheckpointSummary(50),
+        adminApi.getLatestPublicCorpusExport(dashboard.publicCorpusForm.dataset_name, dashboard.publicCorpusForm.tenant_id),
       ])
 
       dashboard.analytics = analyticsRes
@@ -211,6 +222,7 @@ export function useAdminDashboard() {
       dashboard.retrievalIntegrity = retrievalIntegrityRes || null
       dashboard.runtimeToolDecisionSummary = runtimeToolDecisionSummaryRes || null
       dashboard.runtimeCheckpointSummary = runtimeCheckpointSummaryRes?.items || []
+      dashboard.publicCorpusLatest = publicCorpusLatestRes || null
     } catch (err: any) {
       dashboard.error = err?.response?.data?.detail || "加载管理台数据失败。"
     } finally {
@@ -316,6 +328,60 @@ export function useAdminDashboard() {
       dashboard.error = err?.response?.data?.detail || "加载运行时检查点摘要失败。"
     } finally {
       dashboard.loadingRuntimeCheckpointSummary = false
+    }
+  }
+
+  async function loadPublicCorpusLatest() {
+    dashboard.loadingPublicCorpusLatest = true
+    dashboard.error = ""
+    try {
+      dashboard.publicCorpusLatest = await adminApi.getLatestPublicCorpusExport(
+        dashboard.publicCorpusForm.dataset_name,
+        dashboard.publicCorpusForm.tenant_id,
+      )
+    } catch (err: any) {
+      dashboard.error = err?.response?.data?.detail || "加载公开语料导出摘要失败。"
+    } finally {
+      dashboard.loadingPublicCorpusLatest = false
+    }
+  }
+
+  async function exportPublicCorpusAsync() {
+    dashboard.exportingPublicCorpus = true
+    dashboard.error = ""
+    try {
+      const task = await adminApi.exportPublicCorpusAsync(
+        dashboard.publicCorpusForm.dataset_name,
+        dashboard.publicCorpusForm.tenant_id,
+        dashboard.publicCorpusForm.train_ratio,
+      )
+      dashboard.publicCorpusTaskId = task.task_id || ""
+      await pollPublicCorpusTask()
+    } catch (err: any) {
+      dashboard.error = err?.response?.data?.detail || "提交公开语料导出任务失败。"
+    } finally {
+      dashboard.exportingPublicCorpus = false
+    }
+  }
+
+  async function pollPublicCorpusTask() {
+    if (!dashboard.publicCorpusTaskId) return
+    try {
+      const payload = await adminApi.getPublicCorpusExportTask(dashboard.publicCorpusTaskId, dashboard.publicCorpusForm.tenant_id)
+      const status = payload?.item?.status || ""
+      if (status === "completed") {
+        await loadPublicCorpusLatest()
+        return
+      }
+      if (status === "failed" || status === "killed") {
+        dashboard.error = payload?.item?.error || "公开语料导出失败。"
+        return
+      }
+      window.setTimeout(() => {
+        void pollPublicCorpusTask()
+      }, 2500)
+    } catch (err: any) {
+      dashboard.error = err?.response?.data?.detail || "轮询公开语料导出任务失败。"
     }
   }
 
@@ -488,6 +554,8 @@ export function useAdminDashboard() {
     retryBySignature,
     loadRuntimeToolDecisionSummary,
     loadRuntimeCheckpointSummary,
+    loadPublicCorpusLatest,
+    exportPublicCorpusAsync,
     downloadRuntimeToolSummary,
     runEvaluation,
     downloadRuntimeMetrics,
