@@ -8,7 +8,16 @@ export function platformName() {
   return Capacitor.getPlatform()
 }
 
-const nativeApiBase = "http://172.20.10.3:18000/api/v1"
+function resolveNativeApiBase() {
+  const configured = (import.meta.env.VITE_NATIVE_API_BASE_URL || "").trim()
+  if (configured) {
+    return configured.replace(/\/$/, "") + "/api/v1"
+  }
+  // Android 模拟器访问宿主机默认走 10.0.2.2，避免把临时局域网 IP 写死在代码里。
+  return "http://10.0.2.2:18000/api/v1"
+}
+
+const nativeApiBase = resolveNativeApiBase()
 
 export function getApiBaseUrl() {
   return isNativeApp() ? nativeApiBase : "/api/v1"

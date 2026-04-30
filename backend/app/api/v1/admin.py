@@ -713,6 +713,43 @@ async def activate_llm_model(
     return {"ok": True, "item": _serialize_registry_model(model)}
 
 
+@router.post("/llm/models/{model_id}/canary")
+async def update_llm_model_canary(
+    model_id: str,
+    canary_percent: int = 0,
+    tenant_id: str | None = None,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.llm_training_service import LLMTrainingService
+
+    effective_tenant = tenant_id or current_user.tenant_id
+    model = await LLMTrainingService(db, redis_client=get_redis(), reports_dir=REPORTS_DIR).update_model_canary_percent(
+        tenant_id=effective_tenant,
+        model_id=model_id,
+        canary_percent=canary_percent,
+        actor_id=current_user.id,
+    )
+    return {"ok": True, "item": _serialize_registry_model(model)}
+
+
+@router.get("/llm/models/{model_id}/verify")
+async def verify_llm_model_serving(
+    model_id: str,
+    tenant_id: str | None = None,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.llm_training_service import LLMTrainingService
+
+    effective_tenant = tenant_id or current_user.tenant_id
+    result = await LLMTrainingService(db, redis_client=get_redis(), reports_dir=REPORTS_DIR).verify_model_serving(
+        tenant_id=effective_tenant,
+        model_id=model_id,
+    )
+    return {"ok": bool(result.get("ok")), "result": result}
+
+
 @router.post("/llm/models/rollback")
 async def rollback_llm_model(
     tenant_id: str | None = None,
@@ -747,7 +784,7 @@ async def get_platform_readiness(current_user: User = Depends(require_role("ADMI
 async def get_delivery_gap_report(current_user: User = Depends(require_role("ADMIN"))):
     from app.services.delivery_gap_service import DeliveryGapService
 
-    return await DeliveryGapService().build_report()
+    return await DeliveryGapService().build_report(current_user.tenant_id)
 
 
 @router.get("/system/security-policy")

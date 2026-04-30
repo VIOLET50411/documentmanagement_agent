@@ -14,6 +14,21 @@ services:
       MINIO_ENDPOINT: minio:9000
       LLM_PROVIDER: ollama
       LLM_API_BASE_URL: http://ollama:11434/v1
+      LLM_TRAINING_PROVIDER: script
+      LLM_TRAINING_BASE_MODEL: tinyllama
+      LLM_TRAINING_EXECUTOR_SCRIPT_COMMAND: python /app/scripts/run_lora_sft.py --request-json {request_json_path} --allow-plan-fallback
+      LLM_TRAINING_EXECUTOR_SCRIPT_WORKDIR: /workspace/reports
+      LLM_TRAINING_PUBLISH_ENABLED: "true"
+      LLM_TRAINING_PUBLISH_COMMAND: ollama create {target_model_name} -f {modelfile_path}
+      DOCMIND_TRAINING_DEV_TINY_MODEL_ENABLED: "true"
+      DOCMIND_TRAINING_DEV_TINY_MODEL: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+      DOCMIND_TRAINING_MAX_STEPS: "1"
+      DOCMIND_TRAINING_MAX_TRAIN_SAMPLES: "4"
+      DOCMIND_TRAINING_MAX_VAL_SAMPLES: "1"
+      DOCMIND_TRAINING_MAX_LENGTH: "64"
+      DOCMIND_TRAINING_LORA_R: "2"
+      DOCMIND_TRAINING_LORA_ALPHA: "4"
+      DOCMIND_TRAINING_TARGET_MODULES: "q_proj"
       EMBEDDING_PROVIDER: ollama
       EMBEDDING_API_BASE_URL: http://ollama:11434/v1
       CELERY_BROKER_URL: redis://redis:6379/1
@@ -34,7 +49,7 @@ services:
       - ./datasets:/workspace/datasets
       - ./reports:/workspace/reports
       - ./secrets:/run/secrets/docmind:ro
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${BACKEND_WORKERS:-4}
+    command: sh /app/scripts/bootstrap_runtime.sh uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${BACKEND_WORKERS:-4}
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,6 +85,21 @@ services:
       MINIO_ENDPOINT: minio:9000
       LLM_PROVIDER: ollama
       LLM_API_BASE_URL: http://ollama:11434/v1
+      LLM_TRAINING_PROVIDER: script
+      LLM_TRAINING_BASE_MODEL: tinyllama
+      LLM_TRAINING_EXECUTOR_SCRIPT_COMMAND: python /app/scripts/run_lora_sft.py --request-json {request_json_path} --allow-plan-fallback
+      LLM_TRAINING_EXECUTOR_SCRIPT_WORKDIR: /workspace/reports
+      LLM_TRAINING_PUBLISH_ENABLED: "true"
+      LLM_TRAINING_PUBLISH_COMMAND: ollama create {target_model_name} -f {modelfile_path}
+      DOCMIND_TRAINING_DEV_TINY_MODEL_ENABLED: "true"
+      DOCMIND_TRAINING_DEV_TINY_MODEL: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+      DOCMIND_TRAINING_MAX_STEPS: "1"
+      DOCMIND_TRAINING_MAX_TRAIN_SAMPLES: "4"
+      DOCMIND_TRAINING_MAX_VAL_SAMPLES: "1"
+      DOCMIND_TRAINING_MAX_LENGTH: "64"
+      DOCMIND_TRAINING_LORA_R: "2"
+      DOCMIND_TRAINING_LORA_ALPHA: "4"
+      DOCMIND_TRAINING_TARGET_MODULES: "q_proj"
       EMBEDDING_PROVIDER: ollama
       EMBEDDING_API_BASE_URL: http://ollama:11434/v1
       CELERY_BROKER_URL: redis://redis:6379/1
@@ -88,7 +118,7 @@ services:
       - ./datasets:/workspace/datasets
       - ./reports:/workspace/reports
       - ./secrets:/run/secrets/docmind:ro
-    command: celery -A celery_app worker --loglevel=info --autoscale=8,2 -Q default,ingestion,reindex,maintenance
+    command: sh /app/scripts/bootstrap_runtime.sh celery -A celery_app worker --loglevel=info --autoscale=8,2 -Q default,ingestion,reindex,maintenance
     depends_on:
       redis:
         condition: service_healthy
@@ -118,6 +148,14 @@ services:
       ES_HOST: elasticsearch
       NEO4J_URI: bolt://neo4j:7687
       MINIO_ENDPOINT: minio:9000
+      LLM_TRAINING_PROVIDER: script
+      LLM_TRAINING_BASE_MODEL: tinyllama
+      LLM_TRAINING_EXECUTOR_SCRIPT_COMMAND: python /app/scripts/run_lora_sft.py --request-json {request_json_path} --allow-plan-fallback
+      LLM_TRAINING_EXECUTOR_SCRIPT_WORKDIR: /workspace/reports
+      LLM_TRAINING_PUBLISH_ENABLED: "true"
+      LLM_TRAINING_PUBLISH_COMMAND: ollama create {target_model_name} -f {modelfile_path}
+      DOCMIND_TRAINING_DEV_TINY_MODEL_ENABLED: "true"
+      DOCMIND_TRAINING_DEV_TINY_MODEL: TinyLlama/TinyLlama-1.1B-Chat-v1.0
       EMBEDDING_PROVIDER: ollama
       EMBEDDING_API_BASE_URL: http://ollama:11434/v1
       CELERY_BROKER_URL: redis://redis:6379/1
@@ -136,7 +174,7 @@ services:
       - ./datasets:/workspace/datasets
       - ./reports:/workspace/reports
       - ./secrets:/run/secrets/docmind:ro
-    command: celery -A celery_app beat --loglevel=info
+    command: sh /app/scripts/bootstrap_runtime.sh celery -A celery_app beat --loglevel=info
     depends_on:
       redis:
         condition: service_healthy
@@ -166,7 +204,7 @@ services:
     volumes:
       - ./backend:/app
       - ./reports:/workspace/reports
-    command: celery -A celery_app flower --port=5555
+    command: sh /app/scripts/bootstrap_runtime.sh celery -A celery_app flower --port=5555
     depends_on:
       redis:
         condition: service_healthy

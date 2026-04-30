@@ -288,12 +288,23 @@ async def mobile_authorize(payload: MobileAuthorizeRequest, db: AsyncSession = D
 @router.post("/mobile/token", response_model=MobileTokenResponse)
 async def mobile_token(payload: MobileTokenRequest, db: AsyncSession = Depends(get_db)):
     try:
-        tokens = await MobileOAuthService(db).exchange_code(
-            code=payload.code,
-            client_id=payload.client_id,
-            redirect_uri=payload.redirect_uri,
-            code_verifier=payload.code_verifier,
-        )
+        service = MobileOAuthService(db)
+        if payload.grant_type == "refresh_token":
+            if not payload.refresh_token:
+                raise ValueError("refresh_token 不能为空")
+            tokens = await service.refresh_tokens(
+                refresh_token=payload.refresh_token,
+                client_id=payload.client_id,
+            )
+        else:
+            if not payload.code or not payload.redirect_uri or not payload.code_verifier:
+                raise ValueError("authorization_code 模式缺少必要参数")
+            tokens = await service.exchange_code(
+                code=payload.code,
+                client_id=payload.client_id,
+                redirect_uri=payload.redirect_uri,
+                code_verifier=payload.code_verifier,
+            )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return MobileTokenResponse(**tokens)

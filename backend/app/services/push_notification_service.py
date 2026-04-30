@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 import psycopg2
 import structlog
+from sqlalchemy import and_
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,6 +33,9 @@ class PushNotificationService:
     WECHAT_PLATFORMS = {"wechat", "weapp", "miniapp", "miniprogram"}
     FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging"
     DEFAULT_FCM_SERVICE_ACCOUNT_FILE = "/run/secrets/docmind/firebase-service-account.json"
+    INVALID_FCM_CODES = {"invalidregistration", "notregistered", "unregistered", "invalid_argument"}
+    INVALID_APNS_REASONS = {"baddevicetoken", "unregistered", "deviceTokenNotForTopic".lower()}
+    INVALID_WECHAT_CODES = {40003, 40037, 43101}
 
     def __init__(self, db: AsyncSession | None = None, redis_client=None):
         self.db = db
@@ -138,6 +142,43 @@ class PushNotificationService:
             .order_by(PushDevice.updated_at.desc())
         )
         return list(result.scalars().all())
+
+    async def summarize_devices(self, *, tenant_id: str, user_id: str, current_token: str | None = None) -> dict:
+        devices = await self.list_devices(tenant_id=tenant_id, user_id=user_id)
+        normalized_current = str(current_token or "").strip()
+        matched_device = next((device for device in devices if device.device_token == normalized_current), None) if normalized_current else None
+
+        by_platform: dict[str, dict[str, int]] = {}
+        active_count = 0
+        inactive_count = 0
+        for device in devices:
+            platform = self._normalize_platform(device.platform)
+            bucket = by_platform.setdefault(platform, {"active": 0, "inactive": 0, "total": 0})
+            bucket["total"] += 1
+            if device.is_active:
+                bucket["active"] += 1
+                active_count += 1
+            else:
+                bucket["inactive"] += 1
+                inactive_count += 1
+
+        return {
+            "total": len(devices),
+            "active": active_count,
+            "inactive": inactive_count,
+            "by_platform": by_platform,
+            "current_token_provided": bool(normalized_current),
+            "current_token_status": (
+                "matched_active"
+                if matched_device and matched_device.is_active
+                else "matched_inactive"
+                if matched_device
+                else "not_found"
+                if normalized_current
+                else "not_provided"
+            ),
+            "current_device": self._serialize_device_record(matched_device) if matched_device is not None else None,
+        }
 
     async def list_recent_events(self, *, tenant_id: str, user_id: str, limit: int = 20) -> list[dict]:
         if self.redis is None:
@@ -353,35 +394,70 @@ class PushNotificationService:
     async def _send_fcm_async(self, payload: dict, devices: list[dict]) -> dict:
         if not self._fcm_configured():
             return self._provider_not_configured("fcm", payload, devices)
-        request_payload, headers, endpoint = self._build_fcm_request(payload, devices)
-        try:
-            timeout = httpx.Timeout(10.0, connect=2.0)
-            async with httpx.AsyncClient(timeout=timeout) as client:
+        timeout = httpx.Timeout(10.0, connect=2.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            if self._uses_fcm_v1():
+                results: list[dict] = []
+                for device in devices:
+                    request_payload, headers, endpoint = self._build_fcm_v1_request(payload, device)
+                    try:
+                        response = await client.post(endpoint, json=request_payload, headers=headers)
+                        response.raise_for_status()
+                        self.logger.info("push.fcm_response", status_code=response.status_code, response=response.text[:500], token_suffix=self._token_suffix(device.get("device_token")))
+                        results.append(self._provider_success("fcm", [device]))
+                    except httpx.HTTPStatusError as exc:
+                        body = exc.response.text[:1000] if exc.response is not None else ""
+                        failure = await self._handle_provider_failure_async("fcm", payload, [device], f"{exc}. body={body}", response=exc.response)
+                        results.append(failure)
+                    except httpx.HTTPError as exc:
+                        results.append(await self._handle_provider_failure_async("fcm", payload, [device], str(exc)))
+                return self._collapse_results("fcm", results)
+
+            request_payload, headers, endpoint = self._build_fcm_legacy_request(payload, devices)
+            try:
                 response = await client.post(endpoint, json=request_payload, headers=headers)
                 response.raise_for_status()
-                self.logger.info("push.fcm_response", status_code=response.status_code, response=response.text[:500])
-            return self._provider_success("fcm", devices)
-        except httpx.HTTPStatusError as exc:
-            body = exc.response.text[:1000] if exc.response is not None else ""
-            return self._provider_failure("fcm", devices, f"{exc}. body={body}")
-        except httpx.HTTPError as exc:
-            return self._provider_failure("fcm", devices, str(exc))
+                self.logger.info("push.fcm_response", status_code=response.status_code, response=response.text[:500], device_count=len(devices))
+                body = response.json()
+                return await self._handle_fcm_legacy_response_async(payload, devices, body)
+            except httpx.HTTPStatusError as exc:
+                body = exc.response.text[:1000] if exc.response is not None else ""
+                return await self._handle_provider_failure_async("fcm", payload, devices, f"{exc}. body={body}", response=exc.response)
+            except (httpx.HTTPError, ValueError) as exc:
+                return await self._handle_provider_failure_async("fcm", payload, devices, str(exc))
 
     def _send_fcm_sync(self, payload: dict, devices: list[dict]) -> dict:
         if not self._fcm_configured():
             return self._provider_not_configured("fcm", payload, devices)
-        request_payload, headers, endpoint = self._build_fcm_request(payload, devices)
-        try:
-            with httpx.Client(timeout=10.0) as client:
+        with httpx.Client(timeout=10.0) as client:
+            if self._uses_fcm_v1():
+                results: list[dict] = []
+                for device in devices:
+                    request_payload, headers, endpoint = self._build_fcm_v1_request(payload, device)
+                    try:
+                        response = client.post(endpoint, json=request_payload, headers=headers)
+                        response.raise_for_status()
+                        self.logger.info("push.fcm_response", status_code=response.status_code, response=response.text[:500], token_suffix=self._token_suffix(device.get("device_token")))
+                        results.append(self._provider_success("fcm", [device]))
+                    except httpx.HTTPStatusError as exc:
+                        body = exc.response.text[:1000] if exc.response is not None else ""
+                        results.append(self._handle_provider_failure_sync("fcm", payload, [device], f"{exc}. body={body}", response=exc.response))
+                    except httpx.HTTPError as exc:
+                        results.append(self._handle_provider_failure_sync("fcm", payload, [device], str(exc)))
+                return self._collapse_results("fcm", results)
+
+            request_payload, headers, endpoint = self._build_fcm_legacy_request(payload, devices)
+            try:
                 response = client.post(endpoint, json=request_payload, headers=headers)
                 response.raise_for_status()
-                self.logger.info("push.fcm_response", status_code=response.status_code, response=response.text[:500])
-            return self._provider_success("fcm", devices)
-        except httpx.HTTPStatusError as exc:
-            body = exc.response.text[:1000] if exc.response is not None else ""
-            return self._provider_failure("fcm", devices, f"{exc}. body={body}")
-        except httpx.HTTPError as exc:
-            return self._provider_failure("fcm", devices, str(exc))
+                self.logger.info("push.fcm_response", status_code=response.status_code, response=response.text[:500], device_count=len(devices))
+                body = response.json()
+                return self._handle_fcm_legacy_response_sync(payload, devices, body)
+            except httpx.HTTPStatusError as exc:
+                body = exc.response.text[:1000] if exc.response is not None else ""
+                return self._handle_provider_failure_sync("fcm", payload, devices, f"{exc}. body={body}", response=exc.response)
+            except (httpx.HTTPError, ValueError) as exc:
+                return self._handle_provider_failure_sync("fcm", payload, devices, str(exc))
 
     async def _send_apns_async(self, payload: dict, devices: list[dict]) -> dict:
         if not self._apns_configured():
@@ -409,7 +485,7 @@ class PushNotificationService:
                     response.raise_for_status()
                     results.append(self._provider_success("apns", [device]))
                 except httpx.HTTPError as exc:
-                    results.append(self._provider_failure("apns", [device], str(exc)))
+                    results.append(await self._handle_provider_failure_async("apns", payload, [device], str(exc), response=getattr(exc, "response", None)))
         return self._collapse_results("apns", results)
 
     def _send_apns_sync(self, payload: dict, devices: list[dict]) -> dict:
@@ -437,7 +513,7 @@ class PushNotificationService:
                     response.raise_for_status()
                     results.append(self._provider_success("apns", [device]))
                 except httpx.HTTPError as exc:
-                    results.append(self._provider_failure("apns", [device], str(exc)))
+                    results.append(self._handle_provider_failure_sync("apns", payload, [device], str(exc), response=getattr(exc, "response", None)))
         return self._collapse_results("apns", results)
 
     async def _send_wechat_async(self, payload: dict, devices: list[dict]) -> list[dict]:
@@ -465,11 +541,11 @@ class PushNotificationService:
                     response.raise_for_status()
                     body = response.json()
                     if body.get("errcode", 0) != 0:
-                        results.append(self._provider_failure("wechat", [device], body.get("errmsg", "wechat error")))
+                        results.append(await self._handle_provider_failure_async("wechat", payload, [device], body.get("errmsg", "wechat error"), response_body=body))
                     else:
                         results.append(self._provider_success("wechat", [device]))
                 except (httpx.HTTPError, ValueError) as exc:
-                    results.append(self._provider_failure("wechat", [device], str(exc)))
+                    results.append(await self._handle_provider_failure_async("wechat", payload, [device], str(exc), response=getattr(exc, "response", None)))
         return results
 
     def _send_wechat_sync(self, payload: dict, devices: list[dict]) -> list[dict]:
@@ -496,11 +572,11 @@ class PushNotificationService:
                     response.raise_for_status()
                     body = response.json()
                     if body.get("errcode", 0) != 0:
-                        results.append(self._provider_failure("wechat", [device], body.get("errmsg", "wechat error")))
+                        results.append(self._handle_provider_failure_sync("wechat", payload, [device], body.get("errmsg", "wechat error"), response_body=body))
                     else:
                         results.append(self._provider_success("wechat", [device]))
                 except (httpx.HTTPError, ValueError) as exc:
-                    results.append(self._provider_failure("wechat", [device], str(exc)))
+                    results.append(self._handle_provider_failure_sync("wechat", payload, [device], str(exc), response=getattr(exc, "response", None)))
         return results
 
     def _send_log(self, payload: dict, devices: list[dict], provider: str = "log") -> dict:
@@ -514,8 +590,7 @@ class PushNotificationService:
         )
         return self._provider_success(provider, devices)
 
-    def _build_fcm_request(self, payload: dict, devices: list[dict]) -> tuple[dict[str, Any], dict[str, str], str]:
-        tokens = [device["device_token"] for device in devices]
+    def _build_fcm_v1_request(self, payload: dict, device: dict) -> tuple[dict[str, Any], dict[str, str], str]:
         service_account_file = self._resolve_fcm_service_account_file()
         project_id = self._resolve_fcm_project_id(service_account_file)
         if service_account_file:
@@ -523,7 +598,7 @@ class PushNotificationService:
             endpoint = f"https://fcm.googleapis.com/v1/projects/{project_id}/messages:send"
             body = {
                 "message": {
-                    "token": tokens[0],
+                    "token": device["device_token"],
                     "notification": {"title": payload.get("title"), "body": payload.get("body")},
                     "data": {
                         "status": str(payload.get("status") or ""),
@@ -534,21 +609,23 @@ class PushNotificationService:
             headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
             return body, headers, endpoint
 
-        endpoint = settings.push_fcm_endpoint
-        if settings.push_fcm_access_token and settings.push_fcm_project_id:
-            endpoint = f"https://fcm.googleapis.com/v1/projects/{settings.push_fcm_project_id}/messages:send"
-            body = {
-                "message": {
-                    "token": tokens[0],
-                    "notification": {"title": payload.get("title"), "body": payload.get("body")},
-                    "data": {
-                        "status": str(payload.get("status") or ""),
-                        "document_id": str(payload.get("document_id") or ""),
-                    },
-                }
+        endpoint = f"https://fcm.googleapis.com/v1/projects/{settings.push_fcm_project_id}/messages:send"
+        body = {
+            "message": {
+                "token": device["device_token"],
+                "notification": {"title": payload.get("title"), "body": payload.get("body")},
+                "data": {
+                    "status": str(payload.get("status") or ""),
+                    "document_id": str(payload.get("document_id") or ""),
+                },
             }
-            headers = {"Authorization": f"Bearer {settings.push_fcm_access_token}", "Content-Type": "application/json"}
-            return body, headers, endpoint
+        }
+        headers = {"Authorization": f"Bearer {settings.push_fcm_access_token}", "Content-Type": "application/json"}
+        return body, headers, endpoint
+
+    def _build_fcm_legacy_request(self, payload: dict, devices: list[dict]) -> tuple[dict[str, Any], dict[str, str], str]:
+        tokens = [device["device_token"] for device in devices]
+        endpoint = settings.push_fcm_endpoint
 
         body = {
             "registration_ids": tokens,
@@ -557,6 +634,194 @@ class PushNotificationService:
         }
         headers = {"Authorization": f"key={settings.push_fcm_server_key}", "Content-Type": "application/json"}
         return body, headers, endpoint
+
+    def _uses_fcm_v1(self) -> bool:
+        return bool(
+            (self._resolve_fcm_service_account_file() and self._resolve_fcm_project_id(self._resolve_fcm_service_account_file()))
+            or (settings.push_fcm_access_token and settings.push_fcm_project_id)
+        )
+
+    async def _handle_fcm_legacy_response_async(self, payload: dict, devices: list[dict], body: dict[str, Any]) -> dict:
+        failed_devices = self._extract_fcm_legacy_failed_devices(devices, body)
+        invalid_devices = [item for item in failed_devices if self._looks_like_invalid_token("fcm", item.get("error", ""), body)]
+        if invalid_devices:
+            await self._deactivate_devices_async(payload, invalid_devices, provider="fcm", reason="invalid_registration_token")
+        results = [self._provider_success("fcm", [device]) for device in devices if device not in failed_devices]
+        for failure in failed_devices:
+            results.append(self._provider_failure("fcm", [failure], str(failure.get("error") or "delivery failed")))
+        return self._collapse_results("fcm", results)
+
+    def _handle_fcm_legacy_response_sync(self, payload: dict, devices: list[dict], body: dict[str, Any]) -> dict:
+        failed_devices = self._extract_fcm_legacy_failed_devices(devices, body)
+        invalid_devices = [item for item in failed_devices if self._looks_like_invalid_token("fcm", item.get("error", ""), body)]
+        if invalid_devices:
+            self._deactivate_devices_sync(payload, invalid_devices, provider="fcm", reason="invalid_registration_token")
+        results = [self._provider_success("fcm", [device]) for device in devices if device not in failed_devices]
+        for failure in failed_devices:
+            results.append(self._provider_failure("fcm", [failure], str(failure.get("error") or "delivery failed")))
+        return self._collapse_results("fcm", results)
+
+    def _extract_fcm_legacy_failed_devices(self, devices: list[dict], body: dict[str, Any]) -> list[dict]:
+        failures: list[dict] = []
+        results = body.get("results")
+        if not isinstance(results, list):
+            return failures
+        for index, result in enumerate(results):
+            if not isinstance(result, dict):
+                continue
+            error = result.get("error")
+            if not error:
+                continue
+            if index >= len(devices):
+                continue
+            failure = dict(devices[index])
+            failure["error"] = str(error)
+            failures.append(failure)
+        return failures
+
+    async def _handle_provider_failure_async(
+        self,
+        provider: str,
+        payload: dict,
+        devices: list[dict],
+        error: str,
+        *,
+        response: httpx.Response | None = None,
+        response_body: dict[str, Any] | None = None,
+    ) -> dict:
+        if self._looks_like_invalid_token(provider, error, response_body, response=response):
+            await self._deactivate_devices_async(payload, devices, provider=provider, reason="invalid_device_token")
+        return self._provider_failure(provider, devices, error)
+
+    def _handle_provider_failure_sync(
+        self,
+        provider: str,
+        payload: dict,
+        devices: list[dict],
+        error: str,
+        *,
+        response: httpx.Response | None = None,
+        response_body: dict[str, Any] | None = None,
+    ) -> dict:
+        if self._looks_like_invalid_token(provider, error, response_body, response=response):
+            self._deactivate_devices_sync(payload, devices, provider=provider, reason="invalid_device_token")
+        return self._provider_failure(provider, devices, error)
+
+    def _looks_like_invalid_token(
+        self,
+        provider: str,
+        error: str,
+        response_body: dict[str, Any] | None = None,
+        *,
+        response: httpx.Response | None = None,
+    ) -> bool:
+        if not settings.push_auto_deactivate_invalid_tokens:
+            return False
+        lowered = str(error or "").lower()
+        if provider == "fcm":
+            if any(code in lowered for code in self.INVALID_FCM_CODES):
+                return True
+            body = response_body or self._safe_json(response)
+            return self._fcm_body_has_invalid_token(body)
+        if provider == "apns":
+            body = response_body or self._safe_json(response)
+            reason = str((body or {}).get("reason") or "").lower()
+            return reason in self.INVALID_APNS_REASONS or "baddevicetoken" in lowered or "unregistered" in lowered
+        if provider == "wechat":
+            body = response_body or self._safe_json(response)
+            errcode = int((body or {}).get("errcode") or 0)
+            return errcode in self.INVALID_WECHAT_CODES
+        return False
+
+    def _fcm_body_has_invalid_token(self, body: dict[str, Any] | None) -> bool:
+        if not isinstance(body, dict):
+            return False
+        detail_list = (((body.get("error") or {}).get("details")) if isinstance(body.get("error"), dict) else None) or []
+        for detail in detail_list:
+            if not isinstance(detail, dict):
+                continue
+            code = str(detail.get("errorCode") or "").lower()
+            if code in self.INVALID_FCM_CODES:
+                return True
+        code = str((body.get("error") or {}).get("status") or "").lower() if isinstance(body.get("error"), dict) else ""
+        message = str((body.get("error") or {}).get("message") or "").lower() if isinstance(body.get("error"), dict) else ""
+        return any(item in code or item in message for item in self.INVALID_FCM_CODES)
+
+    async def _deactivate_devices_async(self, payload: dict, devices: list[dict], *, provider: str, reason: str) -> None:
+        if self.db is None:
+            return
+        tokens = [str(device.get("device_token") or "").strip() for device in devices if str(device.get("device_token") or "").strip()]
+        if not tokens:
+            return
+        result = await self.db.execute(
+            select(PushDevice).where(
+                and_(
+                    PushDevice.tenant_id == payload.get("tenant_id"),
+                    PushDevice.user_id == payload.get("user_id"),
+                    PushDevice.device_token.in_(tokens),
+                    PushDevice.is_active.is_(True),
+                )
+            )
+        )
+        rows = list(result.scalars().all())
+        if not rows:
+            return
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        for row in rows:
+            row.is_active = False
+            row.updated_at = now
+        await self.db.flush()
+        self.logger.warning(
+            "push.invalid_tokens_deactivated",
+            provider=provider,
+            reason=reason,
+            tenant_id=payload.get("tenant_id"),
+            user_id=payload.get("user_id"),
+            device_count=len(rows),
+            token_suffixes=[self._token_suffix(row.device_token) for row in rows],
+        )
+
+    def _deactivate_devices_sync(self, payload: dict, devices: list[dict], *, provider: str, reason: str) -> None:
+        tokens = [str(device.get("device_token") or "").strip() for device in devices if str(device.get("device_token") or "").strip()]
+        if not tokens:
+            return
+        conn = psycopg2.connect(settings.postgres_dsn_sync)
+        try:
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE push_devices
+                    SET is_active = FALSE, updated_at = %s
+                    WHERE tenant_id = %s AND user_id = %s AND is_active = TRUE AND device_token = ANY(%s)
+                    """,
+                    (now, payload.get("tenant_id"), payload.get("user_id"), tokens),
+                )
+            conn.commit()
+            self.logger.warning(
+                "push.invalid_tokens_deactivated",
+                provider=provider,
+                reason=reason,
+                tenant_id=payload.get("tenant_id"),
+                user_id=payload.get("user_id"),
+                device_count=len(tokens),
+                token_suffixes=[self._token_suffix(token) for token in tokens],
+            )
+        finally:
+            conn.close()
+
+    def _safe_json(self, response: httpx.Response | None) -> dict[str, Any] | None:
+        if response is None:
+            return None
+        try:
+            payload = response.json()
+        except ValueError:
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def _token_suffix(self, token: str | None) -> str:
+        value = str(token or "")
+        return value[-8:] if len(value) > 8 else value
 
     def _load_fcm_access_token_from_service_account(self) -> str:
         path = Path(self._resolve_fcm_service_account_file())
@@ -681,4 +946,19 @@ class PushNotificationService:
             "device_token": device.device_token,
             "device_name": device.device_name,
             "app_version": device.app_version,
+        }
+
+    def _serialize_device_record(self, device: PushDevice) -> dict:
+        return {
+            "id": device.id,
+            "tenant_id": device.tenant_id,
+            "user_id": device.user_id,
+            "platform": self._normalize_platform(device.platform),
+            "device_token": device.device_token,
+            "device_name": device.device_name,
+            "app_version": device.app_version,
+            "is_active": bool(device.is_active),
+            "created_at": device.created_at.isoformat() if device.created_at else None,
+            "updated_at": device.updated_at.isoformat() if device.updated_at else None,
+            "last_seen_at": device.last_seen_at.isoformat() if device.last_seen_at else None,
         }

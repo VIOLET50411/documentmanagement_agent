@@ -1,0 +1,9 @@
+-r requirements.txt
+
+# Optional training stack for real LoRA/SFT execution
+transformers==4.46.3
+datasets==3.1.0
+peft==0.13.2
+accelerate==1.0.1
+safetensors>=0.6.0,<0.7.0
+sentencepiece==0.2.0

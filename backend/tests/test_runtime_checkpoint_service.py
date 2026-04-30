@@ -1,8 +1,9 @@
-from datetime import UTC, datetime, timedelta
+﻿from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
 
+from app.config import settings
 from app.services.runtime_checkpoint_service import RuntimeCheckpointService
 
 
@@ -26,44 +27,70 @@ class FakeDB:
 
 
 @pytest.mark.asyncio
-async def test_runtime_checkpoint_service_summarizes_latest_session_state():
+async def test_runtime_checkpoint_service_summarizes_latest_session_state(monkeypatch):
+    monkeypatch.setattr(settings, 'runtime_langgraph_native_checkpoint_enabled', True)
     now = datetime.now(UTC).replace(tzinfo=None)
     items = [
         SimpleNamespace(
-            session_id="s-1",
-            tenant_id="t-1",
-            trace_id="trace-old",
-            node_name="retriever",
+            session_id='s-1',
+            tenant_id='t-1',
+            trace_id='trace-old',
+            node_name='retriever',
             iteration=0,
             created_at=now - timedelta(minutes=2),
             payload_json='{"intent":"qa","rewritten_query":"旧查询","warnings":[],"answer_preview":""}',
         ),
         SimpleNamespace(
-            session_id="s-1",
-            tenant_id="t-1",
-            trace_id="trace-new",
-            node_name="critic",
+            session_id='s-1',
+            tenant_id='t-1',
+            trace_id='trace-new',
+            node_name='critic',
             iteration=1,
             created_at=now,
             payload_json='{"intent":"qa","rewritten_query":"新查询","warnings":["retrieval_insufficient"],"answer_preview":"摘要"}',
         ),
         SimpleNamespace(
-            session_id="s-2",
-            tenant_id="t-1",
-            trace_id="trace-2",
-            node_name="generator",
+            session_id='s-2',
+            tenant_id='t-1',
+            trace_id='trace-2',
+            node_name='generator',
             iteration=0,
             created_at=now - timedelta(minutes=1),
             payload_json='{"intent":"summarize","rewritten_query":"摘要查询","warnings":[]}',
         ),
     ]
 
-    rows = await RuntimeCheckpointService(FakeDB(items)).summarize_sessions("t-1", limit=10)
+    rows = await RuntimeCheckpointService(FakeDB(items)).summarize_sessions('t-1', limit=10)
 
     assert len(rows) == 2
-    assert rows[0]["session_id"] == "s-1"
-    assert rows[0]["trace_id"] == "trace-new"
-    assert rows[0]["latest_node_name"] == "critic"
-    assert rows[0]["checkpoint_count"] == 2
-    assert rows[0]["rewritten_query"] == "新查询"
-    assert rows[0]["warnings"] == ["retrieval_insufficient"]
+    assert rows[0]['session_id'] == 's-1'
+    assert rows[0]['trace_id'] == 'trace-new'
+    assert rows[0]['latest_node_name'] == 'critic'
+    assert rows[0]['checkpoint_count'] == 2
+    assert rows[0]['rewritten_query'] == '新查询'
+    assert rows[0]['warnings'] == ['retrieval_insufficient']
+    assert rows[0]['resume_strategy'] == 'native'
+    assert rows[0]['native_checkpoint_enabled'] is True
+
+
+@pytest.mark.asyncio
+async def test_runtime_checkpoint_service_marks_terminal_sessions(monkeypatch):
+    monkeypatch.setattr(settings, 'runtime_langgraph_native_checkpoint_enabled', False)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    items = [
+        SimpleNamespace(
+            session_id='s-3',
+            tenant_id='t-1',
+            trace_id='trace-terminal',
+            node_name='done',
+            iteration=1,
+            created_at=now,
+            payload_json='{"intent":"qa","rewritten_query":"完成查询","warnings":[],"answer_preview":"已完成"}',
+        )
+    ]
+
+    rows = await RuntimeCheckpointService(FakeDB(items)).summarize_sessions('t-1', limit=10)
+
+    assert rows[0]['resumable'] is False
+    assert rows[0]['resume_strategy'] == 'terminal'
+    assert rows[0]['native_checkpoint_enabled'] is False

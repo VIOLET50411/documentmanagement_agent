@@ -1,11 +1,11 @@
-<template>
+﻿<template>
   <div class="settings-page">
     <header class="settings-header">
       <div>
         <p class="settings-eyebrow">工作台设置</p>
         <h1>设置</h1>
       </div>
-      <p class="settings-summary">统一管理账号、外观、回答偏好、设备与推送通知。</p>
+      <p class="settings-summary">统一管理账号、外观、回答偏好、设备接入与推送通知。</p>
     </header>
 
     <div class="settings-shell">
@@ -63,7 +63,7 @@
                 <button class="theme-card" :class="{ active: themeStore.isDark }" @click="themeStore.setTheme('dark')">
                   <span class="theme-preview theme-dark-preview"></span>
                   <strong>深色模式</strong>
-                  <small>适合低光环境，减少眩光与视觉疲劳。</small>
+                  <small>适合低光环境，减少眩光和视觉疲劳。</small>
                 </button>
               </div>
             </section>
@@ -154,17 +154,53 @@
               <h2>设备</h2>
               <p>登记推送设备，用于移动端、桌面端或 Web 的状态提醒。</p>
             </div>
-            <button class="btn btn-ghost btn-sm" @click="loadPushData" :disabled="loadingDevices || loadingEvents">
-              {{ loadingDevices || loadingEvents ? '刷新中…' : '刷新' }}
+            <button class="btn btn-ghost btn-sm" @click="loadPushData" :disabled="loadingDevices || loadingEvents || loadingSummary">
+              {{ loadingDevices || loadingEvents || loadingSummary ? '刷新中…' : '刷新' }}
             </button>
           </div>
 
           <section class="settings-panel">
+            <h3>当前设备同步状态</h3>
+            <div class="status-grid">
+              <div class="status-card">
+                <span>运行环境</span>
+                <strong>{{ isNativeRuntime ? nativePlatformLabel : 'Web 浏览器' }}</strong>
+                <small>{{ isNativeRuntime ? '支持自动注册与心跳续期' : '仅支持手动登记推送设备' }}</small>
+              </div>
+              <div class="status-card">
+                <span>本地记录</span>
+                <strong>{{ storedPushRegistration ? '已保存' : '未保存' }}</strong>
+                <small>{{ storedPushRegistration ? maskToken(storedPushRegistration.token) : '当前设备尚未保存本地 token' }}</small>
+              </div>
+              <div class="status-card">
+                <span>后端状态</span>
+                <strong>{{ currentTokenStatusLabel }}</strong>
+                <small>{{ currentTokenStatusDetail }}</small>
+              </div>
+            </div>
+
+            <div class="summary-strip" v-if="deviceSummary">
+              <span class="summary-pill">总设备 {{ deviceSummary.total }}</span>
+              <span class="summary-pill success">启用 {{ deviceSummary.active }}</span>
+              <span class="summary-pill muted">停用 {{ deviceSummary.inactive }}</span>
+              <span v-for="(stats, platform) in deviceSummary.by_platform" :key="platform" class="summary-pill platform">
+                {{ platform }} {{ stats.active }}/{{ stats.total }}
+              </span>
+            </div>
+          </section>
+
+          <section class="settings-panel">
             <h3>当前设备推送注册</h3>
-            <p class="panel-copy">Android 原生应用内点击下方按钮，会向 Firebase 申请真实设备 token 并自动登记到后端。</p>
+            <p class="panel-copy">原生 App 内点击下方按钮，会向系统申请真实设备 token 并自动同步到后端。</p>
             <div class="device-actions">
               <button class="btn btn-primary" :disabled="registeringNativePush" @click="registerCurrentDevicePush">
                 {{ registeringNativePush ? '注册中…' : '自动注册当前设备' }}
+              </button>
+              <button class="btn btn-ghost" :disabled="heartbeatingNativePush || !storedPushRegistration" @click="heartbeatCurrentDevicePush">
+                {{ heartbeatingNativePush ? '续期中…' : '发送一次心跳' }}
+              </button>
+              <button class="btn btn-ghost" :disabled="registeringNativePush || !storedPushRegistration || deviceSummary?.current_token_status !== 'matched_inactive'" @click="registerCurrentDevicePush">
+                重新绑定当前设备
               </button>
               <span class="helper-text">
                 {{ isNativeRuntime ? `当前运行环境：${nativePlatformLabel}` : '当前不是原生 App 环境，自动注册不可用。' }}
@@ -232,7 +268,11 @@
                   <td>{{ device.device_name || '-' }}</td>
                   <td>{{ device.app_version || '-' }}</td>
                   <td class="token-cell">{{ maskToken(device.device_token) }}</td>
-                  <td>{{ device.is_active ? '已启用' : '已停用' }}</td>
+                  <td>
+                    <span class="badge" :class="device.is_active ? 'badge-success' : 'badge-muted'">
+                      {{ device.is_active ? '已启用' : '已停用' }}
+                    </span>
+                  </td>
                   <td>{{ formatDate(device.last_seen_at || device.updated_at) }}</td>
                   <td>
                     <button class="btn btn-ghost btn-sm" :disabled="unregisteringToken === device.device_token" @click="unregisterDevice(device)">
@@ -283,9 +323,9 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { notificationsApi, type PushDevicePayload } from '@/api/notifications'
+import { notificationsApi, type PushDevicePayload, type PushDeviceSummary } from '@/api/notifications'
 import { isNativeApp, platformName } from '@/mobile/capacitor'
-import { registerPushDevice } from '@/mobile/push'
+import { getStoredPushRegistration, heartbeatStoredPushDevice, registerPushDevice } from '@/mobile/push'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 
@@ -308,6 +348,13 @@ type PushEventRecord = {
   devices?: Array<Record<string, unknown>>
 }
 
+type StoredPushRegistration = {
+  token: string
+  platform: string
+  deviceName?: string
+  appVersion?: string
+}
+
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
@@ -328,6 +375,7 @@ const responseLanguage = ref('zh-CN')
 const notificationsEnabled = ref(true)
 const statusHintsEnabled = ref(true)
 const registeringNativePush = ref(false)
+const heartbeatingNativePush = ref(false)
 const nativePushMessage = ref('')
 
 const isNativeRuntime = isNativeApp()
@@ -343,11 +391,40 @@ const deviceForm = reactive<PushDevicePayload>({
 
 const devices = ref<PushDeviceRecord[]>([])
 const events = ref<PushEventRecord[]>([])
+const deviceSummary = ref<PushDeviceSummary | null>(null)
 const loadingDevices = ref(false)
 const loadingEvents = ref(false)
+const loadingSummary = ref(false)
 const registering = ref(false)
 const unregisteringToken = ref('')
 const deviceMessage = ref('')
+const storedPushRegistration = ref<StoredPushRegistration | null>(getStoredPushRegistration())
+
+const currentTokenStatusLabel = computed(() => {
+  const status = deviceSummary.value?.current_token_status || 'not_provided'
+  const labelMap: Record<string, string> = {
+    matched_active: '已匹配并启用',
+    matched_inactive: '已匹配但已停用',
+    not_found: '本地存在但后端未匹配',
+    not_provided: '未提供当前 token',
+  }
+  return labelMap[status] || status
+})
+
+const currentTokenStatusDetail = computed(() => {
+  const summary = deviceSummary.value
+  if (!summary) return '设备状态汇总尚未加载。'
+  if (summary.current_token_status === 'matched_active' && summary.current_device) {
+    return `最近活跃：${formatDate(summary.current_device.last_seen_at || summary.current_device.updated_at)}`
+  }
+  if (summary.current_token_status === 'matched_inactive') {
+    return '当前本地 token 已在后端登记，但状态为停用，建议重新绑定或发送心跳。'
+  }
+  if (summary.current_token_status === 'not_found') {
+    return '本地 token 尚未在后端登记，建议重新注册当前设备。'
+  }
+  return '当前设备还没有本地保存的 token。'
+})
 
 watch(
   () => route.query.section,
@@ -391,8 +468,18 @@ async function loadDevices() {
   loadingDevices.value = true
   try {
     devices.value = await notificationsApi.listDevices()
+    storedPushRegistration.value = getStoredPushRegistration()
   } finally {
     loadingDevices.value = false
+  }
+}
+
+async function loadDeviceSummary() {
+  loadingSummary.value = true
+  try {
+    deviceSummary.value = await notificationsApi.summarizeDevices(storedPushRegistration.value?.token)
+  } finally {
+    loadingSummary.value = false
   }
 }
 
@@ -407,12 +494,13 @@ async function loadEvents() {
 }
 
 async function loadPushData() {
-  await Promise.all([loadDevices(), loadEvents()])
+  storedPushRegistration.value = getStoredPushRegistration()
+  await Promise.all([loadDevices(), loadDeviceSummary(), loadEvents()])
 }
 
 async function registerCurrentDevicePush() {
   if (!isNativeRuntime) {
-    nativePushMessage.value = '当前运行环境不是原生 App，无法自动申请 Firebase 设备 token。'
+    nativePushMessage.value = '当前运行环境不是原生 App，无法自动申请系统推送 token。'
     return
   }
   registeringNativePush.value = true
@@ -423,6 +511,7 @@ async function registerCurrentDevicePush() {
       deviceName: user.value?.username ? `${user.value.username} 的${nativePlatformLabel}设备` : `${nativePlatformLabel} 设备`,
       appVersion: deviceForm.app_version || '1.0.0',
     })
+    storedPushRegistration.value = getStoredPushRegistration()
     if (result && typeof result === 'object' && 'token' in result && typeof result.token === 'string') {
       deviceForm.platform = nativePlatform
       deviceForm.device_token = result.token
@@ -435,6 +524,24 @@ async function registerCurrentDevicePush() {
     nativePushMessage.value = error?.message || error?.response?.data?.detail || '自动注册当前设备失败，请稍后重试。'
   } finally {
     registeringNativePush.value = false
+  }
+}
+
+async function heartbeatCurrentDevicePush() {
+  if (!storedPushRegistration.value) {
+    nativePushMessage.value = '当前没有本地保存的设备 token，无法发送心跳。'
+    return
+  }
+  heartbeatingNativePush.value = true
+  nativePushMessage.value = ''
+  try {
+    await heartbeatStoredPushDevice()
+    nativePushMessage.value = '设备心跳已发送，后端活跃时间已刷新。'
+    await loadPushData()
+  } catch (error: any) {
+    nativePushMessage.value = error?.message || error?.response?.data?.detail || '设备心跳发送失败，请稍后重试。'
+  } finally {
+    heartbeatingNativePush.value = false
   }
 }
 
@@ -482,6 +589,7 @@ async function unregisterDevice(device: PushDeviceRecord) {
 
 onMounted(loadPushData)
 </script>
+
 <style scoped>
 .settings-page {
   height: 100%;
@@ -805,6 +913,59 @@ onMounted(loadPushData)
   font-size: 0.9rem;
 }
 
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.status-card {
+  border-radius: 22px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-surface-hover);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.status-card span,
+.status-card small {
+  color: var(--text-secondary);
+}
+
+.status-card strong {
+  font-size: 1.06rem;
+}
+
+.summary-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.summary-pill {
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: var(--bg-surface-hover);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.summary-pill.success {
+  color: var(--color-success);
+}
+
+.summary-pill.muted {
+  color: var(--text-tertiary);
+}
+
+.summary-pill.platform {
+  color: var(--text-primary);
+}
+
 .data-table {
   width: 100%;
   border-collapse: collapse;
@@ -860,7 +1021,8 @@ onMounted(loadPushData)
 
 @media (max-width: 1120px) {
   .panel-grid,
-  .theme-cards {
+  .theme-cards,
+  .status-grid {
     grid-template-columns: 1fr;
   }
 }

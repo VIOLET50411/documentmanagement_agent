@@ -17,9 +17,34 @@ export type PushTestPayload = {
   body?: string
 }
 
+export type PushDeviceSummary = {
+  total: number
+  active: number
+  inactive: number
+  by_platform: Record<string, { active: number; inactive: number; total: number }>
+  current_token_provided: boolean
+  current_token_status: "matched_active" | "matched_inactive" | "not_found" | "not_provided"
+  current_device?: {
+    id: string
+    platform: string
+    device_token: string
+    device_name?: string
+    app_version?: string
+    is_active: boolean
+    updated_at?: string
+    last_seen_at?: string
+  } | null
+}
+
 export const notificationsApi = {
   listDevices() {
     return apiGet("/notifications/devices")
+  },
+
+  summarizeDevices(currentToken?: string) {
+    return apiGet<PushDeviceSummary>("/notifications/devices/summary", {
+      params: currentToken ? { current_token: currentToken } : {},
+    })
   },
 
   listEvents(limit = 20) {

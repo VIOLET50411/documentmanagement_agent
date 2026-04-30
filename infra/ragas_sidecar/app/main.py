@@ -98,6 +98,7 @@ async def _ragas_eval(dataset: list[dict[str, Any]]) -> dict[str, Any]:
     from ragas.embeddings import LangchainEmbeddingsWrapper
     from ragas.llms import LangchainLLMWrapper
     from ragas.metrics import answer_relevancy, context_precision, context_recall, faithfulness
+    from ragas.run_config import RunConfig
 
     if not dataset:
         return {
@@ -117,6 +118,8 @@ async def _ragas_eval(dataset: list[dict[str, Any]]) -> dict[str, Any]:
     embed_base = os.getenv("RAGAS_EMBEDDING_BASE_URL", "http://ollama:11434")
     embed_model = os.getenv("RAGAS_EMBEDDING_MODEL", "nomic-embed-text")
     api_key = os.getenv("RAGAS_API_KEY", "dummy")
+    run_timeout = max(int(float(os.getenv("RAGAS_TIMEOUT_SECONDS", "180"))), 180)
+    max_workers = max(int(os.getenv("RAGAS_MAX_WORKERS", "2")), 1)
 
     if _use_ollama_backend(llm_base):
         from langchain_openai import ChatOpenAI
@@ -144,6 +147,8 @@ async def _ragas_eval(dataset: list[dict[str, Any]]) -> dict[str, Any]:
             metrics=[faithfulness, answer_relevancy, context_precision, context_recall],
             llm=LangchainLLMWrapper(llm),
             embeddings=LangchainEmbeddingsWrapper(emb),
+            run_config=RunConfig(timeout=run_timeout, max_workers=max_workers),
+            show_progress=False,
         )
 
     result = await asyncio.to_thread(_run_eval)

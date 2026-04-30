@@ -80,9 +80,9 @@ class ExcelParser:
         return elements
 
     def _parse_csv(self, path: Path) -> list[dict]:
-        with path.open("r", encoding="utf-8", errors="ignore", newline="") as file:
-            reader = csv.reader(file)
-            rows = list(reader)
+        text = self._decode_csv_text(path)
+        reader = csv.reader(text.splitlines())
+        rows = list(reader)
 
         if not rows:
             return []
@@ -100,6 +100,39 @@ class ExcelParser:
                 },
             }
         ]
+
+    def _decode_csv_text(self, path: Path) -> str:
+        raw = path.read_bytes()
+        for encoding in ("utf-8-sig", "utf-8"):
+            try:
+                return raw.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+
+        candidates = ["gb18030", "gbk"]
+        best_text = ""
+        best_score = float("-inf")
+        for encoding in candidates:
+            try:
+                decoded = raw.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+            score = self._score_decoded_text(decoded)
+            if score > best_score:
+                best_score = score
+                best_text = decoded
+        if best_text:
+            return best_text
+        return raw.decode("utf-8", errors="replace")
+
+    def _score_decoded_text(self, text: str) -> float:
+        if not text:
+            return float("-inf")
+        mojibake_markers = ("锟", "鍙", "璇", "鈥", "�", "Ã", "æ", "ç", "µÄ", "Éè±¸")
+        penalty = sum(text.count(marker) for marker in mojibake_markers)
+        cjk = sum(1 for char in text if "\u4e00" <= char <= "\u9fff")
+        printable = sum(1 for char in text if char.isprintable())
+        return cjk * 4 + printable - penalty * 10
 
     def _extract_rows_from_sheet(self, worksheet) -> list[list[str]]:
         rows: list[list[str]] = []

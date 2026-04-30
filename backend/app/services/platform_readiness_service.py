@@ -88,10 +88,8 @@ class PlatformReadinessService:
         return metrics.get("counts", {}).get("assistant_total", 0) > 0
 
     def _check_eval_report(self, tenant_id: str) -> bool:
-        base = Path(__file__).resolve()
         candidates = [
-            base.parents[2] / "reports" / f"evaluation_{tenant_id}.json",  # container: /app/reports
-            base.parents[3] / "reports" / f"evaluation_{tenant_id}.json",  # local repo root
+            Path(settings.docmind_reports_dir) / f"evaluation_{tenant_id}.json",
         ]
         return any(path.exists() for path in candidates)
 

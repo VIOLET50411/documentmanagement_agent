@@ -6,8 +6,10 @@ import asyncio
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+import time
 
 import redis
+from billiard.exceptions import SoftTimeLimitExceeded
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from celery_app import celery
@@ -17,10 +19,36 @@ from app.services.llm_training_service import LLMTrainingService
 from app.training.executor import TrainingExecutionRequest, build_training_executor
 
 
-@celery.task(bind=True, name="app.training.tasks.run_training_job", acks_late=True, max_retries=0)
+@celery.task(
+    bind=True,
+    name="app.training.tasks.run_training_job",
+    acks_late=True,
+    max_retries=0,
+    soft_time_limit=settings.llm_training_task_soft_time_limit_seconds,
+    time_limit=settings.llm_training_task_time_limit_seconds,
+)
 def run_training_job(self, training_job_id: str):
     task_id = self.request.id or ""
-    return asyncio.run(_run_training_job_async(training_job_id=training_job_id, runtime_task_id=task_id))
+    try:
+        return asyncio.run(_run_training_job_async(training_job_id=training_job_id, runtime_task_id=task_id))
+    except SoftTimeLimitExceeded as exc:
+        return asyncio.run(
+            _mark_job_failure_async(
+                training_job_id=training_job_id,
+                runtime_task_id=task_id,
+                error=f"训练任务执行超时: {exc}",
+                terminal_status="failed",
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        return asyncio.run(
+            _mark_job_failure_async(
+                training_job_id=training_job_id,
+                runtime_task_id=task_id,
+                error=str(exc),
+                terminal_status="failed",
+            )
+        )
 
 
 async def _run_training_job_async(*, training_job_id: str, runtime_task_id: str) -> dict:
@@ -34,7 +62,7 @@ async def _run_training_job_async(*, training_job_id: str, runtime_task_id: str)
     )
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     redis_client = redis.asyncio.from_url(settings.redis_url, encoding="utf-8", decode_responses=True)
-    reports_dir = Path(__file__).resolve().parents[3] / "reports"
+    reports_dir = Path(settings.docmind_reports_dir)
 
     try:
         async with session_factory() as db:
@@ -43,7 +71,7 @@ async def _run_training_job_async(*, training_job_id: str, runtime_task_id: str)
             if job is None:
                 raise ValueError("训练任务不存在")
 
-            await service.update_job_stage(training_job_id, status="running", stage="validating")
+            await _persist_job_stage(service, db, training_job_id, status="running", stage="validating")
             await _upsert_runtime_task(
                 runtime_task_id=runtime_task_id,
                 tenant_id=job.tenant_id,
@@ -74,7 +102,7 @@ async def _run_training_job_async(*, training_job_id: str, runtime_task_id: str)
                 provider=job.provider,
             )
 
-            await service.update_job_stage(training_job_id, status="running", stage="executing")
+            await _persist_job_stage(service, db, training_job_id, status="running", stage="executing")
             await _upsert_runtime_task(
                 runtime_task_id=runtime_task_id,
                 tenant_id=job.tenant_id,
@@ -85,9 +113,19 @@ async def _run_training_job_async(*, training_job_id: str, runtime_task_id: str)
             )
 
             executor = build_training_executor(job.provider)
-            execution_result = await executor.execute(request)
+            execution_result = await _execute_with_heartbeat(
+                executor=executor,
+                request=request,
+                service=service,
+                db=db,
+                training_job_id=training_job_id,
+                runtime_task_id=runtime_task_id,
+                tenant_id=job.tenant_id,
+                provider=job.provider,
+                artifact_dir=str(artifact_dir),
+            )
 
-            await service.update_job_stage(training_job_id, status="running", stage="validating_artifact")
+            await _persist_job_stage(service, db, training_job_id, status="running", stage="validating_artifact")
             await _upsert_runtime_task(
                 runtime_task_id=runtime_task_id,
                 tenant_id=job.tenant_id,
@@ -98,7 +136,7 @@ async def _run_training_job_async(*, training_job_id: str, runtime_task_id: str)
             )
             validated_result = executor.validate_result(execution_result)
 
-            await service.update_job_stage(training_job_id, status="running", stage="registering")
+            await _persist_job_stage(service, db, training_job_id, status="running", stage="registering")
             await _upsert_runtime_task(
                 runtime_task_id=runtime_task_id,
                 tenant_id=job.tenant_id,
@@ -123,18 +161,38 @@ async def _run_training_job_async(*, training_job_id: str, runtime_task_id: str)
                 },
                 notes=validated_result.get("notes") or "训练产物已注册，可继续接入真实推理服务部署。",
             )
+            await db.commit()
 
+            deployment_verification = None
+            publish_result = {
+                "ok": False,
+                "publish_ready": bool((validated_result.get("executor_metadata") or {}).get("publish_ready")),
+                "published": False,
+                "reason": "executor_not_published",
+                "message": "训练执行器未声明产物已发布",
+            }
             if job.activate_on_success and settings.llm_training_auto_activate:
-                await service.update_job_stage(training_job_id, status="running", stage="deploying")
+                publish_result = await service.publish_model_artifact(tenant_id=job.tenant_id, model_id=model.id)
+            publish_ready = bool(publish_result.get("publish_ready"))
+            auto_activated = False
+            if job.activate_on_success and settings.llm_training_auto_activate and publish_ready:
+                await _persist_job_stage(service, db, training_job_id, status="running", stage="deploying")
                 await _upsert_runtime_task(
                     runtime_task_id=runtime_task_id,
                     tenant_id=job.tenant_id,
                     training_job_id=job.id,
                     status="running",
                     stage="deploying",
-                    payload={"model_id": model.id, "serving_model_name": validated_result["serving_model_name"]},
+                    payload={"model_id": model.id, "serving_model_name": publish_result.get("serving_model_name") or validated_result["serving_model_name"]},
                 )
                 await service.activate_model(tenant_id=job.tenant_id, model_id=model.id, actor_id=job.created_by)
+                auto_activated = True
+                if settings.llm_training_deploy_verify_enabled:
+                    deployment_verification = await service.verify_model_serving(tenant_id=job.tenant_id, model_id=model.id)
+                    if not deployment_verification.get("ok"):
+                        if settings.llm_training_deploy_fail_rollback:
+                            await service.rollback_active_model(tenant_id=job.tenant_id, actor_id=job.created_by)
+                        raise RuntimeError(f"训练模型部署校验失败: {json.dumps(deployment_verification, ensure_ascii=False)}")
 
             result = {
                 "ok": True,
@@ -142,11 +200,15 @@ async def _run_training_job_async(*, training_job_id: str, runtime_task_id: str)
                 "model_id": model.id,
                 "artifact_dir": validated_result["artifact_dir"],
                 "serving_base_url": validated_result["serving_base_url"],
-                "serving_model_name": validated_result["serving_model_name"],
+                "serving_model_name": publish_result.get("serving_model_name") or validated_result["serving_model_name"],
                 "activate_on_success": job.activate_on_success,
+                "auto_activated": auto_activated,
+                "publish_ready": publish_ready,
+                "publish_result": publish_result,
                 "executor_metadata": validated_result.get("executor_metadata") or {},
+                "deployment_verification": deployment_verification,
             }
-            await service.update_job_stage(training_job_id, status="completed", stage="completed", result=result)
+            await _persist_job_stage(training_job_id=training_job_id, service=service, db=db, status="completed", stage="completed", result=result)
             await _upsert_runtime_task(
                 runtime_task_id=runtime_task_id,
                 tenant_id=job.tenant_id,
@@ -158,28 +220,143 @@ async def _run_training_job_async(*, training_job_id: str, runtime_task_id: str)
             )
             await db.commit()
             return result
-    except Exception as exc:  # noqa: BLE001
-        async with session_factory() as db:
-            service = LLMTrainingService(db, redis_client=redis_client, reports_dir=reports_dir)
-            try:
-                await service.update_job_stage(training_job_id, status="failed", stage="failed", error=str(exc))
-                await db.commit()
-            except Exception:
-                await db.rollback()
-        await _upsert_runtime_task(
-            runtime_task_id=runtime_task_id,
-            tenant_id="unknown",
+    except SoftTimeLimitExceeded as exc:
+        return await _mark_job_failure_async(
             training_job_id=training_job_id,
-            status="failed",
-            stage="failed",
-            payload={"ok": False, "error": str(exc)},
-            error=str(exc),
-            terminal=True,
+            runtime_task_id=runtime_task_id,
+            error=f"训练任务执行超时: {exc}",
+            terminal_status="failed",
+            db_factory=session_factory,
+            redis_client=redis_client,
+            reports_dir=reports_dir,
         )
-        return {"ok": False, "job_id": training_job_id, "error": str(exc)}
+    except Exception as exc:  # noqa: BLE001
+        return await _mark_job_failure_async(
+            training_job_id=training_job_id,
+            runtime_task_id=runtime_task_id,
+            error=str(exc),
+            terminal_status="failed",
+            db_factory=session_factory,
+            redis_client=redis_client,
+            reports_dir=reports_dir,
+        )
     finally:
         await redis_client.aclose()
         await engine.dispose()
+
+
+async def _persist_job_stage(
+    service: LLMTrainingService,
+    db: AsyncSession,
+    training_job_id: str,
+    *,
+    status: str,
+    stage: str,
+    result: dict | None = None,
+    error: str | None = None,
+) -> None:
+    await service.update_job_stage(training_job_id, status=status, stage=stage, result=result, error=error)
+    await db.commit()
+
+
+async def _execute_with_heartbeat(
+    *,
+    executor,
+    request: TrainingExecutionRequest,
+    service: LLMTrainingService,
+    db: AsyncSession,
+    training_job_id: str,
+    runtime_task_id: str,
+    tenant_id: str,
+    provider: str,
+    artifact_dir: str,
+) -> dict:
+    heartbeat_seconds = max(int(settings.llm_training_progress_heartbeat_seconds), 5)
+    started_at = time.monotonic()
+    execution_task = asyncio.create_task(executor.execute(request))
+    while True:
+        try:
+            return await asyncio.wait_for(asyncio.shield(execution_task), timeout=heartbeat_seconds)
+        except asyncio.TimeoutError:
+            heartbeat_at = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+            elapsed_seconds = round(time.monotonic() - started_at, 1)
+            await _persist_job_stage(service, db, training_job_id, status="running", stage="executing")
+            await _upsert_runtime_task(
+                runtime_task_id=runtime_task_id,
+                tenant_id=tenant_id,
+                training_job_id=training_job_id,
+                status="running",
+                stage="executing",
+                payload={
+                    "provider": provider,
+                    "artifact_dir": artifact_dir,
+                    "heartbeat_at": heartbeat_at,
+                    "elapsed_seconds": elapsed_seconds,
+                },
+            )
+
+
+async def _mark_job_failure_async(
+    *,
+    training_job_id: str,
+    runtime_task_id: str,
+    error: str,
+    terminal_status: str,
+    db_factory: async_sessionmaker[AsyncSession] | None = None,
+    redis_client=None,
+    reports_dir: Path | None = None,
+) -> dict:
+    tenant_id = "unknown"
+    if db_factory is None:
+        engine = create_async_engine(
+            settings.postgres_dsn,
+            echo=settings.app_debug,
+            pool_size=2,
+            max_overflow=2,
+            pool_timeout=settings.postgres_pool_timeout_seconds,
+            pool_pre_ping=True,
+        )
+        db_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        owns_engine = True
+    else:
+        engine = None
+        owns_engine = False
+
+    local_redis = redis_client
+    owns_redis = False
+    if local_redis is None:
+        local_redis = redis.asyncio.from_url(settings.redis_url, encoding="utf-8", decode_responses=True)
+        owns_redis = True
+
+    try:
+        async with db_factory() as db:
+            service = LLMTrainingService(db, redis_client=local_redis, reports_dir=reports_dir or Path(settings.docmind_reports_dir))
+            job = await db.get(LLMTrainingJob, training_job_id)
+            if job is not None:
+                tenant_id = job.tenant_id
+                try:
+                    await service.update_job_stage(training_job_id, status=terminal_status, stage="failed", error=error)
+                    await db.commit()
+                except Exception:  # noqa: BLE001
+                    await db.rollback()
+            else:
+                await db.rollback()
+    finally:
+        await _upsert_runtime_task(
+            runtime_task_id=runtime_task_id,
+            tenant_id=tenant_id,
+            training_job_id=training_job_id,
+            status=terminal_status,
+            stage="failed",
+            payload={"ok": False, "error": error},
+            error=error,
+            terminal=True,
+        )
+        if owns_redis and local_redis is not None:
+            await local_redis.aclose()
+        if owns_engine and engine is not None:
+            await engine.dispose()
+    return {"ok": False, "job_id": training_job_id, "error": error}
 
 
 async def _upsert_runtime_task(

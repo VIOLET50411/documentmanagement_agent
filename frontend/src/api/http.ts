@@ -1,4 +1,4 @@
-﻿import axios, { type AxiosError, type AxiosRequestConfig } from "axios"
+import axios, { type AxiosError, type AxiosRequestConfig } from "axios"
 import { useAuthStore } from "@/stores/auth"
 import { getApiBaseUrl } from "@/mobile/capacitor"
 
@@ -25,9 +25,25 @@ http.interceptors.request.use((config) => {
 
 http.interceptors.response.use(
   (response) => response.data,
-  (error: AxiosError) => {
+  async (error: AxiosError) => {
+    const authStore = useAuthStore()
+    const originalConfig = error.config as (AxiosRequestConfig & { _retry?: boolean }) | undefined
+
+    if (error.response?.status === 401 && originalConfig && !originalConfig._retry && authStore.refreshToken) {
+      originalConfig._retry = true
+      const refreshed = await authStore.refreshSession()
+      if (refreshed && authStore.token) {
+        const headers = originalConfig.headers as Record<string, string | undefined> | undefined
+        if (headers) {
+          headers.Authorization = `Bearer ${authStore.token}`
+        } else {
+          originalConfig.headers = { Authorization: `Bearer ${authStore.token}` } as typeof originalConfig.headers
+        }
+        return http.request(originalConfig)
+      }
+    }
+
     if (error.response?.status === 401) {
-      const authStore = useAuthStore()
       authStore.logout()
     }
     return Promise.reject(error)
@@ -47,4 +63,3 @@ export function apiDelete<T = any>(url: string, config?: AxiosRequestConfig): Pr
 }
 
 export default http
-

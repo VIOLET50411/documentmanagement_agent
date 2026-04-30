@@ -1,5 +1,6 @@
 ﻿"""DocMind Agent settings configuration."""
 
+from pathlib import Path
 from typing import List
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -24,6 +25,8 @@ class Settings(BaseSettings):
     bootstrap_demo_admin_email: str = "admin_demo@docmind.local"
     bootstrap_demo_admin_tenant_id: str = "default"
     bootstrap_demo_admin_department: str = "Platform"
+    docmind_reports_dir: Path = Path("reports")
+    docmind_shared_datasets_dir: Path = Path("datasets")
 
     jwt_secret_key: str = "change-me-to-a-random-jwt-secret"
     jwt_algorithm: str = "HS256"
@@ -112,7 +115,19 @@ class Settings(BaseSettings):
     llm_training_executor_api_base_url: str = ""
     llm_training_executor_api_key: str = ""
     llm_training_executor_timeout_seconds: int = 1800
+    llm_training_executor_poll_interval_seconds: int = 5
+    llm_training_executor_script_command: str = ""
+    llm_training_executor_script_workdir: str = ""
+    llm_training_task_soft_time_limit_seconds: int = 7200
+    llm_training_task_time_limit_seconds: int = 7500
+    llm_training_progress_heartbeat_seconds: int = 30
+    llm_training_publish_enabled: bool = False
+    llm_training_publish_command: str = ""
+    llm_training_publish_workdir: str = ""
     llm_training_deploy_fail_rollback: bool = True
+    llm_training_deploy_verify_enabled: bool = True
+    llm_training_deploy_health_path: str = ""
+    llm_training_deploy_verify_timeout_seconds: int = 20
 
     embedding_provider: str = "local"
     embedding_model_name: str = "BAAI/bge-m3"
@@ -144,7 +159,7 @@ class Settings(BaseSettings):
     guardrails_sidecar_url: str = ""
     guardrails_fail_closed: bool = False
     watermark_enabled: bool = True
-    runtime_stage_timeout_seconds: int = 30
+    runtime_stage_timeout_seconds: int = 600
     runtime_event_replay_ttl_seconds: int = 1800
     runtime_task_retention_seconds: int = 7200
     runtime_keepalive_seconds: int = 15
@@ -172,6 +187,7 @@ class Settings(BaseSettings):
     push_notification_provider: str = "log"
     push_notification_webhook_url: str = ""
     push_notification_fail_closed: bool = False
+    push_auto_deactivate_invalid_tokens: bool = True
     push_fcm_endpoint: str = "https://fcm.googleapis.com/fcm/send"
     push_fcm_server_key: str = ""
     push_fcm_access_token: str = ""
@@ -198,6 +214,8 @@ class Settings(BaseSettings):
     ci_gate_min_answer_relevancy: float = 0.8
     ci_gate_min_context_precision: float = 0.8
     ci_gate_min_context_recall: float = 0.8
+    ci_gate_eval_sample_limit: int = 3
+    ci_gate_min_eval_dataset_size: int = 3
 
     @property
     def cors_origins(self) -> List[str]:
@@ -231,3 +249,6 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+

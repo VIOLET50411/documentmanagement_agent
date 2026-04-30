@@ -7,6 +7,7 @@ import json
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models.db.runtime_checkpoint import RuntimeCheckpoint
 
 
@@ -34,11 +35,13 @@ class RuntimeCheckpointService:
                     "latest_node_name": item.node_name,
                     "latest_iteration": item.iteration,
                     "latest_at": item.created_at.isoformat(),
-                    "checkpoint_count": 0,
-                    "resumable": True,
-                    "degraded": False,
-                    "intent": None,
-                    "rewritten_query": None,
+                        "checkpoint_count": 0,
+                        "resumable": True,
+                        "resume_strategy": "manual",
+                        "native_checkpoint_enabled": bool(settings.runtime_langgraph_native_checkpoint_enabled),
+                        "degraded": False,
+                        "intent": None,
+                        "rewritten_query": None,
                     "answer_preview": "",
                     "warnings": [],
                 },
@@ -54,6 +57,8 @@ class RuntimeCheckpointService:
                         "latest_iteration": item.iteration,
                         "latest_at": item.created_at.isoformat(),
                         "resumable": item.node_name not in {"done", "terminal"},
+                        "resume_strategy": self._resume_strategy_for(item.node_name),
+                        "native_checkpoint_enabled": bool(settings.runtime_langgraph_native_checkpoint_enabled),
                         "degraded": bool(payload.get("degraded", False)),
                         "intent": payload.get("intent"),
                         "rewritten_query": payload.get("rewritten_query"),
@@ -70,3 +75,10 @@ class RuntimeCheckpointService:
             return json.loads(payload_json or "{}")
         except json.JSONDecodeError:
             return {}
+
+    def _resume_strategy_for(self, node_name: str) -> str:
+        if node_name in {"done", "terminal"}:
+            return "terminal"
+        if settings.runtime_langgraph_native_checkpoint_enabled:
+            return "native"
+        return "manual"

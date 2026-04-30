@@ -19,6 +19,11 @@ export type MobileTokenPayload = {
   code_verifier: string
 }
 
+export type MobileRefreshPayload = {
+  refresh_token: string
+  client_id: string
+}
+
 export const mobileAuthApi = {
   discovery() {
     return apiGet("/auth/mobile/.well-known/openid-configuration")
@@ -30,6 +35,10 @@ export const mobileAuthApi = {
 
   exchangeToken(payload: MobileTokenPayload) {
     return apiPost("/auth/mobile/token", { grant_type: "authorization_code", ...payload })
+  },
+
+  refreshToken(payload: MobileRefreshPayload) {
+    return apiPost("/auth/mobile/token", { grant_type: "refresh_token", ...payload })
   },
 
   userinfo() {

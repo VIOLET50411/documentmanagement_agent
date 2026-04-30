@@ -40,6 +40,18 @@ async function bootstrap() {
   setBootMessage("正在恢复登录状态…")
   await authStore.hydrateUser()
 
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && authStore.isAuthenticated) {
+      void authStore.hydrateUser()
+    }
+  })
+
+  window.addEventListener("focus", () => {
+    if (authStore.isAuthenticated) {
+      void authStore.hydrateUser()
+    }
+  })
+
   setBootMessage("正在渲染界面…")
   app.mount("#app")
   setBootMessage("启动完成", "ready")

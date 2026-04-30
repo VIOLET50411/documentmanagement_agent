@@ -22,7 +22,7 @@ def _sample_upload_file() -> str:
     with open(path, "w", encoding="utf-8") as f:
         f.write("title,department,amount\n")
         for i in range(1, 8):
-            f.write(f"????{i},Platform,{i * 100}\n")
+            f.write(f"员工基线样本{i},Platform,{i * 100}\n")
     return path
 
 

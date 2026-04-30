@@ -27,11 +27,12 @@ class MobileAuthorizeResponse(BaseModel):
 
 
 class MobileTokenRequest(BaseModel):
-    grant_type: str = Field(default="authorization_code", pattern="^authorization_code$")
-    code: str = Field(min_length=16, max_length=128)
+    grant_type: str = Field(default="authorization_code", pattern="^(authorization_code|refresh_token)$")
     client_id: str = Field(min_length=3, max_length=120)
-    redirect_uri: str = Field(min_length=1, max_length=500)
-    code_verifier: str = Field(min_length=16, max_length=256)
+    code: str | None = Field(default=None, min_length=16, max_length=128)
+    redirect_uri: str | None = Field(default=None, min_length=1, max_length=500)
+    code_verifier: str | None = Field(default=None, min_length=16, max_length=256)
+    refresh_token: str | None = Field(default=None, min_length=16, max_length=4096)
 
 
 class MobileTokenResponse(BaseModel):

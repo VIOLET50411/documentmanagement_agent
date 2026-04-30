@@ -160,8 +160,8 @@ def _run_public_corpus_export(*, dataset_name: str, tenant_id: str, train_ratio:
     from app.services.enterprise_tuning_service import EnterpriseTuningService
     from app.services.public_corpus_service import PublicCorpusService
 
-    datasets_dir = Path(os.getenv("DOCMIND_SHARED_DATASETS_DIR") or (Path(__file__).resolve().parents[3] / "datasets"))
-    reports_dir = Path(os.getenv("DOCMIND_REPORTS_DIR") or (Path(__file__).resolve().parents[3] / "reports"))
+    datasets_dir = Path(settings.docmind_shared_datasets_dir)
+    reports_dir = Path(settings.docmind_reports_dir)
     dataset_root = datasets_dir / dataset_name
     if not dataset_root.exists():
         raise FileNotFoundError(f"公开语料目录不存在: {dataset_name}")

@@ -8,6 +8,7 @@ from app.evaluation.ragas_runner import RagasRunner
 from app.evaluation.report_generator import ReportGenerator
 from app.ingestion.chunking.parent_child_splitter import ParentChildSplitter
 from app.ingestion.chunking.semantic_chunker import SemanticChunker
+from app.ingestion.parsers.excel_parser import ExcelParser
 
 
 def test_parent_child_splitter_creates_parent_and_children():
@@ -60,6 +61,7 @@ async def test_golden_dataset_and_ragas_fallback(tmp_path: Path):
 
         assert dataset
         assert "测试文档" in dataset[0]["question"]
+        assert dataset[0]["reference"] == dataset[0]["answer"]
 
         metrics = await RagasRunner().evaluate(dataset=dataset)
         assert metrics["sample_count"] >= 1
@@ -69,3 +71,54 @@ async def test_golden_dataset_and_ragas_fallback(tmp_path: Path):
     finally:
         settings.ragas_api_base_url = original_base_url
         settings.ragas_require_real_mode = original_require_real
+
+
+@pytest.mark.asyncio
+async def test_golden_dataset_builds_structured_pairs_from_markdown_table():
+    generator = GoldenDatasetGenerator()
+
+    dataset = await generator.generate(
+        [
+            {
+                "id": "doc-table",
+                "title": "预算表",
+                "chunks": [
+                    {
+                        "content": "| policy | owner | amount |\n| --- | --- | --- |\n| 员工报销流程 | 财务部 | 5000 |\n| 差旅审批规则 | 行政部 | 3000 |"
+                    }
+                ],
+            }
+        ],
+        count=5,
+    )
+
+    assert len(dataset) == 2
+    assert dataset[0]["question"].startswith("In 预算表, what is the owner for ")
+    assert dataset[0]["reference"] == dataset[0]["answer"]
+    assert "owner" in dataset[0]["answer"]
+    assert "amount is 5000" in dataset[0]["contexts"][1]
+
+
+@pytest.mark.asyncio
+async def test_golden_dataset_uses_clean_default_title_and_sentence_split():
+    generator = GoldenDatasetGenerator()
+
+    dataset = await generator.generate(
+        [{"id": "doc-2", "chunks": [{"content": "第一条：提交申请。第二条：经理审批！第三条：完成报销？"}]}],
+        count=3,
+    )
+
+    assert dataset
+    assert "未命名文档" in dataset[0]["question"]
+    assert "第一条：提交申请。第二条：经理审批！" in dataset[0]["answer"]
+
+
+def test_excel_parser_reads_gbk_csv_without_mojibake(tmp_path: Path):
+    path = tmp_path / "policies.csv"
+    path.write_bytes("policy,owner,amount\n员工报销流程,财务部,5000\n".encode("gb18030"))
+
+    elements = ExcelParser().parse(str(path))
+
+    assert elements
+    assert "员工报销流程" in elements[0]["text"]
+    assert "财务部" in elements[0]["text"]

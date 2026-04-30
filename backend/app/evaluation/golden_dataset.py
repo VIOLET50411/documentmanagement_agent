@@ -1,10 +1,13 @@
-﻿"""Golden dataset generation fallback."""
+"""Golden dataset generation fallback."""
 
 from __future__ import annotations
 
+import re
+from decimal import Decimal, InvalidOperation
+
 
 class GoldenDatasetGenerator:
-    """Generate heuristic QA pairs from business documents without LLM access."""
+    """Generate structured QA pairs from business documents without LLM access."""
 
     async def generate(self, documents: list, count: int = 500) -> list:
         pairs = []
@@ -15,15 +18,83 @@ class GoldenDatasetGenerator:
                 text = (snippet.get("content") or snippet.get("snippet") or "").strip()
                 if not text:
                     continue
+
+                table_pairs = self._build_table_pairs(title, text, document, limit=max(count - len(pairs), 0))
+                if table_pairs:
+                    pairs.extend(table_pairs)
+                else:
+                    answer = self._build_reference_answer(text)
+                    if not answer:
+                        continue
+                    pairs.append(
+                        {
+                            "question": f"What is the key point of paragraph {index + 1} in {title}?",
+                            "answer": answer,
+                            "reference": answer,
+                            "contexts": [text],
+                            "context_doc_ids": [document.get("doc_id") or document.get("id")],
+                            "difficulty": "basic",
+                        }
+                    )
+                if len(pairs) >= count:
+                    return pairs[:count]
+        return pairs[:count]
+
+    def _build_table_pairs(self, title: str, text: str, document: dict, limit: int) -> list[dict]:
+        rows = [line.strip() for line in text.splitlines() if line.strip().startswith("|")]
+        if len(rows) < 3:
+            return []
+        headers = [cell.strip() for cell in rows[0].strip("|").split("|")]
+        if len(headers) < 2:
+            return []
+
+        pairs: list[dict] = []
+        for raw_row in rows[2:]:
+            values = [cell.strip() for cell in raw_row.strip("|").split("|")]
+            if len(values) != len(headers):
+                continue
+            subject = values[0]
+            if not subject or subject == "---":
+                continue
+
+            summary = self._build_row_summary(title, subject, headers[1:], values[1:])
+            for header, value in zip(headers[1:], values[1:]):
+                if not value or value == "---" or self._looks_numeric(value):
+                    continue
+                answer = f"In {title}, the {header} for {subject} is {value}."
                 pairs.append(
                     {
-                        "question": f"{title} 的第 {index + 1} 段主要说明了什么？",
-                        "answer": text[:200],
-                        "contexts": [text],
+                        "question": f"In {title}, what is the {header} for {subject}?",
+                        "answer": answer,
+                        "reference": answer,
+                        "contexts": [text, summary],
                         "context_doc_ids": [document.get("doc_id") or document.get("id")],
                         "difficulty": "basic",
                     }
                 )
-                if len(pairs) >= count:
+                if len(pairs) >= limit:
                     return pairs
         return pairs
+
+    def _build_reference_answer(self, text: str) -> str:
+        cleaned = re.sub(r"\s+", " ", text).strip()
+        if not cleaned:
+            return ""
+        sentences = re.split(r"(?<=[\u3002\uff01\uff1f!?])", cleaned)
+        answer = "".join(part.strip() for part in sentences[:2] if part.strip()).strip()
+        return (answer or cleaned)[:200]
+
+    def _build_row_summary(self, title: str, subject: str, headers: list[str], values: list[str]) -> str:
+        details = [f"{header} is {value}" for header, value in zip(headers, values) if value and value != "---"]
+        joined = ", ".join(details)
+        return f"In {title}, {subject}: {joined}."
+
+    def _looks_numeric(self, value: str) -> bool:
+        normalized = value.replace(",", "").replace("%", "").strip()
+        if not normalized:
+            return False
+        try:
+            Decimal(normalized)
+            return True
+        except InvalidOperation:
+            return False

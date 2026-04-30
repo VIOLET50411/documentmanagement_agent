@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from collections.abc import Awaitable, Callable
@@ -25,7 +26,7 @@ class EvaluationService:
     def __init__(self, db: AsyncSession | None, redis_client=None, reports_dir: Path | None = None):
         self.db = db
         self.redis = redis_client
-        self.reports_dir = reports_dir or Path(__file__).resolve().parents[3] / "reports"
+        self.reports_dir = Path(reports_dir) if reports_dir is not None else Path(settings.docmind_reports_dir)
         self.dataset_generator = GoldenDatasetGenerator()
         self.runner = RagasRunner()
         self.report_generator = ReportGenerator()
@@ -64,6 +65,7 @@ class EvaluationService:
             "metrics": metrics,
             "gate": gate,
             "dataset_size": len(dataset),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "generated_from": {
                 "tenant_id": tenant_id,
                 "sample_limit": max(sample_limit, 1),
@@ -118,6 +120,7 @@ class EvaluationService:
             "exists": normalized_payload is not None,
             "metrics": normalized_payload.get("metrics") if normalized_payload else None,
             "gate": normalized_payload.get("gate") if normalized_payload else None,
+            "generated_at": normalized_payload.get("generated_at") if normalized_payload else None,
             "generated_from": normalized_payload.get("generated_from") if normalized_payload else None,
             "markdown": markdown_path.read_text(encoding="utf-8") if markdown_path.exists() else None,
             "dataset_size": dataset_size,
@@ -130,6 +133,7 @@ class EvaluationService:
             select(Document.id, Document.title, DocumentChunk.content)
             .join(DocumentChunk, DocumentChunk.doc_id == Document.id)
             .where(Document.tenant_id == tenant_id, Document.status == "ready")
+            .order_by(Document.updated_at.desc(), DocumentChunk.chunk_index.asc())
             .limit(sample_limit)
         )
         grouped: dict[str, dict[str, Any]] = {}
@@ -183,6 +187,7 @@ class EvaluationService:
             return {
                 "metrics": metrics,
                 "gate": payload.get("gate") or self._build_gate(metrics),
+                "generated_at": payload.get("generated_at"),
                 "generated_from": payload.get("generated_from") or {},
                 "dataset_size": payload.get("dataset_size", metrics.get("sample_count", 0)),
             }
@@ -192,6 +197,7 @@ class EvaluationService:
         return {
             "metrics": metrics,
             "gate": self._build_gate(metrics),
+            "generated_at": None,
             "generated_from": {"tenant_id": None, "sample_limit": None, "document_count": None, "legacy_report": True},
             "dataset_size": metrics.get("sample_count", 0),
         }

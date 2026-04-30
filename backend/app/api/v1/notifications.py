@@ -47,6 +47,19 @@ async def list_push_events(
     }
 
 
+@router.get('/devices/summary')
+async def summarize_push_devices(
+    current_token: str | None = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await PushNotificationService(db, get_redis()).summarize_devices(
+        tenant_id=current_user.tenant_id,
+        user_id=current_user.id,
+        current_token=current_token,
+    )
+
+
 @router.post('/devices', response_model=PushDeviceResponse)
 async def register_push_device(
     payload: PushDeviceRegisterRequest,

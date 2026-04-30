@@ -1,4 +1,4 @@
-import json
+﻿import json
 from pathlib import Path
 
 import pytest
@@ -59,6 +59,7 @@ async def test_latest_reads_new_payload_shape(tmp_path: Path):
         },
         "gate": {"passed": False, "failures": [{"metric": "real_mode"}]},
         "dataset_size": 3,
+        "generated_at": "2026-04-30T10:00:00+00:00",
         "generated_from": {"tenant_id": tenant_id, "sample_limit": 3, "document_count": 2},
     }
     json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -71,6 +72,7 @@ async def test_latest_reads_new_payload_shape(tmp_path: Path):
     assert result["metrics"]["faithfulness"] == 0.91
     assert result["gate"]["passed"] is False
     assert result["dataset_size"] == 3
+    assert result["generated_at"] == "2026-04-30T10:00:00+00:00"
 
 
 @pytest.mark.asyncio
@@ -98,6 +100,7 @@ async def test_latest_supports_legacy_metrics_only_payload(tmp_path: Path):
     assert result["metrics"]["faithfulness"] == 1.0
     assert result["gate"]["passed"] is False
     assert result["generated_from"]["legacy_report"] is True
+    assert result["generated_at"] is None
 
 
 @pytest.mark.asyncio
@@ -128,6 +131,7 @@ async def test_run_reports_progress_stages(tmp_path: Path):
     result = await service.run("tenant-progress", sample_limit=1, progress_callback=on_progress)
 
     assert result["dataset_size"] == 1
+    assert result["generated_at"]
     assert seen == ["dataset_building", "evaluating", "reporting", "completed"]
 
 

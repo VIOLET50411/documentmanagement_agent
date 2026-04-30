@@ -88,6 +88,32 @@ class MobileOAuthService:
         tokens["scope"] = record.scope
         return tokens
 
+    async def refresh_tokens(
+        self,
+        *,
+        refresh_token: str,
+        client_id: str,
+    ) -> dict:
+        self._validate_client_id(client_id)
+        tokens = await self.auth_service.refresh(refresh_token)
+        access_payload = jwt.decode(tokens["access_token"], settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+        user_id = str(access_payload.get("sub") or "").strip()
+        if not user_id:
+            raise ValueError("刷新后的访问令牌缺少用户标识")
+
+        user_result = await self.db.execute(select(User).where(User.id == user_id, User.is_active.is_(True)))
+        user = user_result.scalar_one_or_none()
+        if user is None:
+            raise ValueError("用户不存在或已停用")
+
+        tokens["id_token"] = self._create_id_token(
+            user=user,
+            client_id=client_id,
+            scope="openid profile email offline_access",
+        )
+        tokens["scope"] = "openid profile email offline_access"
+        return tokens
+
     async def userinfo(self, user_id: str) -> dict:
         result = await self.db.execute(select(User).where(User.id == user_id, User.is_active.is_(True)))
         user = result.scalar_one_or_none()
@@ -127,10 +153,15 @@ class MobileOAuthService:
     def _validate_client(self, *, client_id: str, redirect_uri: str) -> None:
         if not settings.auth_mobile_oauth_enabled:
             raise ValueError("移动 OAuth 未启用")
-        if client_id not in settings.auth_mobile_oauth_client_list:
-            raise ValueError("client_id 不在允许列表中")
+        self._validate_client_id(client_id)
         if redirect_uri not in settings.auth_mobile_oauth_redirect_uri_list:
             raise ValueError("redirect_uri 不在允许列表中")
+
+    def _validate_client_id(self, client_id: str) -> None:
+        if not settings.auth_mobile_oauth_enabled:
+            raise ValueError("移动 OAuth 未启用")
+        if client_id not in settings.auth_mobile_oauth_client_list:
+            raise ValueError("client_id 不在允许列表中")
 
     def _verify_pkce(self, expected_challenge: str, method: str, verifier: str) -> bool:
         if method == "plain":

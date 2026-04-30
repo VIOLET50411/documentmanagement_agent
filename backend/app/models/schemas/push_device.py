@@ -1,4 +1,4 @@
-"""Schemas for push device registration APIs."""
+﻿"""Schemas for push device registration APIs."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ class PushDeviceHeartbeatRequest(BaseModel):
 
 class PushNotificationTestRequest(BaseModel):
     title: str = Field(default="DocMind 推送测试", min_length=2, max_length=120)
-    body: str = Field(default="移动端推送链路已联通。", min_length=2, max_length=500)
+    body: str = Field(default="移动端推送链路已经联通。", min_length=2, max_length=500)
 
 
 class PushDeviceResponse(BaseModel):
