@@ -29,6 +29,8 @@ services:
       DOCMIND_TRAINING_LORA_R: "2"
       DOCMIND_TRAINING_LORA_ALPHA: "4"
       DOCMIND_TRAINING_TARGET_MODULES: "q_proj"
+      DOCMIND_HF_DOWNLOAD_TIMEOUT: "120"
+      DOCMIND_HF_ETAG_TIMEOUT: "120"
       EMBEDDING_PROVIDER: ollama
       EMBEDDING_API_BASE_URL: http://ollama:11434/v1
       CELERY_BROKER_URL: redis://redis:6379/1
@@ -100,6 +102,8 @@ services:
       DOCMIND_TRAINING_LORA_R: "2"
       DOCMIND_TRAINING_LORA_ALPHA: "4"
       DOCMIND_TRAINING_TARGET_MODULES: "q_proj"
+      DOCMIND_HF_DOWNLOAD_TIMEOUT: "120"
+      DOCMIND_HF_ETAG_TIMEOUT: "120"
       EMBEDDING_PROVIDER: ollama
       EMBEDDING_API_BASE_URL: http://ollama:11434/v1
       CELERY_BROKER_URL: redis://redis:6379/1
@@ -156,6 +160,8 @@ services:
       LLM_TRAINING_PUBLISH_COMMAND: ollama create {target_model_name} -f {modelfile_path}
       DOCMIND_TRAINING_DEV_TINY_MODEL_ENABLED: "true"
       DOCMIND_TRAINING_DEV_TINY_MODEL: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+      DOCMIND_HF_DOWNLOAD_TIMEOUT: "120"
+      DOCMIND_HF_ETAG_TIMEOUT: "120"
       EMBEDDING_PROVIDER: ollama
       EMBEDDING_API_BASE_URL: http://ollama:11434/v1
       CELERY_BROKER_URL: redis://redis:6379/1
@@ -231,6 +237,7 @@ services:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
+      - ./reports:/workspace/reports
     command: serve
 
 volumes:

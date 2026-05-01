@@ -1,3 +1,5 @@
+FROM ollama/ollama:latest AS ollama-bin
+
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -10,6 +12,8 @@ WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential curl libgl1 libglib2.0-0 poppler-utils \
     && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ollama-bin /bin/ollama /usr/local/bin/ollama
 
 COPY requirements.txt requirements.training.txt ./
 RUN pip install --no-cache-dir -r requirements.training.txt

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from billiard.exceptions import SoftTimeLimitExceeded
+import pytest
 
 from app.config import settings
 from app.training import tasks as training_tasks
@@ -36,4 +37,25 @@ def test_run_training_job_marks_failed_on_soft_timeout(monkeypatch):
     assert captured["training_job_id"] == "job-1"
     assert captured["runtime_task_id"] == "runtime-task-1"
     assert captured["terminal_status"] == "failed"
-    assert "训练任务执行超时" in captured["error"]
+    assert "超时" in captured["error"]
+
+
+@pytest.mark.asyncio
+async def test_upsert_runtime_task_ignores_redis_failures(monkeypatch):
+    class FailingRedisClient:
+        async def get(self, key):
+            raise RuntimeError("redis unavailable")
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(training_tasks.redis.asyncio, "from_url", lambda *args, **kwargs: FailingRedisClient())
+
+    await training_tasks._upsert_runtime_task(
+        runtime_task_id="runtime-task-2",
+        tenant_id="tenant-1",
+        training_job_id="job-2",
+        status="running",
+        stage="executing",
+        payload={"heartbeat_at": "2026-04-30T00:00:00"},
+    )

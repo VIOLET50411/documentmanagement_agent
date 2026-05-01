@@ -655,7 +655,16 @@ async def list_llm_training_jobs(
     from app.services.llm_training_service import LLMTrainingService
 
     effective_tenant = tenant_id or current_user.tenant_id
-    items = await LLMTrainingService(db, redis_client=get_redis(), reports_dir=REPORTS_DIR).list_jobs(effective_tenant, limit=max(limit, 1))
+    service = LLMTrainingService(db, redis_client=get_redis(), reports_dir=REPORTS_DIR)
+    items = await service.list_jobs(effective_tenant, limit=max(limit, 1))
+    changed = False
+    for item in items:
+        if not item.runtime_task_id:
+            continue
+        runtime_payload = await _get_runtime_task_payload(item.runtime_task_id, tenant_id=effective_tenant, expected_type="llm_training")
+        changed = await service.reconcile_job_runtime_state(item, runtime_payload) or changed
+    if changed:
+        await db.commit()
     return {"items": [_serialize_training_job(item) for item in items], "count": len(items), "tenant_id": effective_tenant}
 
 
@@ -676,6 +685,9 @@ async def get_llm_training_job(
     payload = {"exists": True, "item": _serialize_training_job(item)}
     if item.runtime_task_id:
         payload["runtime_task"] = await _get_runtime_task_payload(item.runtime_task_id, tenant_id=effective_tenant, expected_type="llm_training")
+        if await service.reconcile_job_runtime_state(item, payload["runtime_task"]):
+            await db.commit()
+            payload["item"] = _serialize_training_job(item)
     return payload
 
 
@@ -691,6 +703,8 @@ async def list_llm_models(
     effective_tenant = tenant_id or current_user.tenant_id
     service = LLMTrainingService(db, redis_client=get_redis(), reports_dir=REPORTS_DIR)
     items = await service.list_models(effective_tenant, limit=max(limit, 1))
+    if await service.reconcile_model_registry_states(effective_tenant, items):
+        await db.commit()
     active = await service.get_active_model(effective_tenant)
     return {"items": [_serialize_registry_model(item) for item in items], "count": len(items), "tenant_id": effective_tenant, "active": active}
 

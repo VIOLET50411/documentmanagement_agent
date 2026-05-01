@@ -23,6 +23,7 @@ class LLMTrainingService:
     ACTIVE_MODEL_KEY_PREFIX = "llm:active_model:"
     PREVIOUS_ACTIVE_MODEL_KEY_PREFIX = "llm:previous_active_model:"
     OLLAMA_ADAPTER_SUPPORTED_PREFIXES = ("llama", "mistral", "gemma")
+    TERMINAL_JOB_STATUSES = {"completed", "failed", "killed"}
 
     def __init__(self, db: AsyncSession, redis_client=None, reports_dir: str | Path | None = None):
         self.db = db
@@ -97,6 +98,52 @@ class LLMTrainingService:
             select(LLMModelRegistry).where(LLMModelRegistry.tenant_id == tenant_id).order_by(LLMModelRegistry.created_at.desc()).limit(max(limit, 1))
         )
         return list(rows.scalars().all())
+
+    async def reconcile_jobs(
+        self,
+        jobs: list[LLMTrainingJob],
+        *,
+        runtime_payloads: dict[str, dict[str, Any]] | None = None,
+        stale_after_seconds: int | None = None,
+    ) -> dict[str, int]:
+        stats = {
+            "scanned": 0,
+            "changed": 0,
+            "stale_failed": 0,
+            "plan_only_failed": 0,
+        }
+        for job in jobs:
+            stats["scanned"] += 1
+            runtime_payload = None
+            if runtime_payloads and job.runtime_task_id:
+                runtime_payload = runtime_payloads.get(job.runtime_task_id)
+            changed = await self.reconcile_job_runtime_state(job, runtime_payload, stale_after_seconds=stale_after_seconds)
+            if not changed:
+                continue
+            stats["changed"] += 1
+            if (job.error_message or "").startswith("training_runtime_"):
+                stats["stale_failed"] += 1
+            if (job.error_message or "") == "training_plan_only_result":
+                stats["plan_only_failed"] += 1
+        return stats
+
+    async def reconcile_model_registry_states(self, tenant_id: str, models: list[LLMModelRegistry] | None = None) -> bool:
+        records = models if models is not None else await self.list_models(tenant_id, limit=200)
+        active_payload = await self.get_active_model(tenant_id)
+        active_model_id = str((active_payload or {}).get("model_id") or "").strip() or None
+        changed = False
+        for model in records:
+            should_be_active = active_model_id == model.id if active_model_id else bool(model.is_active)
+            expected_status = "active" if should_be_active else self._infer_inactive_model_status(model)
+            if model.is_active != should_be_active:
+                model.is_active = should_be_active
+                changed = True
+            if (model.status or "") != expected_status:
+                model.status = expected_status
+                changed = True
+        if changed:
+            await self.db.flush()
+        return changed
 
     async def get_model(self, tenant_id: str, model_id: str) -> LLMModelRegistry | None:
         row = await self.db.execute(select(LLMModelRegistry).where(LLMModelRegistry.id == model_id, LLMModelRegistry.tenant_id == tenant_id))
@@ -223,6 +270,105 @@ class LLMTrainingService:
             job.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
         await self.db.flush()
 
+    async def reconcile_job_runtime_state(
+        self,
+        job: LLMTrainingJob,
+        runtime_payload: dict[str, Any] | None = None,
+        *,
+        stale_after_seconds: int | None = None,
+    ) -> bool:
+        if await self.reconcile_job_result_consistency(job):
+            return True
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        stale_after = max(int(stale_after_seconds or settings.llm_training_runtime_stale_seconds), 30)
+        existing_error = str(job.error_message or "").strip()
+        if job.status not in self.TERMINAL_JOB_STATUSES and (
+            existing_error.startswith("training_runtime_") or existing_error == "recovered_timeout"
+        ):
+            job.status = "failed"
+            job.stage = "failed"
+            job.updated_at = now
+            job.completed_at = now
+            await self.db.flush()
+            return True
+        runtime_item = None
+        if runtime_payload:
+            runtime_item = runtime_payload.get("item") if "item" in runtime_payload else runtime_payload
+
+        if runtime_item:
+            runtime_status = str(runtime_item.get("status") or "").strip().lower()
+            runtime_stage = str(runtime_item.get("stage") or job.stage or "").strip() or job.stage
+            runtime_error = str(runtime_item.get("error") or "").strip() or None
+            runtime_result = runtime_payload.get("result") if isinstance(runtime_payload, dict) else None
+
+            if runtime_status in self.TERMINAL_JOB_STATUSES:
+                normalized_stage = runtime_stage
+                if runtime_status == "completed":
+                    normalized_stage = "completed"
+                elif runtime_stage not in {"failed", "killed"}:
+                    normalized_stage = runtime_status
+                changed = (
+                    job.status != runtime_status
+                    or job.stage != normalized_stage
+                    or (runtime_error and job.error_message != runtime_error[:4000])
+                    or isinstance(runtime_result, dict)
+                )
+                job.status = runtime_status
+                job.stage = normalized_stage or ("completed" if runtime_status == "completed" else "failed")
+                if runtime_error:
+                    job.error_message = runtime_error[:4000]
+                if isinstance(runtime_result, dict):
+                    job.result_json = json.dumps(runtime_result, ensure_ascii=False)
+                if changed:
+                    job.updated_at = now
+                    job.completed_at = now
+                    await self.db.flush()
+                return changed
+
+            runtime_updated_at = self._resolve_runtime_reference_time(runtime_item)
+            if runtime_status in {"pending", "running"} and runtime_updated_at is not None:
+                if (now - runtime_updated_at).total_seconds() > stale_after:
+                    job.status = "failed"
+                    job.stage = "failed"
+                    job.error_message = f"training_runtime_stale>{stale_after}s"
+                    job.updated_at = now
+                    job.completed_at = now
+                    await self.db.flush()
+                    return True
+
+        if job.status in self.TERMINAL_JOB_STATUSES:
+            return False
+
+        job_reference = self._parse_datetime(job.updated_at.isoformat() if job.updated_at else None)
+        if job_reference is not None and (now - job_reference).total_seconds() > stale_after:
+            job.status = "failed"
+            job.stage = "failed"
+            job.error_message = f"training_runtime_missing>{stale_after}s"
+            job.updated_at = now
+            job.completed_at = now
+            await self.db.flush()
+            return True
+
+        return False
+
+    async def reconcile_job_result_consistency(self, job: LLMTrainingJob) -> bool:
+        if job.status != "completed" or not job.result_json:
+            return False
+        payload = self._load_json(job.result_json)
+        metadata = payload.get("executor_metadata") if isinstance(payload.get("executor_metadata"), dict) else {}
+        mode = str(metadata.get("mode") or "").strip().lower()
+        if mode != "plan_only":
+            return False
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        job.status = "failed"
+        job.stage = "failed"
+        job.error_message = "training_plan_only_result"
+        job.updated_at = now
+        job.completed_at = now
+        await self.db.flush()
+        return True
+
     async def register_model_from_job(
         self,
         *,
@@ -276,7 +422,7 @@ class LLMTrainingService:
                     "publish_ready": False,
                     "published": False,
                     "reason": "training_publish_disabled",
-                    "message": "\u672a\u542f\u7528\u8bad\u7ec3\u4ea7\u7269\u53d1\u5e03\u5f00\u5173",
+                    "message": "未启用训练产物发布开关",
                 },
             )
 
@@ -289,7 +435,7 @@ class LLMTrainingService:
                     "publish_ready": False,
                     "published": False,
                     "reason": "artifact_dir_missing",
-                    "message": f"\u8bad\u7ec3\u4ea7\u7269\u76ee\u5f55\u4e0d\u5b58\u5728: {artifact_dir}",
+                    "message": f"训练产物目录不存在: {artifact_dir}",
                 },
             )
 
@@ -302,7 +448,7 @@ class LLMTrainingService:
                     "publish_ready": False,
                     "published": False,
                     "reason": "adapter_manifest_missing",
-                    "message": f"\u7f3a\u5c11 adapter_manifest.json: {manifest_path}",
+                    "message": f"缺少 adapter_manifest.json: {manifest_path}",
                 },
             )
 
@@ -319,7 +465,7 @@ class LLMTrainingService:
                     "publish_ready": False,
                     "published": False,
                     "reason": "unsupported_ollama_adapter_base_model",
-                    "message": f"Ollama \u9002\u914d\u5668\u53d1\u5e03\u5f53\u524d\u4ec5\u652f\u6301 {', '.join(self.OLLAMA_ADAPTER_SUPPORTED_PREFIXES)} \u7cfb\u5217\uff0c\u5f53\u524d\u57fa\u5ea7\u4e3a {hf_base_model}",
+                    "message": f"Ollama 适配器发布当前仅支持 {', '.join(self.OLLAMA_ADAPTER_SUPPORTED_PREFIXES)} 系列，当前基座为 {hf_base_model}",
                     "hf_base_model": hf_base_model,
                 },
             )
@@ -332,7 +478,7 @@ class LLMTrainingService:
                     "publish_ready": False,
                     "published": False,
                     "reason": "adapter_dir_missing",
-                    "message": f"\u9002\u914d\u5668\u76ee\u5f55\u4e0d\u5b58\u5728: {adapter_dir}",
+                    "message": f"适配器目录不存在: {adapter_dir}",
                     "hf_base_model": hf_base_model,
                 },
             )
@@ -346,7 +492,7 @@ class LLMTrainingService:
                     "publish_ready": False,
                     "published": False,
                     "reason": "modelfile_missing",
-                    "message": f"\u7f3a\u5c11 Modelfile: {modelfile_path}",
+                    "message": f"缺少 Modelfile: {modelfile_path}",
                     "hf_base_model": hf_base_model,
                 },
             )
@@ -360,7 +506,7 @@ class LLMTrainingService:
                     "publish_ready": False,
                     "published": False,
                     "reason": "publish_command_missing",
-                    "message": "\u672a\u542f\u7528\u8bad\u7ec3\u4ea7\u7269\u53d1\u5e03\u5f00\u5173",
+                    "message": "未配置训练产物发布命令",
                     "hf_base_model": hf_base_model,
                     "modelfile_path": str(modelfile_path),
                 },
@@ -393,8 +539,7 @@ class LLMTrainingService:
             "serving_model_name": target_model_name,
         }
         command = command_template.format(**format_args)
-        workdir = Path((settings.llm_training_publish_workdir or str(artifact_dir)).strip() or str(artifact_dir))
-        workdir.mkdir(parents=True, exist_ok=True)
+        workdir = artifact_dir.resolve()
         env = {
             **os.environ,
             "OLLAMA_HOST": self._normalize_ollama_host(model.serving_base_url),
@@ -403,6 +548,9 @@ class LLMTrainingService:
             "DOCMIND_TRAINING_ADAPTER_DIR": str(adapter_dir),
             "DOCMIND_TRAINING_TARGET_MODEL_NAME": target_model_name,
         }
+        configured_workdir = str(settings.llm_training_publish_workdir or "").strip()
+        if configured_workdir:
+            env["DOCMIND_TRAINING_PUBLISH_WORKDIR_CONFIG"] = configured_workdir
 
         process = await asyncio.create_subprocess_shell(
             command,
@@ -415,6 +563,12 @@ class LLMTrainingService:
         stdout_text = stdout_raw.decode("utf-8", errors="replace").strip()
         stderr_text = stderr_raw.decode("utf-8", errors="replace").strip()
         if process.returncode != 0:
+            error_message = stderr_text or stdout_text or f"发布命令退出码 {process.returncode}"
+            if "no Modelfile or safetensors files found" in error_message and "ollama" in command_template.lower():
+                error_message = (
+                    f"{error_message}；当前 Ollama 服务端无法直接读取训练产物目录 {artifact_dir}，"
+                    "请确保 `reports` 目录已挂载到 ollama 容器且容器内路径与发布命令中的路径一致。"
+                )
             return await self._record_publish_outcome(
                 model,
                 {
@@ -422,8 +576,11 @@ class LLMTrainingService:
                     "publish_ready": False,
                     "published": False,
                     "reason": "publish_command_failed",
-                    "message": stderr_text or stdout_text or f"\u53d1\u5e03\u547d\u4ee4\u9000\u51fa\u7801 {process.returncode}",
+                    "message": error_message,
                     "command": command,
+                    "artifact_dir": str(artifact_dir),
+                    "modelfile_path": str(modelfile_path),
+                    "workdir": str(workdir),
                 },
             )
 
@@ -441,7 +598,7 @@ class LLMTrainingService:
             "publish_ready": True,
             "published": True,
             "reason": "published",
-            "message": "\u8bad\u7ec3\u4ea7\u7269\u5df2\u53d1\u5e03\u5230\u670d\u52a1\u7aef\u6a21\u578b\u6ce8\u518c\u8868",
+            "message": "训练产物已发布到服务端模型注册表",
             "command": command,
             "serving_model_name": target_model_name,
             "stdout": stdout_text[-2000:],
@@ -559,3 +716,30 @@ class LLMTrainingService:
         if raw.endswith("/v1"):
             return raw[:-3]
         return raw.rstrip("/")
+
+    def _infer_inactive_model_status(self, model: LLMModelRegistry) -> str:
+        metrics = self._load_json(getattr(model, "metrics_json", None))
+        publish_result = metrics.get("publish_result") if isinstance(metrics.get("publish_result"), dict) else {}
+        if publish_result.get("published") is True or getattr(model, "provider", "") == "ollama":
+            return "published"
+        return "registered"
+
+    def _resolve_runtime_reference_time(self, runtime_item: dict[str, Any]) -> datetime | None:
+        stage_payload = runtime_item.get("stage_payload")
+        if isinstance(stage_payload, dict):
+            heartbeat_at = stage_payload.get("heartbeat_at")
+            parsed = self._parse_datetime(str(heartbeat_at) if heartbeat_at else None)
+            if parsed is not None:
+                return parsed
+        return self._parse_datetime(str(runtime_item.get("updated_at") or "") or None)
+
+    def _parse_datetime(self, value: str | None) -> datetime | None:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed
+        return parsed.astimezone(timezone.utc).replace(tzinfo=None)

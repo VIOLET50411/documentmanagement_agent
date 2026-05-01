@@ -1,4 +1,4 @@
-"""Training executor abstraction for mock, script, and remote execution backends."""
+"""Training executor abstraction for mock, script, and remote backends."""
 
 from __future__ import annotations
 
@@ -40,17 +40,30 @@ class TrainingExecutor:
         artifact_dir = str(result.get("artifact_dir") or "").strip()
         serving_base_url = str(result.get("serving_base_url") or "").strip()
         serving_model_name = str(result.get("serving_model_name") or "").strip()
+        adapter_dir = str(result.get("adapter_dir") or "").strip()
+        executed = bool(result.get("executed"))
+        executor_metadata = result.get("executor_metadata") if isinstance(result.get("executor_metadata"), dict) else {}
+        mode = str(executor_metadata.get("mode") or "").strip().lower()
+
         if not artifact_dir:
             raise ValueError("训练执行结果缺少 artifact_dir")
         if not serving_base_url:
             raise ValueError("训练执行结果缺少 serving_base_url")
         if not serving_model_name:
             raise ValueError("训练执行结果缺少 serving_model_name")
+        if mode == "plan_only" or not executed:
+            raise ValueError("训练执行器仅输出训练计划，未生成可注册产物")
+        if not adapter_dir:
+            raise ValueError("训练执行结果缺少 adapter_dir")
+        if not Path(adapter_dir).exists():
+            raise ValueError(f"训练执行结果中的 adapter_dir 不存在: {adapter_dir}")
+
         return {
             "artifact_dir": artifact_dir,
+            "adapter_dir": adapter_dir,
             "serving_base_url": serving_base_url,
             "serving_model_name": serving_model_name,
-            "executor_metadata": result.get("executor_metadata") or {},
+            "executor_metadata": executor_metadata,
             "notes": result.get("notes"),
         }
 
@@ -88,7 +101,7 @@ class MockTrainingExecutor(TrainingExecutor):
                     f"- train_records: {request.train_records}",
                     f"- val_records: {request.val_records}",
                     "",
-                    "该产物为 DocMind 当前阶段的训练执行占位产物，可在后续接入真实 LoRA/SFT 训练器后替换。",
+                    "该产物为 DocMind 当前阶段的占位训练产物，可在后续接入真实 LoRA/SFT 训练器后替换。",
                 ]
             ),
             encoding="utf-8",
@@ -96,9 +109,11 @@ class MockTrainingExecutor(TrainingExecutor):
         )
         return {
             "artifact_dir": str(artifact_dir),
+            "adapter_dir": str(artifact_dir),
+            "executed": True,
             "serving_base_url": settings.llm_enterprise_api_base_url or settings.llm_api_base_url,
             "serving_model_name": settings.llm_enterprise_model_name or settings.llm_model_name,
-            "executor_metadata": {"executor": "mock"},
+            "executor_metadata": {"executor": "mock", "mode": "executed"},
             "notes": "当前为 mock 训练执行器输出，可替换为真实训练服务。",
         }
 

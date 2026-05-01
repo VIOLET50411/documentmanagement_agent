@@ -45,6 +45,23 @@ def test_training_executor_validate_result_requires_required_fields():
         executor.validate_result({"serving_base_url": "http://localhost", "serving_model_name": "qwen"})
 
 
+def test_training_executor_validate_result_rejects_plan_only_payload(tmp_path: Path):
+    executor = TrainingExecutor()
+    artifact_dir = tmp_path / "artifact"
+    artifact_dir.mkdir()
+    with pytest.raises(ValueError, match="仅输出训练计划"):
+        executor.validate_result(
+            {
+                "artifact_dir": str(artifact_dir),
+                "adapter_dir": "",
+                "executed": False,
+                "serving_base_url": "http://localhost",
+                "serving_model_name": "tenant-model",
+                "executor_metadata": {"mode": "plan_only"},
+            }
+        )
+
+
 def test_build_training_executor_supports_remote_aliases(monkeypatch):
     monkeypatch.setattr(settings, "llm_training_executor_script_command", "")
     assert build_training_executor("mock").__class__.__name__ == "MockTrainingExecutor"
@@ -128,6 +145,8 @@ async def test_script_training_executor_reads_result_file(tmp_path: Path, monkey
         "artifact=pathlib.Path(os.environ['DOCMIND_TRAINING_ARTIFACT_DIR']); "
         "(artifact / 'training_result.json').write_text(json.dumps({{"
         "'artifact_dir': str(artifact), "
+        "'adapter_dir': str(artifact), "
+        "'executed': True, "
         "'serving_base_url': 'http://localhost:11434/v1', "
         "'serving_model_name': 'tenant-model'}}), encoding='utf-8')\""
     )
@@ -151,5 +170,6 @@ async def test_script_training_executor_reads_result_file(tmp_path: Path, monkey
 
     request_json = json.loads((tmp_path / "artifacts" / "training_request.json").read_text(encoding="utf-8"))
     assert request_json["job_id"] == "job-script-1"
+    assert result["executed"] is True
     assert result["serving_model_name"] == "tenant-model"
     assert result["executor_metadata"]["executor"] == "script"

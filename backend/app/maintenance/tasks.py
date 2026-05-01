@@ -6,11 +6,14 @@ import asyncio
 import json
 import os
 import uuid
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
 import asyncpg
 import redis
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from celery_app import celery
 from app.config import settings
@@ -59,6 +62,8 @@ def runtime_maintenance_job(self, cleanup_empty: bool = True):
 
 
 async def _run_runtime_maintenance(*, cleanup_empty: bool) -> dict:
+    from app.agent.runtime.task_store import TaskStore
+
     client = redis.asyncio.from_url(settings.redis_url, encoding="utf-8", decode_responses=True)
     stats = {
         "scanned_replay_keys": 0,
@@ -68,6 +73,10 @@ async def _run_runtime_maintenance(*, cleanup_empty: bool) -> dict:
         "repaired_task_ttl": 0,
         "scanned_task_indexes": 0,
         "repaired_task_index_ttl": 0,
+        "recovered_stuck_tasks": 0,
+        "reconciled_training_jobs": 0,
+        "recovered_stale_training_jobs": 0,
+        "fixed_plan_only_training_jobs": 0,
     }
     try:
         cursor = 0
@@ -108,9 +117,62 @@ async def _run_runtime_maintenance(*, cleanup_empty: bool) -> dict:
                     stats["repaired_task_index_ttl"] += 1
             if cursor == 0:
                 break
+
+        store = TaskStore(client, retention_seconds=settings.runtime_task_retention_seconds)
+        stats["recovered_stuck_tasks"] = await store.recover_stuck_running(settings.runtime_stage_timeout_seconds)
+        training_stats = await _reconcile_training_jobs(client)
+        stats["reconciled_training_jobs"] = training_stats["changed"]
+        stats["recovered_stale_training_jobs"] = training_stats["stale_failed"]
+        stats["fixed_plan_only_training_jobs"] = training_stats["plan_only_failed"]
     finally:
         await client.aclose()
     return stats
+
+
+async def _reconcile_training_jobs(redis_client) -> dict[str, int]:
+    from app.agent.runtime.task_store import TaskStore
+    from app.models.db.llm_training import LLMTrainingJob
+    from app.services.llm_training_service import LLMTrainingService
+
+    engine = create_async_engine(
+        settings.postgres_dsn,
+        echo=settings.app_debug,
+        pool_size=2,
+        max_overflow=2,
+        pool_timeout=settings.postgres_pool_timeout_seconds,
+        pool_pre_ping=True,
+    )
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    store = TaskStore(redis_client, retention_seconds=settings.runtime_task_retention_seconds)
+    try:
+        async with session_factory() as db:
+            rows = await db.execute(
+                select(LLMTrainingJob)
+                .where(LLMTrainingJob.status.in_(["pending", "running", "completed"]))
+                .order_by(LLMTrainingJob.updated_at.desc())
+                .limit(200)
+            )
+            jobs = list(rows.scalars().all())
+            runtime_payloads: dict[str, dict] = {}
+            for job in jobs:
+                if not job.runtime_task_id:
+                    continue
+                record = await store.get(job.runtime_task_id)
+                if record is None:
+                    continue
+                runtime_payloads[job.runtime_task_id] = {"item": asdict(record)}
+            stats = await LLMTrainingService(db, redis_client=redis_client).reconcile_jobs(
+                jobs,
+                runtime_payloads=runtime_payloads,
+                stale_after_seconds=settings.llm_training_runtime_stale_seconds,
+            )
+            if stats["changed"] > 0:
+                await db.commit()
+            else:
+                await db.rollback()
+            return stats
+    finally:
+        await engine.dispose()
 
 
 @celery.task(bind=True, name="app.maintenance.tasks.export_public_corpus_job", acks_late=True, max_retries=0)
@@ -177,7 +239,6 @@ def _run_public_corpus_export(*, dataset_name: str, tenant_id: str, train_ratio:
     result["record_count"] = len(records)
     return result
 
-
 def _list_runtime_tenants() -> list[str]:
     client = redis.from_url(settings.redis_url, decode_responses=True)
     tenants: set[str] = set()
@@ -199,10 +260,13 @@ def _build_alert(stats: dict) -> dict:
     reasons: list[str] = []
     repaired_total = int(stats.get("repaired_replay_ttl", 0) or 0) + int(stats.get("repaired_task_ttl", 0) or 0) + int(stats.get("repaired_task_index_ttl", 0) or 0)
     empty_replay = int(stats.get("removed_empty_replay", 0) or 0)
+    recovered_stuck = int(stats.get("recovered_stuck_tasks", 0) or 0)
     if repaired_total >= settings.runtime_maintenance_alert_repaired_ttl_threshold:
         reasons.append(f"repaired_ttl_keys={repaired_total}")
     if empty_replay >= settings.runtime_maintenance_alert_empty_replay_threshold:
         reasons.append(f"removed_empty_replay={empty_replay}")
+    if recovered_stuck > 0:
+        reasons.append(f"recovered_stuck_tasks={recovered_stuck}")
     return {"triggered": bool(reasons), "reasons": reasons}
 
 

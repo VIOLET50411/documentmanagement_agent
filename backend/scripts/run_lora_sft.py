@@ -14,12 +14,17 @@ APP_ROOT = CURRENT_DIR.parent
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
+os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", os.getenv("DOCMIND_HF_DOWNLOAD_TIMEOUT", "120"))
+os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", os.getenv("DOCMIND_HF_ETAG_TIMEOUT", "120"))
+os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+
 from app.training.local_finetune import (
     build_dataset_rows,
     build_training_plan,
     load_training_context,
     read_jsonl,
     write_training_artifacts,
+    write_training_status,
 )
 
 
@@ -47,6 +52,13 @@ def _resolve_target_modules(model, configured_modules: list[str]) -> list[str]:
 
 
 def _train_with_transformers(context, train_rows: list[dict], val_rows: list[dict], plan: dict) -> dict:
+    write_training_status(
+        context,
+        stage="loading_runtime",
+        message="正在加载训练依赖与基础模型",
+        plan=plan,
+        extra={"train_records": len(train_rows), "val_records": len(val_rows)},
+    )
     import torch
     from datasets import Dataset
     from peft import LoraConfig, get_peft_model
@@ -71,6 +83,13 @@ def _train_with_transformers(context, train_rows: list[dict], val_rows: list[dic
         device_map="auto" if torch.cuda.is_available() else None,
     )
     model.config.use_cache = False
+    write_training_status(
+        context,
+        stage="preparing_dataset",
+        message="基础模型已加载，正在构建训练数据集",
+        plan=plan,
+        extra={"device": "cuda" if torch.cuda.is_available() else "cpu"},
+    )
 
     lora_conf = plan["lora"]
     target_modules = _resolve_target_modules(model, list(lora_conf["target_modules"]))
@@ -140,11 +159,25 @@ def _train_with_transformers(context, train_rows: list[dict], val_rows: list[dic
         eval_dataset=eval_dataset if len(eval_dataset) > 0 else None,
         data_collator=DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False),
     )
+    write_training_status(
+        context,
+        stage="training",
+        message="训练已启动，正在执行 Trainer.train()",
+        plan=plan,
+        extra={"train_dataset_size": len(train_rows), "val_dataset_size": len(val_rows)},
+    )
     trainer.train()
 
     adapter_dir = context.artifact_dir / "adapter"
     model.save_pretrained(str(adapter_dir))
     tokenizer.save_pretrained(str(adapter_dir))
+    write_training_status(
+        context,
+        stage="saving_artifacts",
+        message="训练已完成，正在保存适配器产物",
+        plan=plan,
+        extra={"adapter_dir": str(adapter_dir)},
+    )
 
     publish_ready = os.getenv("DOCMIND_TRAINING_PUBLISH_ENABLED", "false").lower() == "true"
     notes = "\u5df2\u5b8c\u6210\u672c\u5730 LoRA/SFT \u8bad\u7ec3\u3002\u5982\u9700\u53d1\u5e03\u5230 Ollama \u6216 vLLM\uff0c\u8bf7\u6309 Modelfile \u6216\u90e8\u7f72\u811a\u672c\u7ee7\u7eed\u53d1\u5e03\u3002"
@@ -184,6 +217,13 @@ def main() -> None:
         val_rows = val_rows[:max_val_samples]
     plan["train_records"] = len(train_rows)
     plan["val_records"] = len(val_rows)
+    write_training_status(
+        context,
+        stage="prepared",
+        message="训练计划已生成，准备执行 LoRA/SFT",
+        plan=plan,
+        extra={"train_records": len(train_rows), "val_records": len(val_rows)},
+    )
 
     if not train_rows:
         raise RuntimeError("\u8bad\u7ec3\u96c6\u4e3a\u7a7a\uff0c\u65e0\u6cd5\u6267\u884c LoRA/SFT")
@@ -191,6 +231,12 @@ def main() -> None:
     try:
         result = _train_with_transformers(context, train_rows, val_rows, plan)
     except Exception as exc:  # noqa: BLE001
+        write_training_status(
+            context,
+            stage="failed" if not args.allow_plan_fallback else "fallback",
+            message=f"训练执行异常: {type(exc).__name__}: {exc}",
+            plan=plan,
+        )
         if not args.allow_plan_fallback:
             raise
         result = write_training_artifacts(
@@ -205,6 +251,14 @@ def main() -> None:
                 "train_dataset_size": len(train_rows),
                 "val_dataset_size": len(val_rows),
             },
+        )
+    else:
+        write_training_status(
+            context,
+            stage="completed",
+            message="训练执行完成，已生成训练结果",
+            plan=plan,
+            extra={"artifact_dir": result.get("artifact_dir"), "adapter_dir": result.get("adapter_dir")},
         )
 
     print(json.dumps(result, ensure_ascii=False))

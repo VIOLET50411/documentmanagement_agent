@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -186,6 +187,40 @@ def build_training_plan(context: LocalTrainingContext, train_rows: list[dict[str
     }
 
 
+def write_training_status(
+    context: LocalTrainingContext,
+    *,
+    stage: str,
+    message: str,
+    plan: dict[str, Any] | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload = {
+        "job_id": context.request.get("job_id"),
+        "tenant_id": context.request.get("tenant_id"),
+        "dataset_name": context.request.get("dataset_name"),
+        "stage": stage,
+        "message": message,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if plan is not None:
+        payload["plan"] = {
+            "base_model": plan.get("base_model"),
+            "hf_base_model": plan.get("hf_base_model"),
+            "target_model_name": plan.get("target_model_name"),
+            "train_records": plan.get("train_records"),
+            "val_records": plan.get("val_records"),
+            "trainer": plan.get("trainer"),
+            "lora": plan.get("lora"),
+        }
+    if extra:
+        payload["extra"] = extra
+
+    status_path = context.artifact_dir / "training_status.json"
+    status_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
+    return payload
+
+
 def write_training_artifacts(
     context: LocalTrainingContext,
     *,
@@ -256,6 +291,8 @@ def write_training_artifacts(
 
     result = {
         "artifact_dir": str(context.artifact_dir),
+        "adapter_dir": adapter_dir,
+        "executed": bool(executed),
         "serving_base_url": context.serving_base_url,
         "serving_model_name": context.serving_model_name,
         "executor_metadata": executor_metadata,

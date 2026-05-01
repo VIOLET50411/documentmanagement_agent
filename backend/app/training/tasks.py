@@ -374,37 +374,40 @@ async def _upsert_runtime_task(
         return
     client = redis.asyncio.from_url(settings.redis_url, encoding="utf-8", decode_responses=True)
     try:
-        key = f"runtime:task:{runtime_task_id}"
-        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
-        existing = {}
-        raw = await client.get(key)
-        if raw:
-            try:
-                existing = json.loads(raw)
-            except json.JSONDecodeError:
-                existing = {}
-        record = {
-            "task_id": runtime_task_id,
-            "type": "llm_training",
-            "status": status,
-            "description": f"模型训练任务: job={training_job_id}",
-            "tool_use_id": None,
-            "start_time": existing.get("start_time") or now,
-            "end_time": now if terminal else existing.get("end_time"),
-            "output_offset": existing.get("output_offset", 0),
-            "retries": 0,
-            "notified": existing.get("notified", False),
-            "trace_id": runtime_task_id,
-            "tenant_id": existing.get("tenant_id") or tenant_id,
-            "session_id": None,
-            "stage": stage,
-            "stage_payload": payload,
-            "error": error[:2000] if error else None,
-            "updated_at": now,
-        }
-        await client.set(key, json.dumps(record, ensure_ascii=False), ex=settings.runtime_task_retention_seconds)
-        if tenant_id != "unknown":
-            await client.zadd(f"runtime:tasks:{tenant_id}", {runtime_task_id: datetime.now(timezone.utc).timestamp()})
-            await client.expire(f"runtime:tasks:{tenant_id}", settings.runtime_task_retention_seconds)
+        try:
+            key = f"runtime:task:{runtime_task_id}"
+            now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+            existing = {}
+            raw = await client.get(key)
+            if raw:
+                try:
+                    existing = json.loads(raw)
+                except json.JSONDecodeError:
+                    existing = {}
+            record = {
+                "task_id": runtime_task_id,
+                "type": "llm_training",
+                "status": status,
+                "description": f"模型训练任务: job={training_job_id}",
+                "tool_use_id": None,
+                "start_time": existing.get("start_time") or now,
+                "end_time": now if terminal else existing.get("end_time"),
+                "output_offset": existing.get("output_offset", 0),
+                "retries": 0,
+                "notified": existing.get("notified", False),
+                "trace_id": runtime_task_id,
+                "tenant_id": existing.get("tenant_id") or tenant_id,
+                "session_id": None,
+                "stage": stage,
+                "stage_payload": payload,
+                "error": error[:2000] if error else None,
+                "updated_at": now,
+            }
+            await client.set(key, json.dumps(record, ensure_ascii=False), ex=settings.runtime_task_retention_seconds)
+            if tenant_id != "unknown":
+                await client.zadd(f"runtime:tasks:{tenant_id}", {runtime_task_id: datetime.now(timezone.utc).timestamp()})
+                await client.expire(f"runtime:tasks:{tenant_id}", settings.runtime_task_retention_seconds)
+        except Exception:  # noqa: BLE001
+            return
     finally:
         await client.aclose()

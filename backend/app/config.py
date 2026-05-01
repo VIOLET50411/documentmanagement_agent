@@ -121,6 +121,7 @@ class Settings(BaseSettings):
     llm_training_task_soft_time_limit_seconds: int = 7200
     llm_training_task_time_limit_seconds: int = 7500
     llm_training_progress_heartbeat_seconds: int = 30
+    llm_training_runtime_stale_seconds: int = 300
     llm_training_publish_enabled: bool = False
     llm_training_publish_command: str = ""
     llm_training_publish_workdir: str = ""
