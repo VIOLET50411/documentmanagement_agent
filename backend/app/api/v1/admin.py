@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -806,6 +806,28 @@ async def get_security_policy(current_user: User = Depends(require_role("ADMIN")
     from app.services.security_policy_service import SecurityPolicyService
 
     return SecurityPolicyService().evaluate()
+
+
+@router.get("/system/mobile-auth")
+async def get_mobile_auth_status(
+    request: Request,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.mobile_oauth_service import MobileOAuthService
+
+    issuer = str(request.base_url).rstrip("/")
+    return {"tenant_id": current_user.tenant_id, **MobileOAuthService(db).status(issuer)}
+
+
+@router.get("/system/push-notifications")
+async def get_push_notification_status(
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.push_notification_service import PushNotificationService
+
+    return await PushNotificationService(db, get_redis()).get_health_summary(tenant_id=current_user.tenant_id)
 
 
 @router.get("/runtime/tasks")

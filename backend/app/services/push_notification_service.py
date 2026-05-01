@@ -210,6 +210,67 @@ class PushNotificationService:
         await self._record_notification({**payload, "delivery": summary})
         return {**summary, "title": title, "body": body}
 
+    async def get_health_summary(self, *, tenant_id: str) -> dict:
+        provider = (settings.push_notification_provider or "log").lower()
+        fcm_service_account_file = self._resolve_fcm_service_account_file()
+        providers = {
+            "log": {"configured": True, "ready": True},
+            "webhook": {
+                "configured": bool(settings.push_notification_webhook_url),
+                "ready": bool(settings.push_notification_webhook_url),
+                "webhook_url_configured": bool(settings.push_notification_webhook_url),
+            },
+            "fcm": {
+                "configured": self._fcm_configured(),
+                "ready": self._fcm_configured(),
+                "mode": "v1" if self._uses_fcm_v1() else "legacy" if settings.push_fcm_server_key else "unconfigured",
+                "service_account_file_configured": bool(fcm_service_account_file),
+                "project_id": self._resolve_fcm_project_id(fcm_service_account_file) or settings.push_fcm_project_id or None,
+            },
+            "apns": {
+                "configured": self._apns_configured(),
+                "ready": self._apns_configured(),
+                "topic_configured": bool(settings.push_apns_topic),
+                "auth_token_configured": bool(settings.push_apns_auth_token),
+            },
+            "wechat": {
+                "configured": self._wechat_configured(),
+                "ready": self._wechat_configured(),
+                "template_id_configured": bool(settings.push_wechat_template_id),
+                "access_token_configured": bool(settings.push_wechat_access_token),
+            },
+        }
+        issues: list[str] = []
+        if settings.push_notifications_enabled and provider != "log":
+            selected = providers.get(provider, {"configured": False})
+            if not selected.get("configured"):
+                issues.append(f"{provider}_not_configured")
+        if settings.push_notification_fail_closed and not settings.push_notifications_enabled:
+            issues.append("fail_closed_without_push_enabled")
+
+        device_summary = None
+        if self.db is not None:
+            devices = await self._list_tenant_devices(tenant_id=tenant_id)
+            device_summary = {
+                "total": len(devices),
+                "active": sum(1 for device in devices if device.is_active),
+                "inactive": sum(1 for device in devices if not device.is_active),
+                "by_platform": dict(Counter(self._normalize_platform(device.platform) for device in devices)),
+            }
+
+        return {
+            "enabled": bool(settings.push_notifications_enabled),
+            "provider": provider,
+            "fail_closed": bool(settings.push_notification_fail_closed),
+            "auto_deactivate_invalid_tokens": bool(settings.push_auto_deactivate_invalid_tokens),
+            "ready": True if provider == "log" else bool(settings.push_notifications_enabled) and not issues,
+            "issues": issues,
+            "providers": providers,
+            "tenant_id": tenant_id,
+            "device_summary": device_summary,
+            "redis_available": self.redis is not None,
+        }
+
     def send_document_status_sync(
         self,
         *,
@@ -273,6 +334,16 @@ class PushNotificationService:
                 ]
         finally:
             conn.close()
+
+    async def _list_tenant_devices(self, *, tenant_id: str) -> list[PushDevice]:
+        if self.db is None:
+            return []
+        result = await self.db.execute(
+            select(PushDevice)
+            .where(PushDevice.tenant_id == tenant_id)
+            .order_by(PushDevice.updated_at.desc())
+        )
+        return list(result.scalars().all())
 
     async def _record_notification(self, payload: dict) -> None:
         if self.redis is None:

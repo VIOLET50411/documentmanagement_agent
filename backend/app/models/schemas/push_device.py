@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class PushDeviceRegisterRequest(BaseModel):
@@ -25,6 +25,8 @@ class PushNotificationTestRequest(BaseModel):
 
 
 class PushDeviceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     tenant_id: str
     user_id: str
@@ -36,6 +38,3 @@ class PushDeviceResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     last_seen_at: datetime
-
-    class Config:
-        from_attributes = True

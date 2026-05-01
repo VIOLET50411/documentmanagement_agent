@@ -7,8 +7,10 @@ from tempfile import TemporaryDirectory
 
 try:
     from pdf2image import convert_from_path
+    from pdf2image.exceptions import PDFInfoNotInstalledError, PDFPageCountError, PDFSyntaxError
 except ImportError:  # pragma: no cover - optional dependency
     convert_from_path = None
+    PDFInfoNotInstalledError = PDFPageCountError = PDFSyntaxError = ()
 
 
 class OCRParser:
@@ -25,7 +27,7 @@ class OCRParser:
 
         try:
             result = self._ocr_path(engine, path)
-        except (OSError, RuntimeError, ValueError, TypeError):
+        except (OSError, RuntimeError, ValueError, TypeError, PDFInfoNotInstalledError, PDFPageCountError, PDFSyntaxError):
             return [self._fallback_notice(path, reason="ocr_runtime_failed")]
 
         elements: list[dict] = []

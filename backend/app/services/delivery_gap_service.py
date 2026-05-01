@@ -1,6 +1,4 @@
-"""Delivery gap report service for remaining enterprise and financial targets."""
-
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import os
@@ -8,6 +6,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -150,7 +149,9 @@ class DeliveryGapService:
         if pipeline_ready and publishable_base_aligned:
             note = "训练产物发布链路已完成，存在真实已发布模型证据。"
         elif publish_runtime_ready and evidence["executed_training_present"]:
-            note = "训练产物发布运行时已就绪，且存在真实训练产物，但尚无已发布模型证据。"
+            note = "训练执行与发布运行条件已就绪，且存在真实训练产物，但尚无已发布模型证据。"
+        elif publish_runtime_ready and publishable_base_aligned:
+            note = "训练发布运行条件与基座对齐均已满足，但尚未观察到真实训练产物或已发布模型证据。"
         elif publish_enabled and bool(publish_command) and not ollama_cli_available:
             note = "训练产物发布命令已配置，但当前运行环境缺少 ollama CLI。"
         elif publish_enabled and bool(publish_command):
@@ -187,7 +188,7 @@ class DeliveryGapService:
             "latest_model_id": None,
         }
         if self.db is None:
-            return evidence
+            return await self._load_training_publish_evidence_from_artifacts(tenant_id, evidence)
 
         jobs = (
             await self.db.execute(
@@ -222,7 +223,126 @@ class DeliveryGapService:
             if model.status in {"published", "active"} or bool(model.is_active) or bool(publish_result.get("published")):
                 evidence["published_model_present"] = True
                 break
+
+        if not evidence["executed_training_present"] or not evidence["published_model_present"]:
+            evidence = await self._load_training_publish_evidence_from_artifacts(tenant_id, evidence)
         return evidence
+
+    async def _load_training_publish_evidence_from_artifacts(
+        self,
+        tenant_id: str,
+        evidence: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        payload = dict(
+            evidence
+            or {
+                "executed_training_present": False,
+                "published_model_present": False,
+                "latest_training_job_id": None,
+                "latest_model_id": None,
+            }
+        )
+        tenant_root = Path(settings.docmind_reports_dir) / settings.llm_training_artifacts_subdir / tenant_id
+        if not tenant_root.exists():
+            return payload
+
+        published_models = await self._load_published_model_names()
+        artifact_dirs = sorted(
+            (path for path in tenant_root.iterdir() if path.is_dir()),
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        )
+        for artifact_dir in artifact_dirs:
+            if payload["latest_training_job_id"] is None:
+                payload["latest_training_job_id"] = artifact_dir.name
+
+            result_payload = self._load_json_path(artifact_dir / "training_result.json")
+            metadata = result_payload.get("executor_metadata") if isinstance(result_payload.get("executor_metadata"), dict) else {}
+            if metadata.get("mode") == "executed":
+                payload["executed_training_present"] = True
+
+            request_payload = self._load_json_path(artifact_dir / "training_request.json")
+            target_model_name = str(
+                request_payload.get("target_model_name")
+                or result_payload.get("target_model_name")
+                or ""
+            ).strip()
+            matched_name = self._match_published_model_name(target_model_name, published_models)
+            if matched_name:
+                payload["published_model_present"] = True
+                payload["latest_model_id"] = matched_name
+
+            if payload["executed_training_present"] and payload["published_model_present"]:
+                break
+        return payload
+
+    async def _load_published_model_names(self) -> set[str]:
+        candidates: list[str] = []
+        for raw_base in (
+            str(settings.llm_enterprise_api_base_url or "").strip(),
+            str(settings.llm_api_base_url or "").strip(),
+            "http://ollama:11434",
+        ):
+            if not raw_base:
+                continue
+            normalized = raw_base.rstrip("/")
+            candidates.append(normalized)
+            if normalized.endswith("/v1"):
+                candidates.append(normalized[:-3])
+
+        seen: set[str] = set()
+        published: set[str] = set()
+        timeout = httpx.Timeout(8.0, connect=3.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            for base in candidates:
+                if not base or base in seen:
+                    continue
+                seen.add(base)
+                for path in ("/v1/models", "/api/tags"):
+                    url = f"{base}{path}"
+                    try:
+                        response = await client.get(url)
+                        response.raise_for_status()
+                    except httpx.HTTPError:
+                        continue
+                    try:
+                        data = response.json()
+                    except ValueError:
+                        continue
+                    if path == "/v1/models":
+                        for item in data.get("data") or []:
+                            model_name = str(item.get("id") or "").strip()
+                            if model_name:
+                                published.add(model_name)
+                    else:
+                        for item in data.get("models") or []:
+                            for key in ("name", "model"):
+                                model_name = str(item.get(key) or "").strip()
+                                if model_name:
+                                    published.add(model_name)
+                if published:
+                    break
+        return published
+
+    def _load_json_path(self, path: Path) -> dict[str, Any]:
+        if not path.exists():
+            return {}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _match_published_model_name(self, target_model_name: str, published_models: set[str]) -> str | None:
+        normalized = str(target_model_name or "").strip()
+        if not normalized:
+            return None
+        if normalized in published_models:
+            return normalized
+        for candidate in (f"{normalized}:latest", f"{normalized}:default"):
+            if candidate in published_models:
+                return candidate
+        return None
 
     def _load_json(self, raw: str | None) -> dict[str, Any]:
         if not raw:

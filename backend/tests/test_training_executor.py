@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -140,8 +141,9 @@ async def test_remote_training_executor_supports_async_job_polling(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_script_training_executor_reads_result_file(tmp_path: Path, monkeypatch):
+    python_executable = sys.executable.replace("\\", "/")
     settings.llm_training_executor_script_command = (
-        "py -3 -c \"import json,os,pathlib; "
+        f"\"{python_executable}\" -c \"import json,os,pathlib; "
         "artifact=pathlib.Path(os.environ['DOCMIND_TRAINING_ARTIFACT_DIR']); "
         "(artifact / 'training_result.json').write_text(json.dumps({{"
         "'artifact_dir': str(artifact), "

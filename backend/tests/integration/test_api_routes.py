@@ -829,3 +829,109 @@ async def test_mobile_userinfo_route_returns_profile(api_client: AsyncClient, mo
     payload = response.json()
     assert payload["sub"] == "user-1"
     assert payload["tenant_id"] == "tenant-1"
+
+
+@pytest.mark.asyncio
+async def test_admin_mobile_auth_status_route(api_client: AsyncClient, monkeypatch):
+    current_user = SimpleNamespace(
+        id="user-1",
+        username="admin_demo",
+        email="admin@example.com",
+        role="ADMIN",
+        department="operations",
+        tenant_id="tenant-1",
+        level=9,
+        email_verified=True,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    async def override_current_user():
+        return current_user
+
+    async def override_db():
+        yield DummyDB()
+
+    from app.dependencies import get_db
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_db] = override_db
+
+    def fake_status(self, issuer=None):
+        return {
+            "enabled": True,
+            "ready": True,
+            "issues": [],
+            "clients": ["docmind-capacitor"],
+            "redirect_uris": ["docmind://auth/callback"],
+            "authorization_code_expire_minutes": 5,
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+            "response_types_supported": ["code"],
+            "pkce_methods_supported": ["S256", "plain"],
+            "token_endpoint_auth_methods_supported": ["none"],
+            "jwt_algorithm": "HS256",
+            "discovery": {"issuer": issuer},
+        }
+
+    monkeypatch.setattr(MobileOAuthService, "status", fake_status)
+
+    response = await api_client.get("/api/v1/admin/system/mobile-auth")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["tenant_id"] == "tenant-1"
+    assert payload["ready"] is True
+    assert payload["clients"] == ["docmind-capacitor"]
+
+
+@pytest.mark.asyncio
+async def test_admin_push_notification_status_route(api_client: AsyncClient, monkeypatch):
+    current_user = SimpleNamespace(
+        id="user-1",
+        username="admin_demo",
+        email="admin@example.com",
+        role="ADMIN",
+        department="operations",
+        tenant_id="tenant-1",
+        level=9,
+        email_verified=True,
+        created_at=datetime.now(timezone.utc),
+    )
+    fake_redis = FakeRedis()
+
+    async def override_current_user():
+        return current_user
+
+    async def override_db():
+        yield DummyDB()
+
+    from app.dependencies import get_db
+    from app.api.v1 import admin as admin_module
+    from app.services.push_notification_service import PushNotificationService
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_db] = override_db
+    monkeypatch.setattr(admin_module, "get_redis", lambda: fake_redis)
+
+    async def fake_health(self, tenant_id: str):
+        return {
+            "enabled": True,
+            "provider": "fcm",
+            "fail_closed": False,
+            "auto_deactivate_invalid_tokens": True,
+            "ready": True,
+            "issues": [],
+            "providers": {"fcm": {"configured": True, "ready": True, "mode": "v1"}},
+            "tenant_id": tenant_id,
+            "device_summary": {"total": 2, "active": 2, "inactive": 0, "by_platform": {"android": 2}},
+            "redis_available": True,
+        }
+
+    monkeypatch.setattr(PushNotificationService, "get_health_summary", fake_health)
+
+    response = await api_client.get("/api/v1/admin/system/push-notifications")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["tenant_id"] == "tenant-1"
+    assert payload["provider"] == "fcm"
+    assert payload["device_summary"]["total"] == 2

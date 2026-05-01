@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 
@@ -85,6 +85,8 @@ class ResetPasswordRequest(BaseModel):
 
 
 class UserResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     username: str
     email: str
@@ -94,9 +96,6 @@ class UserResponse(BaseModel):
     level: int | None = None
     email_verified: bool = False
     created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 class InviteResponse(BaseModel):

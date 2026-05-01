@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class DocumentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     title: str
     file_name: str
@@ -22,9 +24,6 @@ class DocumentResponse(BaseModel):
     error_message: str | None = None
     created_at: datetime
     updated_at: datetime | None = None
-
-    class Config:
-        from_attributes = True
 
 
 class DocumentListResponse(BaseModel):

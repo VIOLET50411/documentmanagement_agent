@@ -82,6 +82,8 @@ def test_load_training_context_and_plan(tmp_path: Path, monkeypatch):
 
     monkeypatch.setenv("DOCMIND_TRAINING_SERVING_BASE_URL", "http://ollama:11434/v1")
     monkeypatch.setenv("DOCMIND_TRAINING_SERVING_MODEL_NAME", "qwen2.5:7b")
+    monkeypatch.setenv("DOCMIND_TRAINING_DEV_TINY_MODEL_ENABLED", "false")
+    monkeypatch.delenv("DOCMIND_TRAINING_HF_BASE_MODEL", raising=False)
     context = load_training_context(request_json_path)
     train_rows = build_dataset_rows(read_jsonl(context.train_path))
     val_rows = build_dataset_rows(read_jsonl(context.val_path))

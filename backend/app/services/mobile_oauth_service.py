@@ -147,6 +147,34 @@ class MobileOAuthService:
             "code_challenge_methods_supported": ["S256", "plain"],
         }
 
+    def status(self, issuer: str | None = None) -> dict:
+        enabled = bool(settings.auth_mobile_oauth_enabled)
+        clients = list(settings.auth_mobile_oauth_client_list)
+        redirects = list(settings.auth_mobile_oauth_redirect_uri_list)
+        issues: list[str] = []
+        if enabled and not clients:
+            issues.append("missing_clients")
+        if enabled and not redirects:
+            issues.append("missing_redirect_uris")
+        if enabled and settings.auth_mobile_authorization_code_expire_minutes <= 0:
+            issues.append("invalid_authorization_code_ttl")
+        payload = {
+            "enabled": enabled,
+            "ready": enabled and not issues,
+            "issues": issues,
+            "clients": clients,
+            "redirect_uris": redirects,
+            "authorization_code_expire_minutes": max(settings.auth_mobile_authorization_code_expire_minutes, 0),
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+            "response_types_supported": ["code"],
+            "pkce_methods_supported": ["S256", "plain"],
+            "token_endpoint_auth_methods_supported": ["none"],
+            "jwt_algorithm": settings.jwt_algorithm,
+        }
+        if issuer:
+            payload["discovery"] = self.discovery_document(issuer)
+        return payload
+
     def jwks(self) -> dict:
         return {"keys": []}
 

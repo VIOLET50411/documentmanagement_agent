@@ -55,7 +55,7 @@ ruff==0.6.0
 mypy==1.11.0
 
 # --- Runtime Graph & Observability ---
-langgraph==0.2.34
+langgraph==0.5.4
 langgraph-checkpoint-postgres==2.0.25
 psycopg[binary]==3.3.3
 langfuse==2.50.0
