@@ -14,6 +14,7 @@ from app.training.executor import (
     TrainingExecutionRequest,
     TrainingExecutor,
     build_training_executor,
+    describe_training_runtime,
 )
 
 
@@ -69,6 +70,44 @@ def test_build_training_executor_supports_remote_aliases(monkeypatch):
     assert build_training_executor("remote").__class__.__name__ == "RemoteTrainingExecutor"
     assert build_training_executor("api").__class__.__name__ == "RemoteTrainingExecutor"
     assert build_training_executor("script").__class__.__name__ == "ScriptTrainingExecutor"
+
+
+def test_describe_training_runtime_reports_builtin_script_ready(monkeypatch, tmp_path: Path):
+    runner_path = tmp_path / "run_lora_sft.py"
+    runner_path.write_text("print('ok')\n", encoding="utf-8")
+    monkeypatch.setattr(settings, "llm_training_provider", "script")
+    monkeypatch.setattr(settings, "llm_training_executor_script_command", "")
+    monkeypatch.setattr(settings, "llm_training_executor_builtin_runner_enabled", True)
+    monkeypatch.setattr(settings, "llm_training_executor_allow_plan_fallback", False)
+    monkeypatch.setattr("app.training.executor._builtin_training_runner_path", lambda: runner_path)
+    monkeypatch.setattr("app.training.executor.importlib.util.find_spec", lambda name: object())
+
+    payload = describe_training_runtime()
+
+    assert payload["resolved_provider"] == "script"
+    assert payload["ready"] is True
+    assert payload["command_source"] == "builtin"
+    assert "--request-json" in payload["script_command"]
+
+
+def test_describe_training_runtime_reports_missing_dependencies(monkeypatch, tmp_path: Path):
+    runner_path = tmp_path / "run_lora_sft.py"
+    runner_path.write_text("print('ok')\n", encoding="utf-8")
+    monkeypatch.setattr(settings, "llm_training_provider", "script")
+    monkeypatch.setattr(settings, "llm_training_executor_script_command", "")
+    monkeypatch.setattr(settings, "llm_training_executor_builtin_runner_enabled", True)
+    monkeypatch.setattr("app.training.executor._builtin_training_runner_path", lambda: runner_path)
+
+    def fake_find_spec(name: str):
+        return None if name in {"torch", "transformers"} else object()
+
+    monkeypatch.setattr("app.training.executor.importlib.util.find_spec", fake_find_spec)
+
+    payload = describe_training_runtime()
+
+    assert payload["ready"] is False
+    assert payload["dependencies_ready"] is False
+    assert payload["missing_dependencies"] == ["torch", "transformers"]
 
 
 @pytest.mark.asyncio

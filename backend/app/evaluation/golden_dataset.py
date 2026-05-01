@@ -33,7 +33,7 @@ class GoldenDatasetGenerator:
                     if not answer:
                         continue
                     item = {
-                        "question": f"{self._humanize_title(title)}第{index + 1}段的核心内容是什么？",
+                        "question": f"{self._humanize_title(title)}第 {index + 1} 段的核心内容是什么？",
                         "answer": answer,
                         "reference": answer,
                         "contexts": [text],
@@ -108,12 +108,12 @@ class GoldenDatasetGenerator:
             return False
 
     def _signature(self, item: dict) -> str:
-        return f"{item.get('question','')}||{item.get('answer','')}"
+        return f"{item.get('question', '')}||{item.get('answer', '')}"
 
     def _humanize_title(self, title: str) -> str:
         cleaned = str(title or "").strip()
         if not cleaned:
-            return "文档中，"
+            return "文档中"
         if cleaned.lower().endswith((".csv", ".xlsx", ".xls", ".pdf", ".docx")):
-            return ""
-        return f"{cleaned}中，"
+            return cleaned
+        return f"{cleaned}中"

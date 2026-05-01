@@ -25,13 +25,14 @@ def runtime_maintenance_job(self, cleanup_empty: bool = True):
     tenant_ids = _list_runtime_tenants()
     try:
         stats = asyncio.run(_run_runtime_maintenance(cleanup_empty=cleanup_empty))
+        policy = _evaluate_security_policy()
         alert = _build_alert(stats)
         for tenant_id in tenant_ids:
             asyncio.run(
                 _write_audit(
                     tenant_id=tenant_id,
                     message=f"runtime maintenance completed: {json.dumps(stats, ensure_ascii=False)}",
-                    metadata={"stats": stats, "alert": alert},
+                    metadata={"stats": stats, "alert": alert, "security_policy": policy},
                 )
             )
             if alert["triggered"]:
@@ -42,10 +43,22 @@ def runtime_maintenance_job(self, cleanup_empty: bool = True):
                         severity="medium",
                         result="warning",
                         message=f"runtime maintenance alert: {', '.join(alert['reasons'])}",
-                        metadata={"stats": stats, "alert": alert},
+                        metadata={"stats": stats, "alert": alert, "security_policy": policy},
                     )
                 )
-        return {"ok": True, "stats": stats, "tenants": tenant_ids, "alert": alert}
+            if not policy.get("compliant", True):
+                failed_controls = [item.get("id") for item in policy.get("failed_controls", [])]
+                asyncio.run(
+                    _write_audit(
+                        tenant_id=tenant_id,
+                        action="security_policy_alert",
+                        severity="high",
+                        result="warning",
+                        message=f"security policy non-compliant: {', '.join(failed_controls) or 'unknown'}",
+                        metadata={"security_policy": policy, "failed_control_ids": failed_controls},
+                    )
+                )
+        return {"ok": True, "stats": stats, "tenants": tenant_ids, "alert": alert, "security_policy": policy}
     except Exception as exc:  # noqa: BLE001
         for tenant_id in tenant_ids:
             asyncio.run(
@@ -256,6 +269,21 @@ def _list_runtime_tenants() -> list[str]:
     return sorted(tenants)
 
 
+def _evaluate_security_policy() -> dict:
+    from app.services.security_policy_service import SecurityPolicyService
+
+    try:
+        return SecurityPolicyService().evaluate()
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "profile": str(settings.security_policy_profile or "enterprise"),
+            "compliant": False,
+            "failed_controls": [{"id": "security_policy_evaluation_error", "message": str(exc)}],
+            "controls": [],
+            "error": str(exc),
+        }
+
+
 def _build_alert(stats: dict) -> dict:
     reasons: list[str] = []
     repaired_total = int(stats.get("repaired_replay_ttl", 0) or 0) + int(stats.get("repaired_task_ttl", 0) or 0) + int(stats.get("repaired_task_index_ttl", 0) or 0)
@@ -336,6 +364,21 @@ async def _write_audit(
     result: str = "ok",
     severity: str = "low",
 ) -> None:
+    redis_client = redis.asyncio.from_url(settings.redis_url, encoding="utf-8", decode_responses=True)
+    payload = {
+        "tenant_id": tenant_id,
+        "actor_id": None,
+        "event_type": action,
+        "action": action,
+        "target": "runtime:*",
+        "result": result,
+        "severity": severity,
+        "message": message[:2000],
+        "user_id": None,
+        "trace_id": str(uuid.uuid4()),
+        "metadata": metadata,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
     conn = await asyncpg.connect(settings.postgres_dsn_sync)
     try:
         await conn.execute(
@@ -352,10 +395,23 @@ async def _write_audit(
             "runtime:*",
             result,
             severity,
-            message[:2000],
-            str(uuid.uuid4()),
+            payload["message"],
+            payload["trace_id"],
             json.dumps(metadata, ensure_ascii=False),
             datetime.now(timezone.utc).replace(tzinfo=None),
         )
     finally:
         await conn.close()
+    try:
+        key = f"security_audit:{tenant_id}"
+        encoded = json.dumps(payload, ensure_ascii=False)
+        await redis_client.lpush(key, encoded)
+        await redis_client.ltrim(key, 0, 199)
+        await redis_client.expire(key, 14 * 24 * 3600)
+        if severity in {"high", "critical"} or result in {"blocked", "error", "warning"}:
+            alert_key = f"security_alerts:{tenant_id}"
+            await redis_client.lpush(alert_key, encoded)
+            await redis_client.ltrim(alert_key, 0, 499)
+            await redis_client.expire(alert_key, 14 * 24 * 3600)
+    finally:
+        await redis_client.aclose()

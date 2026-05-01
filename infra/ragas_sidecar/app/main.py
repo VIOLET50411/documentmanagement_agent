@@ -68,6 +68,22 @@ def _heuristic(dataset: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _is_degenerate_real_result(result: dict[str, Any], heuristic: dict[str, Any], dataset: list[dict[str, Any]]) -> bool:
+    if not dataset:
+        return False
+    real_faithfulness = _safe_metric(result.get("faithfulness"))
+    real_relevancy = _safe_metric(result.get("answer_relevancy"))
+    real_precision = _safe_metric(result.get("context_precision"))
+    heuristic_relevancy = _safe_metric(heuristic.get("answer_relevancy"))
+    heuristic_faithfulness = _safe_metric(heuristic.get("faithfulness"))
+
+    if real_relevancy == 0.0 and heuristic_relevancy >= 0.6:
+        return True
+    if real_faithfulness == 0.0 and heuristic_faithfulness >= 0.6 and real_precision >= 0.8:
+        return True
+    return False
+
+
 def _use_ollama_backend(base_url: str) -> bool:
     lowered = (base_url or "").lower()
     return "ollama" in lowered or lowered.endswith(":11434/v1") or lowered.endswith(":11434")
@@ -181,10 +197,23 @@ async def evaluate_endpoint(payload: EvaluateRequest) -> dict[str, Any]:
     prefer_real = os.getenv("RAGAS_PREFER_REAL", "true").lower() == "true"
     timeout_seconds = float(os.getenv("RAGAS_TIMEOUT_SECONDS", "180"))
     if prefer_real:
+        heuristic = _heuristic(payload.dataset)
         try:
-            return await asyncio.wait_for(_ragas_eval(payload.dataset), timeout=timeout_seconds)
+            result = await asyncio.wait_for(_ragas_eval(payload.dataset), timeout=timeout_seconds)
+            if _is_degenerate_real_result(result, heuristic, payload.dataset):
+                heuristic["error"] = "degenerate_real_result"
+                heuristic["real_mode"] = False
+                heuristic["engine"] = "heuristic_fallback_from_real"
+                heuristic["fallback_reason"] = {
+                    "faithfulness": result.get("faithfulness"),
+                    "answer_relevancy": result.get("answer_relevancy"),
+                    "context_precision": result.get("context_precision"),
+                    "context_recall": result.get("context_recall"),
+                }
+                return heuristic
+            return result
         except Exception as exc:  # noqa: BLE001
-            fallback = _heuristic(payload.dataset)
+            fallback = heuristic
             fallback["error"] = f"{type(exc).__name__}: {exc}"
             return fallback
     return _heuristic(payload.dataset)

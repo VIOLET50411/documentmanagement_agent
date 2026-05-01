@@ -64,6 +64,8 @@ class Settings(BaseSettings):
     milvus_host: str = "localhost"
     milvus_port: int = 19530
     milvus_collection: str = "docmind_vectors"
+    milvus_operation_timeout_seconds: float = 8.0
+    milvus_degraded_retry_seconds: int = 30
 
     es_host: str = "localhost"
     es_port: int = 9200
@@ -107,7 +109,7 @@ class Settings(BaseSettings):
     llm_enterprise_canary_percent: int = 0
     llm_enterprise_canary_seed: str = "docmind-enterprise-llm"
     llm_enterprise_corpus_min_chars: int = 80
-    llm_training_provider: str = "mock"
+    llm_training_provider: str = "script"
     llm_training_base_model: str = "qwen2.5:7b"
     llm_training_artifacts_subdir: str = "model_training"
     llm_training_min_train_records: int = 20
@@ -118,6 +120,8 @@ class Settings(BaseSettings):
     llm_training_executor_poll_interval_seconds: int = 5
     llm_training_executor_script_command: str = ""
     llm_training_executor_script_workdir: str = ""
+    llm_training_executor_builtin_runner_enabled: bool = True
+    llm_training_executor_allow_plan_fallback: bool = False
     llm_training_task_soft_time_limit_seconds: int = 7200
     llm_training_task_time_limit_seconds: int = 7500
     llm_training_progress_heartbeat_seconds: int = 30

@@ -384,6 +384,31 @@ async def get_security_alerts(
     return await SecurityAuditService(get_redis(), db).list_alerts(current_user.tenant_id, limit=limit, offset=offset)
 
 
+@router.get("/security/summary")
+async def get_security_summary(
+    limit: int = 1000,
+    severity: str | None = None,
+    action: str | None = None,
+    result: str | None = None,
+    since_hours: int = 24,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.security_audit_service import SecurityAuditService
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    from_time = now - timedelta(hours=since_hours) if since_hours > 0 else None
+    return await SecurityAuditService(get_redis(), db).summarize_events(
+        current_user.tenant_id,
+        limit=max(limit, 1),
+        severity=severity,
+        action=action,
+        result=result,
+        from_time=from_time,
+        to_time=now,
+    )
+
+
 @router.post("/security/watermark/trace")
 async def trace_watermark(
     text: str | None = None,
@@ -666,6 +691,21 @@ async def list_llm_training_jobs(
     if changed:
         await db.commit()
     return {"items": [_serialize_training_job(item) for item in items], "count": len(items), "tenant_id": effective_tenant}
+
+
+@router.get("/llm/training/summary")
+async def get_llm_training_summary(
+    tenant_id: str | None = None,
+    limit: int = 100,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.llm_training_service import LLMTrainingService
+
+    effective_tenant = tenant_id or current_user.tenant_id
+    service = LLMTrainingService(db, redis_client=get_redis(), reports_dir=REPORTS_DIR)
+    summary = await service.summarize_rollout(effective_tenant, limit=max(limit, 1))
+    return summary
 
 
 @router.get("/llm/training/jobs/{job_id}")

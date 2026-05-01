@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import math
 import os
+import shlex
 import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +33,100 @@ class TrainingExecutionRequest:
     val_records: int
     artifact_dir: str
     provider: str
+
+
+def _builtin_training_runner_path() -> Path:
+    return Path(__file__).resolve().parents[2] / "scripts" / "run_lora_sft.py"
+
+
+def _resolve_script_command_template(command_template: str | None = None) -> tuple[str, str]:
+    configured = str(command_template or settings.llm_training_executor_script_command or "").strip()
+    if configured:
+        return configured, "configured"
+
+    if not settings.llm_training_executor_builtin_runner_enabled:
+        raise ValueError("未配置本地脚本训练执行器命令，且未启用内置训练脚本")
+
+    runner_path = _builtin_training_runner_path()
+    if not runner_path.exists():
+        raise ValueError(f"未找到内置训练脚本: {runner_path}")
+
+    python_executable = str(sys.executable or "").strip()
+    if not python_executable:
+        raise ValueError("当前 Python 解释器不可用，无法执行内置训练脚本")
+
+    command = f"{shlex.quote(python_executable)} {shlex.quote(str(runner_path))} --request-json {{request_json_path}}"
+    if settings.llm_training_executor_allow_plan_fallback:
+        command += " --allow-plan-fallback"
+    return command, "builtin"
+
+
+def describe_training_runtime(provider: str | None = None) -> dict[str, Any]:
+    configured_provider = (provider or settings.llm_training_provider or "script").strip().lower()
+    builtin_runner_path = _builtin_training_runner_path()
+    builtin_runner_exists = builtin_runner_path.exists()
+    missing_dependencies = [
+        package
+        for package in ("torch", "transformers", "datasets", "peft", "accelerate", "safetensors")
+        if importlib.util.find_spec(package) is None
+    ]
+
+    payload: dict[str, Any] = {
+        "configured_provider": configured_provider,
+        "builtin_runner_path": str(builtin_runner_path),
+        "builtin_runner_exists": builtin_runner_exists,
+        "allow_plan_fallback": bool(settings.llm_training_executor_allow_plan_fallback),
+    }
+
+    if configured_provider in {"remote", "http", "api"}:
+        payload.update(
+            {
+                "resolved_provider": "remote",
+                "ready": bool((settings.llm_training_executor_api_base_url or "").strip()),
+                "api_base_url": str(settings.llm_training_executor_api_base_url or "").strip(),
+            }
+        )
+        return payload
+
+    if configured_provider in {"mock"}:
+        payload.update(
+            {
+                "resolved_provider": "mock",
+                "ready": True,
+                "note": "当前配置仍可退回 mock 训练执行器，不会产出真实 LoRA/SFT 结果。",
+            }
+        )
+        return payload
+
+    try:
+        command, source = _resolve_script_command_template()
+    except ValueError as exc:
+        payload.update(
+            {
+                "resolved_provider": "script",
+                "ready": False,
+                "command_source": "unavailable",
+                "script_command": "",
+                "dependencies_ready": False,
+                "missing_dependencies": missing_dependencies,
+                "reason": str(exc),
+            }
+        )
+        return payload
+
+    payload.update(
+        {
+            "resolved_provider": "script",
+            "ready": builtin_runner_exists and not missing_dependencies,
+            "command_source": source,
+            "script_command": command,
+            "dependencies_ready": not missing_dependencies,
+            "missing_dependencies": missing_dependencies,
+        }
+    )
+    if missing_dependencies:
+        payload["reason"] = "missing_training_dependencies"
+    return payload
 
 
 class TrainingExecutor:
@@ -120,9 +217,7 @@ class MockTrainingExecutor(TrainingExecutor):
 
 class ScriptTrainingExecutor(TrainingExecutor):
     async def execute(self, request: TrainingExecutionRequest) -> dict[str, Any]:
-        command_template = (settings.llm_training_executor_script_command or "").strip()
-        if not command_template:
-            raise ValueError("未配置本地脚本训练执行器命令")
+        command_template, command_source = _resolve_script_command_template()
 
         artifact_dir = Path(request.artifact_dir)
         artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -183,6 +278,7 @@ class ScriptTrainingExecutor(TrainingExecutor):
         metadata.update(
             {
                 "executor": "script",
+                "command_source": command_source,
                 "command": command,
                 "workdir": str(workdir),
                 "request_json_path": str(request_json_path),
@@ -299,11 +395,11 @@ class RemoteTrainingExecutor(TrainingExecutor):
 
 
 def build_training_executor(provider: str | None) -> TrainingExecutor:
-    runtime_provider = (provider or settings.llm_training_provider or "mock").strip().lower()
+    runtime_provider = (provider or settings.llm_training_provider or "script").strip().lower()
     if runtime_provider in {"script", "local-script", "shell"}:
         return ScriptTrainingExecutor()
     if runtime_provider in {"remote", "http", "api"}:
         return RemoteTrainingExecutor()
-    if runtime_provider == "mock" and settings.llm_training_executor_script_command:
-        return ScriptTrainingExecutor()
+    if runtime_provider == "mock":
+        return MockTrainingExecutor()
     return MockTrainingExecutor()

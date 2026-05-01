@@ -3,10 +3,12 @@ import { createPinia, setActivePinia } from "pinia"
 
 const pushMock = vi.fn()
 const loginMock = vi.fn()
+const loginWithMobilePasswordMock = vi.fn()
 const meMock = vi.fn()
 const registerMock = vi.fn()
 const verifyCodeMock = vi.fn()
 const passwordResetMock = vi.fn()
+const isNativeAppMock = vi.fn()
 
 vi.mock("@/router", () => ({
   default: {
@@ -24,11 +26,22 @@ vi.mock("@/api/auth", () => ({
   },
 }))
 
+vi.mock("@/mobile/auth", () => ({
+  loginWithMobilePassword: loginWithMobilePasswordMock,
+}))
+
+vi.mock("@/mobile/capacitor", () => ({
+  isNativeApp: isNativeAppMock,
+  platformName: () => "web",
+  getApiBaseUrl: () => "/api/v1",
+}))
+
 describe("auth store", () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     localStorage.clear()
     vi.clearAllMocks()
+    isNativeAppMock.mockReturnValue(false)
   })
 
   it("stores tokens and current user on login", async () => {

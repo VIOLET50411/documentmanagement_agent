@@ -112,6 +112,29 @@ def test_fcm_is_configured_with_service_account(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_push_health_summary_marks_multi_ready_when_subprovider_configured(monkeypatch):
+    service = PushNotificationService(redis_client=object())
+    monkeypatch.setattr(settings, 'push_notifications_enabled', True)
+    monkeypatch.setattr(settings, 'push_notification_provider', 'multi')
+    monkeypatch.setattr(settings, 'push_notification_fail_closed', False)
+    monkeypatch.setattr(settings, 'push_fcm_server_key', '')
+    monkeypatch.setattr(settings, 'push_fcm_access_token', 'access-token')
+    monkeypatch.setattr(settings, 'push_fcm_project_id', 'docmind-7bbdd')
+    monkeypatch.setattr(settings, 'push_fcm_service_account_file', '')
+    monkeypatch.setattr(settings, 'push_apns_topic', '')
+    monkeypatch.setattr(settings, 'push_apns_auth_token', '')
+    monkeypatch.setattr(settings, 'push_wechat_access_token', '')
+    monkeypatch.setattr(settings, 'push_wechat_template_id', '')
+
+    payload = await service.get_health_summary(tenant_id='tenant-1')
+
+    assert payload['ready'] is True
+    assert payload['issues'] == []
+    assert payload['active_providers'] == ['fcm']
+    assert payload['active_provider_readiness']['fcm']['ready'] is True
+
+
+@pytest.mark.asyncio
 async def test_fcm_v1_dispatch_sends_each_device(monkeypatch):
     service = PushNotificationService(redis_client=object())
     payload = {

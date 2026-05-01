@@ -935,3 +935,114 @@ async def test_admin_push_notification_status_route(api_client: AsyncClient, mon
     assert payload["tenant_id"] == "tenant-1"
     assert payload["provider"] == "fcm"
     assert payload["device_summary"]["total"] == 2
+
+
+@pytest.mark.asyncio
+async def test_admin_llm_training_summary_route(api_client: AsyncClient, monkeypatch):
+    current_user = SimpleNamespace(
+        id="user-1",
+        username="admin_demo",
+        email="admin@example.com",
+        role="ADMIN",
+        department="operations",
+        tenant_id="tenant-1",
+        level=9,
+        email_verified=True,
+        created_at=datetime.now(timezone.utc),
+    )
+    fake_redis = FakeRedis()
+
+    async def override_current_user():
+        return current_user
+
+    async def override_db():
+        yield DummyDB()
+
+    from app.dependencies import get_db
+    from app.api.v1 import admin as admin_module
+    from app.services.llm_training_service import LLMTrainingService
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_db] = override_db
+    monkeypatch.setattr(admin_module, "get_redis", lambda: fake_redis)
+
+    async def fake_summary(self, tenant_id: str, *, limit: int = 100):
+        assert tenant_id == "tenant-1"
+        assert limit == 100
+        return {
+            "tenant_id": tenant_id,
+            "jobs": {"total": 2, "pending": 0, "running": 1, "failed": 1, "status_counts": {"running": 1, "failed": 1}},
+            "models": {"total": 2, "active": 1, "canary": 1, "publish_state_counts": {"published": 1, "publish_ready": 1, "not_ready": 0}},
+            "active_model": {"model_id": "model-active"},
+            "previous_active_model": {"model_id": "model-prev"},
+            "can_rollback": True,
+            "auto_activate_enabled": True,
+            "publish_enabled": True,
+            "deploy_verify_enabled": True,
+            "deploy_fail_rollback": True,
+        }
+
+    monkeypatch.setattr(LLMTrainingService, "summarize_rollout", fake_summary)
+
+    response = await api_client.get("/api/v1/admin/llm/training/summary")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["tenant_id"] == "tenant-1"
+    assert payload["jobs"]["running"] == 1
+    assert payload["models"]["active"] == 1
+    assert payload["can_rollback"] is True
+
+
+@pytest.mark.asyncio
+async def test_admin_security_summary_route(api_client: AsyncClient, monkeypatch):
+    current_user = SimpleNamespace(
+        id="user-1",
+        username="admin_demo",
+        email="admin@example.com",
+        role="ADMIN",
+        department="operations",
+        tenant_id="tenant-1",
+        level=9,
+        email_verified=True,
+        created_at=datetime.now(timezone.utc),
+    )
+    fake_redis = FakeRedis()
+
+    async def override_current_user():
+        return current_user
+
+    async def override_db():
+        yield DummyDB()
+
+    from app.dependencies import get_db
+    from app.api.v1 import admin as admin_module
+    from app.services.security_audit_service import SecurityAuditService
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_db] = override_db
+    monkeypatch.setattr(admin_module, "get_redis", lambda: fake_redis)
+
+    async def fake_summary(self, tenant_id: str, **kwargs):
+        assert tenant_id == "tenant-1"
+        return {
+            "total": 3,
+            "source": "redis",
+            "severity_counts": {"high": 2, "medium": 1},
+            "action_counts": {"runtime_tool_decision": 2, "runtime_maintenance_alert": 1},
+            "result_counts": {"allow": 1, "deny": 1, "warning": 1},
+            "top_actions": [{"action": "runtime_tool_decision", "count": 2}],
+            "top_severities": [{"severity": "high", "count": 2}],
+            "top_results": [{"result": "warning", "count": 1}],
+            "trend_by_hour": [{"hour": "2026-05-01T10:00:00+00:00", "ok": 0, "warning": 1, "blocked": 0, "error": 0, "other": 2}],
+        }
+
+    monkeypatch.setattr(SecurityAuditService, "summarize_events", fake_summary)
+
+    response = await api_client.get("/api/v1/admin/security/summary")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 3
+    assert payload["severity_counts"]["high"] == 2
+    assert payload["action_counts"]["runtime_tool_decision"] == 2

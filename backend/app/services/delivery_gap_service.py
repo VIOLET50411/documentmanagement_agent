@@ -14,6 +14,7 @@ from app.config import settings
 from app.models.db.llm_training import LLMModelRegistry, LLMTrainingJob
 from app.services.llm_training_service import LLMTrainingService
 from app.services.security_policy_service import SecurityPolicyService
+from app.training.executor import describe_training_runtime
 
 
 class DeliveryGapService:
@@ -59,6 +60,12 @@ class DeliveryGapService:
         else:
             pending.extend(["full_llmops_regression_gating", "ragas_faithfulness_pipeline_with_real_llm"])
 
+        training_runtime = describe_training_runtime()
+        if training_runtime.get("ready"):
+            completed.append("training_executor_runtime_ready")
+        else:
+            pending.append("training_executor_runtime_ready")
+
         publish_status = await self._evaluate_training_publish_status(effective_tenant)
         if publish_status["pipeline_ready"]:
             completed.append("training_artifact_publish_pipeline")
@@ -85,13 +92,27 @@ class DeliveryGapService:
             "notes": [
                 "当前已具备企业级可运行底座，但距离完整训练上线闭环仍有差距。",
                 ragas_status["note"],
+                self._build_training_runtime_note(training_runtime),
                 publish_status["note"],
                 f"当前安全策略档位: {policy_eval.get('profile')}",
             ],
             "security_policy": policy_eval,
             "ragas_status": ragas_status,
+            "training_runtime_status": training_runtime,
             "training_publish_status": publish_status,
         }
+
+    def _build_training_runtime_note(self, runtime: dict[str, Any]) -> str:
+        if runtime.get("ready"):
+            provider = runtime.get("resolved_provider") or runtime.get("configured_provider")
+            source = runtime.get("command_source") or "configured"
+            return f"训练执行器已就绪，当前 provider={provider}，命令来源={source}。"
+
+        reason = str(runtime.get("reason") or "训练执行器尚未就绪").strip()
+        missing = runtime.get("missing_dependencies") if isinstance(runtime.get("missing_dependencies"), list) else []
+        if missing:
+            return f"{reason}，缺少依赖: {', '.join(str(item) for item in missing)}。"
+        return f"{reason}。"
 
     def _evaluate_ragas_status(self, tenant_id: str) -> dict[str, Any]:
         report_path = Path(settings.docmind_reports_dir) / f"evaluation_{tenant_id}.json"

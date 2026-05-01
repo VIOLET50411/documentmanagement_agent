@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from datetime import datetime, timezone
 
 from sqlalchemy import and_, desc, func, select
@@ -106,26 +107,7 @@ class SecurityAuditService:
                 .offset(max(offset, 0))
             )
             for item in rows.scalars().all():
-                try:
-                    metadata = json.loads(item.metadata_json) if item.metadata_json else {}
-                except json.JSONDecodeError:
-                    metadata = {}
-                events.append(
-                    {
-                        "tenant_id": item.tenant_id,
-                        "event_type": item.action,
-                        "action": item.action,
-                        "target": item.target,
-                        "result": item.result,
-                        "severity": item.severity,
-                        "message": item.message,
-                        "user_id": item.actor_id,
-                        "actor_id": item.actor_id,
-                        "trace_id": item.trace_id,
-                        "metadata": metadata,
-                        "timestamp": item.created_at.replace(tzinfo=timezone.utc).isoformat(),
-                    }
-                )
+                events.append(self._serialize_event(item))
             return {"events": events, "total": int(total or 0), "source": "postgres"}
 
         if self.redis is None:
@@ -142,6 +124,25 @@ class SecurityAuditService:
         return {"events": events, "total": int(total or 0), "source": "redis"}
 
     async def list_alerts(self, tenant_id: str, *, limit: int = 50, offset: int = 0) -> dict:
+        if self.db is not None:
+            alert_filter = and_(
+                SecurityAuditEvent.tenant_id == tenant_id,
+                (
+                    SecurityAuditEvent.severity.in_(["high", "critical"])
+                    | SecurityAuditEvent.result.in_(["blocked", "error", "warning"])
+                ),
+            )
+            total = await self.db.scalar(select(func.count()).select_from(SecurityAuditEvent).where(alert_filter))
+            rows = await self.db.execute(
+                select(SecurityAuditEvent)
+                .where(alert_filter)
+                .order_by(desc(SecurityAuditEvent.created_at))
+                .limit(max(limit, 1))
+                .offset(max(offset, 0))
+            )
+            alerts = [self._serialize_event(item) for item in rows.scalars().all()]
+            return {"alerts": alerts, "total": int(total or 0), "source": "postgres"}
+
         if self.redis is None:
             return {"alerts": [], "total": 0, "source": "none"}
         key = f"security_alerts:{tenant_id}"
@@ -154,3 +155,88 @@ class SecurityAuditService:
                 continue
         total = await self.redis.llen(key)
         return {"alerts": alerts, "total": int(total or 0), "source": "redis"}
+
+    async def summarize_events(
+        self,
+        tenant_id: str,
+        *,
+        limit: int = 1000,
+        severity: str | None = None,
+        action: str | None = None,
+        result: str | None = None,
+        from_time: datetime | None = None,
+        to_time: datetime | None = None,
+    ) -> dict:
+        payload = await self.list_events(
+            tenant_id,
+            limit=max(limit, 1),
+            offset=0,
+            severity=severity,
+            action=action,
+            result=result,
+            from_time=from_time,
+            to_time=to_time,
+        )
+        events = payload.get("events", [])
+        severity_counts: dict[str, int] = {}
+        action_counts: dict[str, int] = {}
+        result_counts: dict[str, int] = {}
+        hourly_buckets: dict[str, dict[str, int]] = defaultdict(lambda: {"ok": 0, "warning": 0, "blocked": 0, "error": 0, "other": 0})
+
+        for item in events:
+            item_severity = str(item.get("severity") or "unknown")
+            item_action = str(item.get("action") or item.get("event_type") or "unknown")
+            item_result = str(item.get("result") or "unknown")
+            severity_counts[item_severity] = severity_counts.get(item_severity, 0) + 1
+            action_counts[item_action] = action_counts.get(item_action, 0) + 1
+            result_counts[item_result] = result_counts.get(item_result, 0) + 1
+
+            bucket_key = self._bucket_hour(item.get("timestamp"))
+            normalized_result = item_result if item_result in {"ok", "warning", "blocked", "error"} else "other"
+            hourly_buckets[bucket_key][normalized_result] += 1
+
+        top_actions = sorted(action_counts.items(), key=lambda item: item[1], reverse=True)[:20]
+        top_severities = sorted(severity_counts.items(), key=lambda item: item[1], reverse=True)[:20]
+        top_results = sorted(result_counts.items(), key=lambda item: item[1], reverse=True)[:20]
+        return {
+            "total": len(events),
+            "source": payload.get("source"),
+            "severity_counts": severity_counts,
+            "action_counts": action_counts,
+            "result_counts": result_counts,
+            "top_actions": [{"action": name, "count": count} for name, count in top_actions],
+            "top_severities": [{"severity": name, "count": count} for name, count in top_severities],
+            "top_results": [{"result": name, "count": count} for name, count in top_results],
+            "trend_by_hour": [{"hour": hour, **counts} for hour, counts in sorted(hourly_buckets.items())],
+        }
+
+    def _serialize_event(self, item: SecurityAuditEvent) -> dict:
+        try:
+            metadata = json.loads(item.metadata_json) if item.metadata_json else {}
+        except json.JSONDecodeError:
+            metadata = {}
+        return {
+            "tenant_id": item.tenant_id,
+            "event_type": item.action,
+            "action": item.action,
+            "target": item.target,
+            "result": item.result,
+            "severity": item.severity,
+            "message": item.message,
+            "user_id": item.actor_id,
+            "actor_id": item.actor_id,
+            "trace_id": item.trace_id,
+            "metadata": metadata,
+            "timestamp": item.created_at.replace(tzinfo=timezone.utc).isoformat(),
+        }
+
+    def _bucket_hour(self, timestamp: str | None) -> str:
+        if not timestamp:
+            return datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0).isoformat()
+        try:
+            parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        except ValueError:
+            return datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0).isoformat()
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0).isoformat()

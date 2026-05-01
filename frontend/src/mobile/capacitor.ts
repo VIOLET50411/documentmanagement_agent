@@ -1,4 +1,4 @@
-import { Capacitor } from "@capacitor/core"
+﻿import { Capacitor } from "@capacitor/core"
 
 export function isNativeApp() {
   return Capacitor.isNativePlatform()
@@ -13,7 +13,7 @@ function resolveNativeApiBase() {
   if (configured) {
     return configured.replace(/\/$/, "") + "/api/v1"
   }
-  // Android 模拟器访问宿主机默认走 10.0.2.2，避免把临时局域网 IP 写死在代码里。
+  // Android 模拟器访问宿主机默认使用 10.0.2.2，避免把临时局域网 IP 写死在代码里。
   return "http://10.0.2.2:18000/api/v1"
 }
 

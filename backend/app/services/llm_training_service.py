@@ -1,4 +1,4 @@
-"""Training-job orchestration and tenant model registry service."""
+﻿"""Training-job orchestration and tenant model registry service."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.db.llm_training import LLMModelRegistry, LLMTrainingJob
+from app.training.executor import describe_training_runtime
 
 
 class LLMTrainingService:
@@ -239,6 +240,94 @@ class LLMTrainingService:
         if model is None:
             return None
         return self._serialize_active_model(model)
+
+    async def get_previous_active_model(self, tenant_id: str) -> dict[str, Any] | None:
+        if self.redis is None:
+            return None
+        raw = await self.redis.get(self._previous_active_model_key(tenant_id))
+        if not raw:
+            return None
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    async def summarize_rollout(self, tenant_id: str, *, limit: int = 100) -> dict[str, Any]:
+        jobs = await self.list_jobs(tenant_id, limit=max(limit, 1))
+        models = await self.list_models(tenant_id, limit=max(limit, 1))
+        active = await self.get_active_model(tenant_id)
+        previous_active = await self.get_previous_active_model(tenant_id)
+        executor_runtime = describe_training_runtime()
+
+        job_status_counts: dict[str, int] = {}
+        job_stage_counts: dict[str, int] = {}
+        model_status_counts: dict[str, int] = {}
+        publish_state_counts = {"published": 0, "publish_ready": 0, "not_ready": 0}
+        pending_jobs = 0
+        running_jobs = 0
+        failed_jobs = 0
+        active_models = 0
+        canary_models = 0
+
+        for job in jobs:
+            status = str(job.status or "unknown")
+            stage = str(job.stage or "unknown")
+            job_status_counts[status] = job_status_counts.get(status, 0) + 1
+            job_stage_counts[stage] = job_stage_counts.get(stage, 0) + 1
+            if status == "pending":
+                pending_jobs += 1
+            elif status == "running":
+                running_jobs += 1
+            elif status == "failed":
+                failed_jobs += 1
+
+        for model in models:
+            status = str(model.status or "unknown")
+            model_status_counts[status] = model_status_counts.get(status, 0) + 1
+            metrics = self._load_json(getattr(model, "metrics_json", None))
+            publish_result = metrics.get("publish_result") if isinstance(metrics.get("publish_result"), dict) else {}
+            if publish_result.get("published") is True or str(getattr(model, "provider", "")).lower() == "ollama":
+                publish_state_counts["published"] += 1
+            elif publish_result.get("publish_ready") is True:
+                publish_state_counts["publish_ready"] += 1
+            else:
+                publish_state_counts["not_ready"] += 1
+            if bool(getattr(model, "is_active", False)):
+                active_models += 1
+            if int(getattr(model, "canary_percent", 0) or 0) > 0:
+                canary_models += 1
+
+        latest_job = _serialize_training_job_brief(jobs[0]) if jobs else None
+        latest_model = _serialize_registry_model_brief(models[0]) if models else None
+        return {
+            "tenant_id": tenant_id,
+            "jobs": {
+                "total": len(jobs),
+                "pending": pending_jobs,
+                "running": running_jobs,
+                "failed": failed_jobs,
+                "status_counts": job_status_counts,
+                "stage_counts": job_stage_counts,
+                "latest": latest_job,
+            },
+            "models": {
+                "total": len(models),
+                "active": active_models,
+                "canary": canary_models,
+                "status_counts": model_status_counts,
+                "publish_state_counts": publish_state_counts,
+                "latest": latest_model,
+            },
+            "active_model": active,
+            "previous_active_model": previous_active,
+            "can_rollback": bool(previous_active and previous_active.get("model_id")),
+            "auto_activate_enabled": bool(settings.llm_training_auto_activate),
+            "publish_enabled": bool(settings.llm_training_publish_enabled),
+            "deploy_verify_enabled": bool(settings.llm_training_deploy_verify_enabled),
+            "deploy_fail_rollback": bool(settings.llm_training_deploy_fail_rollback),
+            "executor_runtime": executor_runtime,
+        }
 
     async def verify_model_serving(self, *, tenant_id: str, model_id: str) -> dict[str, Any]:
         model = await self.get_model(tenant_id, model_id)
@@ -782,3 +871,35 @@ class LLMTrainingService:
         if parsed.tzinfo is None:
             return parsed
         return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _serialize_training_job_brief(item: LLMTrainingJob) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "dataset_name": item.dataset_name,
+        "status": item.status,
+        "stage": item.stage,
+        "target_model_name": item.target_model_name,
+        "runtime_task_id": item.runtime_task_id,
+        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+    }
+
+
+def _serialize_registry_model_brief(item: LLMModelRegistry) -> dict[str, Any]:
+    metrics = {}
+    if item.metrics_json:
+        try:
+            metrics = json.loads(item.metrics_json)
+        except json.JSONDecodeError:
+            metrics = {}
+    publish_result = metrics.get("publish_result") if isinstance(metrics.get("publish_result"), dict) else {}
+    return {
+        "id": item.id,
+        "model_name": item.model_name,
+        "status": item.status,
+        "is_active": bool(item.is_active),
+        "canary_percent": int(item.canary_percent or 0),
+        "published": bool(publish_result.get("published") is True or str(item.provider or "").lower() == "ollama"),
+        "publish_ready": bool(publish_result.get("publish_ready") is True),
+        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+    }

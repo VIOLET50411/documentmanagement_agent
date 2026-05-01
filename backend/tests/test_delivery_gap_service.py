@@ -10,6 +10,29 @@ from app.services.delivery_gap_service import DeliveryGapService
 
 
 @pytest.mark.asyncio
+async def test_build_report_tracks_training_runtime_readiness(tmp_path: Path, monkeypatch):
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir(parents=True)
+    monkeypatch.setattr(settings, "docmind_reports_dir", str(reports_dir))
+    monkeypatch.setattr(
+        "app.services.delivery_gap_service.describe_training_runtime",
+        lambda: {
+            "configured_provider": "script",
+            "resolved_provider": "script",
+            "ready": True,
+            "command_source": "builtin",
+            "missing_dependencies": [],
+        },
+    )
+
+    payload = await DeliveryGapService().build_report("default")
+
+    assert "training_executor_runtime_ready" in payload["completed"]
+    assert payload["training_runtime_status"]["ready"] is True
+    assert "训练执行器已就绪" in payload["notes"][2]
+
+
+@pytest.mark.asyncio
 async def test_build_report_marks_real_ragas_completed(tmp_path: Path, monkeypatch):
     reports_dir = tmp_path / "reports"
     reports_dir.mkdir(parents=True)

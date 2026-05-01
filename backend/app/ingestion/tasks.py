@@ -312,7 +312,12 @@ def _sync_external_indices(doc_id: str, chunks: list[dict]) -> dict:
     except (ApiError, TransportError, ESConnectionError, NotFoundError, OSError, RuntimeError, TypeError, ValueError) as exc:
         result["elasticsearch"] = {"ok": False, "error": f"elasticsearch: {exc}"}
     try:
-        MilvusClient(dim=len(chunks[0].get("dense_vector", [])) if chunks else 64).upsert_chunks(chunks)
+        indexed = MilvusClient(dim=len(chunks[0].get("dense_vector", [])) if chunks else 64).upsert_chunks(chunks)
+        if chunks and indexed < len(chunks):
+            result["milvus"] = {
+                "ok": False,
+                "error": f"milvus: indexed {indexed}/{len(chunks)} chunks",
+            }
     except (MilvusException, OSError, RuntimeError, TypeError, ValueError) as exc:
         result["milvus"] = {"ok": False, "error": f"milvus: {exc}"}
     return result

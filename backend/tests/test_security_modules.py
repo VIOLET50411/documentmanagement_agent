@@ -1,4 +1,5 @@
 import pytest
+from datetime import datetime, timezone
 
 from app.security.input_guard import InputGuard
 from app.security.output_guard import OutputGuard
@@ -141,3 +142,99 @@ async def test_security_audit_service_records_and_lists_events():
     data = await service.list_events("tenant-1")
     assert data["events"][0]["event_type"] == "input_blocked"
     assert data["total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_security_audit_service_records_and_lists_alerts():
+    service = SecurityAuditService(FakeRedis())
+    await service.log_event(
+        "tenant-2",
+        "runtime_maintenance_alert",
+        "high",
+        "Maintenance alert raised",
+        user_id="u-2",
+        result="warning",
+    )
+
+    data = await service.list_alerts("tenant-2")
+    assert data["alerts"][0]["action"] == "runtime_maintenance_alert"
+    assert data["total"] == 1
+
+
+class _FakeAuditRow:
+    def __init__(self, *, tenant_id: str, action: str, result: str, severity: str, message: str):
+        self.tenant_id = tenant_id
+        self.action = action
+        self.target = "runtime:*"
+        self.result = result
+        self.severity = severity
+        self.message = message
+        self.actor_id = None
+        self.trace_id = "trace-1"
+        self.metadata_json = "{}"
+        self.created_at = datetime.now(timezone.utc)
+
+
+class _FakeScalarRows:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
+class _FakeExecuteResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def scalars(self):
+        return _FakeScalarRows(self._rows)
+
+
+class _FakeAuditDB:
+    def __init__(self, rows):
+        self.rows = rows
+
+    async def scalar(self, *_args, **_kwargs):
+        return len(self.rows)
+
+    async def execute(self, *_args, **_kwargs):
+        return _FakeExecuteResult(self.rows)
+
+
+@pytest.mark.asyncio
+async def test_security_audit_service_list_alerts_prefers_postgres():
+    db = _FakeAuditDB(
+        [
+            _FakeAuditRow(
+                tenant_id="tenant-3",
+                action="push_notification_failed",
+                result="error",
+                severity="high",
+                message="Push provider failed",
+            )
+        ]
+    )
+    service = SecurityAuditService(FakeRedis(), db=db)
+
+    data = await service.list_alerts("tenant-3")
+
+    assert data["source"] == "postgres"
+    assert data["alerts"][0]["action"] == "push_notification_failed"
+    assert data["total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_security_audit_service_summarizes_events():
+    service = SecurityAuditService(FakeRedis())
+    await service.log_event("tenant-4", "runtime_tool_decision", "medium", "allowed search", result="allow")
+    await service.log_event("tenant-4", "runtime_tool_decision", "high", "denied upload", result="deny")
+    await service.log_event("tenant-4", "runtime_maintenance_alert", "high", "maintenance warning", result="warning")
+
+    summary = await service.summarize_events("tenant-4", limit=20)
+
+    assert summary["total"] == 3
+    assert summary["action_counts"]["runtime_tool_decision"] == 2
+    assert summary["result_counts"]["warning"] == 1
+    assert summary["severity_counts"]["high"] == 2
+    assert len(summary["trend_by_hour"]) >= 1

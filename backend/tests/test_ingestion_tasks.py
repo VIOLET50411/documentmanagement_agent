@@ -3,6 +3,7 @@ from app.ingestion.tasks import (
     LARGE_FILE_BATCH_SIZE,
     PDF_HEAVY_BATCH_SIZE,
     _split_elements_for_batches,
+    _sync_external_indices,
 )
 
 
@@ -30,3 +31,54 @@ def test_split_elements_uses_pdf_heavy_batch_size_when_many_pages():
     elements = _build_elements(150)
     batches = _split_elements_for_batches(elements, {"file_type": "application/pdf", "file_size": 1024})
     assert len(batches[0]) == PDF_HEAVY_BATCH_SIZE
+
+
+def test_sync_external_indices_marks_milvus_degraded_when_upsert_returns_partial(monkeypatch):
+    class FakeESClient:
+        def bulk_index(self, chunks):
+            return len(chunks)
+
+    class FakeMilvusClient:
+        def __init__(self, dim):
+            self.dim = dim
+
+        def upsert_chunks(self, chunks):
+            return max(len(chunks) - 1, 0)
+
+    monkeypatch.setattr("app.ingestion.tasks.ESClient", FakeESClient)
+    monkeypatch.setattr("app.ingestion.tasks.MilvusClient", FakeMilvusClient)
+
+    chunks = [
+        {"id": "chunk-1", "dense_vector": [0.1, 0.2]},
+        {"id": "chunk-2", "dense_vector": [0.3, 0.4]},
+    ]
+    result = _sync_external_indices("doc-1", chunks)
+
+    assert result["elasticsearch"]["ok"] is True
+    assert result["milvus"]["ok"] is False
+    assert "indexed 1/2 chunks" in result["milvus"]["error"]
+
+
+def test_sync_external_indices_accepts_full_milvus_upsert(monkeypatch):
+    class FakeESClient:
+        def bulk_index(self, chunks):
+            return len(chunks)
+
+    class FakeMilvusClient:
+        def __init__(self, dim):
+            self.dim = dim
+
+        def upsert_chunks(self, chunks):
+            return len(chunks)
+
+    monkeypatch.setattr("app.ingestion.tasks.ESClient", FakeESClient)
+    monkeypatch.setattr("app.ingestion.tasks.MilvusClient", FakeMilvusClient)
+
+    chunks = [
+        {"id": "chunk-1", "dense_vector": [0.1, 0.2]},
+        {"id": "chunk-2", "dense_vector": [0.3, 0.4]},
+    ]
+    result = _sync_external_indices("doc-1", chunks)
+
+    assert result["milvus"]["ok"] is True
+    assert result["milvus"]["error"] is None

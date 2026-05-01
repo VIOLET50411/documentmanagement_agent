@@ -3,6 +3,7 @@ import { computed, ref, type Ref } from "vue"
 import { authApi, type RegisterPayload, type VerificationCodePayload } from "@/api/auth"
 import type { UserPayload } from "@/api/schemas"
 import { isNativeApp, platformName } from "@/mobile/capacitor"
+import { loginWithMobilePassword } from "@/mobile/auth"
 import { heartbeatStoredPushDevice, registerPushDevice, unregisterStoredPushDevice } from "@/mobile/push"
 import router from "@/router"
 
@@ -29,8 +30,14 @@ export const useAuthStore = defineStore("auth", () => {
 
   const isAuthenticated = computed(() => !!token.value)
 
+  function shouldUseNativeOAuth() {
+    return isNativeApp() && import.meta.env.VITE_NATIVE_MOBILE_OAUTH_ENABLED !== "false"
+  }
+
   async function login(username: string, password: string) {
-    const res = await authApi.login(username, password)
+    const res = shouldUseNativeOAuth()
+      ? await loginWithMobilePassword({ username, password })
+      : await authApi.login(username, password)
     token.value = res.access_token
     refreshToken.value = res.refresh_token
     localStorage.setItem(TOKEN_KEY, res.access_token)
@@ -129,7 +136,7 @@ export const useAuthStore = defineStore("auth", () => {
       const result = await registerPushDevice({
         platform: currentPlatform,
         deviceName: user.value.username
-          ? `${user.value.username} 的${currentPlatform}设备`
+          ? `${user.value.username} 的 ${currentPlatform} 设备`
           : `${currentPlatform} 设备`,
         appVersion: "1.0.0",
       })

@@ -68,6 +68,8 @@ class IndexSyncService:
             try:
                 dim = len(chunks[0].get("dense_vector", [])) or 12
                 milvus_count = MilvusClient(dim=dim).upsert_chunks(chunks)
+                if milvus_count < len(chunks):
+                    milvus_count = 0
             except (MilvusException, OSError, RuntimeError, TypeError, ValueError):
                 milvus_count = 0
             try:

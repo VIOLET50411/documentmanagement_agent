@@ -240,11 +240,27 @@ class PushNotificationService:
                 "access_token_configured": bool(settings.push_wechat_access_token),
             },
         }
+        active_provider_keys = [name for name, meta in providers.items() if name != "log" and meta.get("configured")]
+        active_provider_readiness = {
+            name: {
+                "configured": bool(meta.get("configured")),
+                "ready": bool(meta.get("ready")),
+            }
+            for name, meta in providers.items()
+            if name != "log"
+        }
         issues: list[str] = []
-        if settings.push_notifications_enabled and provider != "log":
-            selected = providers.get(provider, {"configured": False})
-            if not selected.get("configured"):
-                issues.append(f"{provider}_not_configured")
+        selected_ready = True
+        if settings.push_notifications_enabled:
+            if provider == "multi":
+                selected_ready = bool(active_provider_keys)
+                if not active_provider_keys:
+                    issues.append("multi_no_configured_subproviders")
+            elif provider != "log":
+                selected = providers.get(provider, {"configured": False, "ready": False})
+                selected_ready = bool(selected.get("ready"))
+                if not selected.get("configured"):
+                    issues.append(f"{provider}_not_configured")
         if settings.push_notification_fail_closed and not settings.push_notifications_enabled:
             issues.append("fail_closed_without_push_enabled")
 
@@ -263,9 +279,11 @@ class PushNotificationService:
             "provider": provider,
             "fail_closed": bool(settings.push_notification_fail_closed),
             "auto_deactivate_invalid_tokens": bool(settings.push_auto_deactivate_invalid_tokens),
-            "ready": True if provider == "log" else bool(settings.push_notifications_enabled) and not issues,
+            "ready": True if provider == "log" else bool(settings.push_notifications_enabled) and selected_ready and not issues,
             "issues": issues,
             "providers": providers,
+            "active_providers": active_provider_keys,
+            "active_provider_readiness": active_provider_readiness,
             "tenant_id": tenant_id,
             "device_summary": device_summary,
             "redis_available": self.redis is not None,

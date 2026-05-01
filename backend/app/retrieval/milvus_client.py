@@ -28,6 +28,8 @@ class MilvusClient:
         self.dim = self._resolve_dim(dim)
         self._connect_attempts = 0
         self._degraded_until = 0.0
+        self._operation_timeout = max(float(settings.milvus_operation_timeout_seconds), 0.5)
+        self._degraded_retry_seconds = max(int(settings.milvus_degraded_retry_seconds), 5)
         self.available = self._connect()
 
     async def search(self, query_embedding: dict, filters: dict, top_k: int = 20) -> list[dict]:
@@ -40,11 +42,11 @@ class MilvusClient:
             )
         except asyncio.TimeoutError:
             self.available = False
-            self._degraded_until = time.monotonic() + 60.0
+            self._degraded_until = time.monotonic() + float(self._degraded_retry_seconds)
             return []
         except (MilvusException, OSError, RuntimeError):
             self.available = False
-            self._degraded_until = time.monotonic() + 30.0
+            self._degraded_until = time.monotonic() + float(self._degraded_retry_seconds)
             if not self._reconnect():
                 return []
             try:
@@ -54,11 +56,11 @@ class MilvusClient:
                 )
             except asyncio.TimeoutError:
                 self.available = False
-                self._degraded_until = time.monotonic() + 60.0
+                self._degraded_until = time.monotonic() + float(self._degraded_retry_seconds)
                 return []
             except (MilvusException, OSError, RuntimeError):
                 self.available = False
-                self._degraded_until = time.monotonic() + 30.0
+                self._degraded_until = time.monotonic() + float(self._degraded_retry_seconds)
                 return []
 
     def upsert_chunks(self, chunks: list[dict]) -> int:
@@ -82,17 +84,17 @@ class MilvusClient:
                 [self._normalize_dense(chunk.get("dense_vector")) for chunk in chunks],
             ]
             collection.insert(rows)
-            collection.flush()
-            collection.load()
+            collection.flush(timeout=self._operation_timeout)
+            collection.load(timeout=self._operation_timeout)
             self.available = True
             return len(chunks)
         except (MilvusException, OSError, RuntimeError):
             self.available = False
-            self._degraded_until = time.monotonic() + 30.0
+            self._degraded_until = time.monotonic() + float(self._degraded_retry_seconds)
             if self._reconnect():
                 try:
                     collection = self._get_collection()
-                    collection.load()
+                    collection.load(timeout=self._operation_timeout)
                     self.available = True
                 except (MilvusException, OSError, RuntimeError):
                     self.available = False
@@ -104,11 +106,11 @@ class MilvusClient:
         try:
             collection = self._get_collection()
             response = collection.delete(expr=f'doc_id == "{doc_id}"')
-            collection.flush()
+            collection.flush(timeout=self._operation_timeout)
             return getattr(response, "delete_count", 0)
         except (MilvusException, OSError, RuntimeError):
             self.available = False
-            self._degraded_until = time.monotonic() + 30.0
+            self._degraded_until = time.monotonic() + float(self._degraded_retry_seconds)
             return 0
 
     def health(self) -> dict:
@@ -116,7 +118,7 @@ class MilvusClient:
             return {"available": False, "collection": self.collection_name, "entities": 0, "status": "degraded"}
         try:
             collection = self._get_collection()
-            collection.load()
+            collection.load(timeout=self._operation_timeout)
             self.available = True
             return {
                 "available": True,
@@ -136,7 +138,7 @@ class MilvusClient:
 
     def _search_sync(self, query_embedding: dict, filters: dict, top_k: int = 20) -> list[dict]:
         collection = self._get_collection()
-        collection.load()
+        collection.load(timeout=self._operation_timeout)
         params = {"metric_type": "COSINE", "params": {"nprobe": 10}}
         expr = self._build_filter_expr(filters)
         search_result = collection.search(
@@ -212,7 +214,7 @@ class MilvusClient:
         if Collection is None or CollectionSchema is None or FieldSchema is None or utility is None or DataType is None:
             raise RuntimeError("pymilvus is not available")
 
-        if not utility.has_collection(self.collection_name):
+        if not utility.has_collection(self.collection_name, timeout=self._operation_timeout):
             fields = [
                 FieldSchema(name="chunk_id", dtype=DataType.VARCHAR, is_primary=True, max_length=64),
                 FieldSchema(name="doc_id", dtype=DataType.VARCHAR, max_length=64),

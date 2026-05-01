@@ -18,6 +18,17 @@ class FakeDB:
         self.flushed += 1
 
 
+class FakeRedis:
+    def __init__(self):
+        self.data = {}
+
+    async def get(self, key):
+        return self.data.get(key)
+
+    async def set(self, key, value):
+        self.data[key] = value
+
+
 @pytest.mark.asyncio
 async def test_update_model_canary_percent_clamps_range(monkeypatch):
     service = LLMTrainingService(FakeDB(), redis_client=None)
@@ -333,6 +344,162 @@ async def test_publish_model_artifact_reports_missing_ollama_shared_mount(tmp_pa
     assert result["reason"] == "publish_command_failed"
     assert "Ollama" in result["message"]
     assert "reports" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_rollback_active_model_restores_previous_model(monkeypatch):
+    redis_client = FakeRedis()
+    redis_client.data["llm:previous_active_model:tenant-1"] = '{"model_id":"model-prev","tenant_id":"tenant-1"}'
+    service = LLMTrainingService(FakeDB(), redis_client=redis_client)
+    model = SimpleNamespace(
+        id="model-prev",
+        tenant_id="tenant-1",
+        provider="ollama",
+        serving_base_url="http://ollama:11434/v1",
+        serving_model_name="tenant-model-prev",
+        artifact_dir="/tmp/model-prev",
+        activated_at=None,
+        api_key="",
+    )
+
+    async def fake_activate_model(*, tenant_id: str, model_id: str, actor_id: str | None = None):
+        assert tenant_id == "tenant-1"
+        assert model_id == "model-prev"
+        assert actor_id == "admin-1"
+        return model
+
+    monkeypatch.setattr(service, "activate_model", fake_activate_model)
+
+    result = await service.rollback_active_model(tenant_id="tenant-1", actor_id="admin-1")
+
+    assert result["ok"] is True
+    assert result["rolled_back_to"]["model_id"] == "model-prev"
+    assert result["rolled_back_to"]["model"] == "tenant-model-prev"
+
+
+@pytest.mark.asyncio
+async def test_rollback_active_model_requires_previous_active_model():
+    service = LLMTrainingService(FakeDB(), redis_client=FakeRedis())
+
+    with pytest.raises(ValueError, match="没有可回滚的上一版激活模型"):
+        await service.rollback_active_model(tenant_id="tenant-1", actor_id="admin-1")
+
+
+@pytest.mark.asyncio
+async def test_publish_model_artifact_reports_missing_artifact_dir(monkeypatch):
+    service = LLMTrainingService(FakeDB(), redis_client=None)
+    model = SimpleNamespace(
+        id="model-1",
+        tenant_id="tenant-1",
+        artifact_dir="Z:/not-found/artifact",
+        model_name="tenant-model",
+        base_model="llama3.1:8b",
+        serving_base_url="http://ollama:11434/v1",
+        serving_model_name="llama3.1:8b",
+        provider="openai-compatible",
+        status="registered",
+        updated_at=None,
+        metrics_json="{}",
+        notes=None,
+    )
+
+    async def fake_get_model(tenant_id: str, model_id: str):
+        return model
+
+    monkeypatch.setattr(service, "get_model", fake_get_model)
+    monkeypatch.setattr(settings, "llm_training_publish_enabled", True)
+
+    result = await service.publish_model_artifact(tenant_id="tenant-1", model_id="model-1")
+
+    assert result["publish_ready"] is False
+    assert result["reason"] == "artifact_dir_missing"
+    assert "训练产物目录不存在" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_summarize_rollout_aggregates_jobs_models_and_rollback(monkeypatch):
+    redis_client = FakeRedis()
+    redis_client.data["llm:active_model:tenant-1"] = '{"model_id":"model-active","tenant_id":"tenant-1","model":"tenant-model-active"}'
+    redis_client.data["llm:previous_active_model:tenant-1"] = '{"model_id":"model-prev","tenant_id":"tenant-1","model":"tenant-model-prev"}'
+    service = LLMTrainingService(FakeDB(), redis_client=redis_client)
+
+    jobs = [
+        SimpleNamespace(
+            id="job-1",
+            dataset_name="dataset-a",
+            status="running",
+            stage="deploying",
+            target_model_name="tenant-model-a",
+            runtime_task_id="task-1",
+            updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        ),
+        SimpleNamespace(
+            id="job-2",
+            dataset_name="dataset-b",
+            status="failed",
+            stage="failed",
+            target_model_name="tenant-model-b",
+            runtime_task_id="task-2",
+            updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        ),
+    ]
+    models = [
+        SimpleNamespace(
+            id="model-1",
+            model_name="tenant-model-active",
+            status="active",
+            is_active=True,
+            canary_percent=20,
+            provider="ollama",
+            metrics_json='{"publish_result":{"published":true}}',
+            updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        ),
+        SimpleNamespace(
+            id="model-2",
+            model_name="tenant-model-staged",
+            status="registered",
+            is_active=False,
+            canary_percent=0,
+            provider="openai-compatible",
+            metrics_json='{"publish_result":{"publish_ready":true}}',
+            updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        ),
+    ]
+
+    async def fake_list_jobs(tenant_id: str, limit: int = 100):
+        assert tenant_id == "tenant-1"
+        return jobs
+
+    async def fake_list_models(tenant_id: str, limit: int = 100):
+        assert tenant_id == "tenant-1"
+        return models
+
+    monkeypatch.setattr(service, "list_jobs", fake_list_jobs)
+    monkeypatch.setattr(service, "list_models", fake_list_models)
+    monkeypatch.setattr(
+        "app.services.llm_training_service.describe_training_runtime",
+        lambda: {
+            "configured_provider": "script",
+            "resolved_provider": "script",
+            "ready": True,
+            "command_source": "builtin",
+        },
+    )
+
+    summary = await service.summarize_rollout("tenant-1", limit=10)
+
+    assert summary["jobs"]["total"] == 2
+    assert summary["jobs"]["running"] == 1
+    assert summary["jobs"]["failed"] == 1
+    assert summary["models"]["active"] == 1
+    assert summary["models"]["canary"] == 1
+    assert summary["models"]["publish_state_counts"]["published"] == 1
+    assert summary["models"]["publish_state_counts"]["publish_ready"] == 1
+    assert summary["can_rollback"] is True
+    assert summary["executor_runtime"]["ready"] is True
+    assert summary["executor_runtime"]["command_source"] == "builtin"
+    assert summary["active_model"]["model_id"] == "model-active"
+    assert summary["previous_active_model"]["model_id"] == "model-prev"
 
 
 @pytest.mark.asyncio
