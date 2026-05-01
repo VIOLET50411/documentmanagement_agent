@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from importlib import import_module
 from typing import AsyncIterator
 
 from langgraph.graph import END, StateGraph
@@ -16,19 +17,10 @@ from app.agent.nodes.intent_router import intent_router
 from app.agent.nodes.query_rewriter import query_rewriter
 from app.agent.nodes.retriever import retriever
 from app.agent.nodes.self_correction import self_correction
+from app.agent.runtime.langgraph_compat import native_checkpoint_support_status
 from app.agent.runtime.checkpoint_store import RuntimeCheckpointStore
 from app.config import settings
 from app.memory.long_term_memory import LongTermMemory
-
-try:
-    from langgraph.checkpoint.postgres import PostgresSaver
-except ImportError:  # pragma: no cover - optional native checkpoint backend
-    PostgresSaver = None
-
-try:
-    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-except ImportError:  # pragma: no cover - optional native checkpoint backend
-    AsyncPostgresSaver = None
 
 
 NODE_STATUS_MAP = {
@@ -209,13 +201,25 @@ class LangGraphRuntimeRunner:
 
     @asynccontextmanager
     async def _native_checkpointer(self):
-        if AsyncPostgresSaver is None or not settings.runtime_langgraph_native_checkpoint_enabled:
+        status = native_checkpoint_support_status()
+        if not status.get("available"):
+            yield None
+            return
+        AsyncPostgresSaver = self._load_async_postgres_saver()
+        if AsyncPostgresSaver is None:
             yield None
             return
         conn_string = self._native_checkpoint_conn_string()
         async with AsyncPostgresSaver.from_conn_string(conn_string, pipeline=False) as saver:
             await saver.setup()
             yield saver
+
+    def _load_async_postgres_saver(self):
+        try:
+            module = import_module("langgraph.checkpoint.postgres.aio")
+        except ImportError:  # pragma: no cover - optional dependency
+            return None
+        return getattr(module, "AsyncPostgresSaver", None)
 
     def _native_checkpoint_conn_string(self) -> str:
         password = settings.postgres_password.replace("@", "%40")
@@ -394,6 +398,8 @@ class LangGraphRuntimeRunner:
             "agent_used": state.get("agent_used"),
             "retrieval_sufficient": state.get("retrieval_sufficient"),
             "critic_approved": state.get("critic_approved"),
+            "degraded": bool(state.get("degraded", False)),
+            "fallback_reason": state.get("fallback_reason"),
             "warnings": state.get("warnings", []),
             "citations": state.get("citations", []),
             "retrieved_docs": state.get("retrieved_docs", []),

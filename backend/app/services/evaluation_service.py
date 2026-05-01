@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from collections.abc import Awaitable, Callable
+import re
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -129,18 +130,45 @@ class EvaluationService:
         }
 
     async def _load_documents(self, tenant_id: str, *, sample_limit: int) -> list[dict[str, Any]]:
-        rows = await self.db.execute(
+        primary_rows = await self.db.execute(
             select(Document.id, Document.title, DocumentChunk.content)
             .join(DocumentChunk, DocumentChunk.doc_id == Document.id)
             .where(Document.tenant_id == tenant_id, Document.status == "ready")
             .order_by(Document.updated_at.desc(), DocumentChunk.chunk_index.asc())
-            .limit(sample_limit)
+            .limit(max(sample_limit * 8, 50))
         )
+        primary_grouped = self._group_documents(primary_rows.all(), sample_limit=sample_limit, exclude_synthetic=True)
+        if primary_grouped:
+            return primary_grouped
+
+        fallback_rows = await self.db.execute(
+            select(Document.id, Document.title, DocumentChunk.content)
+            .join(DocumentChunk, DocumentChunk.doc_id == Document.id)
+            .where(Document.tenant_id == tenant_id, Document.status == "ready")
+            .order_by(Document.updated_at.desc(), DocumentChunk.chunk_index.asc())
+            .limit(max(sample_limit * 4, 20))
+        )
+        return self._group_documents(fallback_rows.all(), sample_limit=sample_limit, exclude_synthetic=False)
+
+    def _group_documents(self, rows: list[tuple], *, sample_limit: int, exclude_synthetic: bool) -> list[dict[str, Any]]:
         grouped: dict[str, dict[str, Any]] = {}
-        for doc_id, title, content in rows.all():
+        for doc_id, title, content in rows:
+            if exclude_synthetic and self._is_synthetic_eval_title(title):
+                continue
             item = grouped.setdefault(doc_id, {"id": doc_id, "title": title, "chunks": []})
             item["chunks"].append({"content": content})
-        return list(grouped.values())
+            if len(grouped) >= sample_limit and len(item["chunks"]) >= 1:
+                continue
+        return list(grouped.values())[: max(sample_limit, 1)]
+
+    def _is_synthetic_eval_title(self, title: str | None) -> bool:
+        normalized = str(title or "").strip().lower()
+        if not normalized:
+            return False
+        return bool(
+            re.match(r"^(smoke_|tmp_|test_|sample_)", normalized)
+            or normalized.endswith((".tmp.csv", ".sample.csv"))
+        )
 
     def _build_gate(self, metrics: dict[str, Any]) -> dict[str, Any]:
         checks = [

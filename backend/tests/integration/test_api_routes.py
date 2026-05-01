@@ -15,6 +15,7 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 from app.api.middleware.auth import get_current_user
 from app.main import app
 from app.services.auth_service import AuthService
+from app.services.mobile_oauth_service import MobileOAuthService
 
 
 class DummyDB:
@@ -699,3 +700,132 @@ async def test_notifications_events_route_returns_recent_events(api_client: Asyn
     payload = response.json()
     assert payload["limit"] == 5
     assert payload["items"][0]["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_mobile_openid_configuration_route_returns_expected_endpoints(api_client: AsyncClient, monkeypatch):
+    async def override_db():
+        yield DummyDB()
+
+    from app.dependencies import get_db
+
+    app.dependency_overrides[get_db] = override_db
+
+    response = await api_client.get("/api/v1/auth/mobile/.well-known/openid-configuration")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["authorization_endpoint"].endswith("/api/v1/auth/mobile/authorize")
+    assert payload["token_endpoint"].endswith("/api/v1/auth/mobile/token")
+    assert payload["userinfo_endpoint"].endswith("/api/v1/auth/mobile/userinfo")
+
+
+@pytest.mark.asyncio
+async def test_mobile_authorize_and_token_routes(api_client: AsyncClient, monkeypatch):
+    async def override_db():
+        yield DummyDB()
+
+    from app.dependencies import get_db
+
+    app.dependency_overrides[get_db] = override_db
+
+    async def fake_authorize(self, **kwargs):
+        return SimpleNamespace(
+            code="auth-code-1234567890",
+            expires_at=datetime.now(timezone.utc),
+            redirect_uri=kwargs["redirect_uri"],
+        )
+
+    async def fake_exchange_code(self, **kwargs):
+        assert kwargs["code"] == "auth-code-1234567890"
+        return {
+            "access_token": "access-1",
+            "refresh_token": "refresh-1",
+            "token_type": "bearer",
+            "expires_in": 1800,
+            "id_token": "id-token-1",
+            "scope": "openid profile email offline_access",
+        }
+
+    monkeypatch.setattr(MobileOAuthService, "authorize", fake_authorize)
+    monkeypatch.setattr(MobileOAuthService, "exchange_code", fake_exchange_code)
+
+    authorize_response = await api_client.post(
+        "/api/v1/auth/mobile/authorize",
+        json={
+            "username": "admin_demo",
+            "password": "Password123",
+            "client_id": "docmind-capacitor",
+            "redirect_uri": "docmind://auth/callback",
+            "code_challenge": "plain-verifier-123",
+            "code_challenge_method": "plain",
+            "scope": "openid profile email offline_access",
+            "state": "state-1",
+        },
+    )
+
+    assert authorize_response.status_code == 200
+    assert authorize_response.json()["code"] == "auth-code-1234567890"
+
+    token_response = await api_client.post(
+        "/api/v1/auth/mobile/token",
+        json={
+            "grant_type": "authorization_code",
+            "client_id": "docmind-capacitor",
+            "code": "auth-code-1234567890",
+            "redirect_uri": "docmind://auth/callback",
+            "code_verifier": "plain-verifier-1234567890",
+        },
+    )
+
+    assert token_response.status_code == 200
+    token_payload = token_response.json()
+    assert token_payload["access_token"] == "access-1"
+    assert token_payload["id_token"] == "id-token-1"
+
+
+@pytest.mark.asyncio
+async def test_mobile_userinfo_route_returns_profile(api_client: AsyncClient, monkeypatch):
+    current_user = SimpleNamespace(
+        id="user-1",
+        username="admin_demo",
+        email="admin@example.com",
+        role="ADMIN",
+        department="operations",
+        tenant_id="tenant-1",
+        level=9,
+        email_verified=True,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    async def override_current_user():
+        return current_user
+
+    async def override_db():
+        yield DummyDB()
+
+    from app.dependencies import get_db
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_db] = override_db
+
+    async def fake_userinfo(self, user_id: str):
+        assert user_id == "user-1"
+        return {
+            "sub": "user-1",
+            "username": "admin_demo",
+            "email": "admin@example.com",
+            "email_verified": True,
+            "tenant_id": "tenant-1",
+            "role": "ADMIN",
+            "department": "operations",
+        }
+
+    monkeypatch.setattr(MobileOAuthService, "userinfo", fake_userinfo)
+
+    response = await api_client.get("/api/v1/auth/mobile/userinfo")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["sub"] == "user-1"
+    assert payload["tenant_id"] == "tenant-1"

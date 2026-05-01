@@ -159,6 +159,36 @@ async def test_langgraph_runner_prefers_native_checkpoint_resume(monkeypatch):
     assert events[-1]["agent_used"] == "langgraph_runtime_resume"
 
 
+def test_langgraph_runner_checkpoint_payload_persists_degraded_state():
+    user = type("User", (), {"id": "u1", "tenant_id": "t1", "role": "ADMIN"})()
+    runner = LangGraphRuntimeRunner(db=None, current_user=user)
+
+    payload = runner._checkpoint_payload(
+        {
+            "query": "测试查询",
+            "rewritten_query": "改写后的查询",
+            "intent": "qa",
+            "iteration": 2,
+            "thread_id": "thread-1",
+            "session_id": "thread-1",
+            "selected_agent": "summary",
+            "agent_used": "summary",
+            "retrieval_sufficient": False,
+            "critic_approved": False,
+            "degraded": True,
+            "fallback_reason": "retrieval_insufficient",
+            "warnings": ["retrieval_insufficient"],
+            "citations": [{"doc_id": "doc-1"}],
+            "answer": "降级回答",
+        }
+    )
+
+    assert payload["degraded"] is True
+    assert payload["fallback_reason"] == "retrieval_insufficient"
+    assert payload["warnings"] == ["retrieval_insufficient"]
+    assert payload["answer_preview"] == "降级回答"
+
+
 @pytest.mark.asyncio
 async def test_permission_gate_handles_allow_ask_and_deny():
     gate = PermissionGate(None)

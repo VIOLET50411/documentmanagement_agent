@@ -135,9 +135,14 @@ class DeliveryGapService:
 
         tiny_enabled = os.getenv("DOCMIND_TRAINING_DEV_TINY_MODEL_ENABLED", "false").lower() == "true"
         tiny_model = os.getenv("DOCMIND_TRAINING_DEV_TINY_MODEL", "sshleifer/tiny-gpt2").strip()
+        export_merged_model = os.getenv("DOCMIND_TRAINING_EXPORT_MERGED_MODEL", "false").lower() == "true"
         supported_prefixes = LLMTrainingService.OLLAMA_ADAPTER_SUPPORTED_PREFIXES
         normalized_tiny = tiny_model.lower()
-        publishable_base_aligned = not tiny_enabled or LLMTrainingService.supports_ollama_adapter_base_model(normalized_tiny)
+        publishable_base_aligned = (
+            not tiny_enabled
+            or export_merged_model
+            or LLMTrainingService.supports_ollama_adapter_base_model(normalized_tiny)
+        )
         publish_runtime_ready = publish_enabled and bool(publish_command) and ollama_cli_available
         evidence = await self._load_training_publish_evidence(tenant_id)
         pipeline_ready = publish_runtime_ready and evidence["published_model_present"]
@@ -149,7 +154,10 @@ class DeliveryGapService:
         elif publish_enabled and bool(publish_command) and not ollama_cli_available:
             note = "训练产物发布命令已配置，但当前运行环境缺少 ollama CLI。"
         elif publish_enabled and bool(publish_command):
-            note = f"训练产物可执行发布命令，但当前 dev tiny model 为 {tiny_model}，仍不满足 Ollama adapter 发布族要求。"
+            note = (
+                f"训练产物可执行发布命令，但当前 dev tiny model 为 {tiny_model}，"
+                "仍未满足当前发布策略要求。"
+            )
         elif publish_enabled:
             note = "训练产物发布已启用，但缺少可执行的发布命令配置。"
         else:
@@ -165,6 +173,7 @@ class DeliveryGapService:
             "ollama_cli_available": ollama_cli_available,
             "dev_tiny_model_enabled": tiny_enabled,
             "dev_tiny_model": tiny_model if tiny_enabled else None,
+            "export_merged_model": export_merged_model,
             "supported_prefixes": list(supported_prefixes),
             **evidence,
             "note": note,

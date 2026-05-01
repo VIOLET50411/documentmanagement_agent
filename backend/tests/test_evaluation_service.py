@@ -139,6 +139,31 @@ def test_startup_schema_compatibility_includes_invitation_revocation_column():
     assert any("user_invitations" in stmt and "revoked_at" in stmt for stmt in STARTUP_SCHEMA_COMPATIBILITY_STATEMENTS)
 
 
+def test_group_documents_prefers_non_synthetic_titles():
+    service = EvaluationService(None, None, reports_dir=Path("."))
+    rows = [
+        ("doc-smoke", "smoke_1.csv", "冒烟内容"),
+        ("doc-real", "西南大学预算管理办法", "真实内容"),
+    ]
+
+    grouped = service._group_documents(rows, sample_limit=2, exclude_synthetic=True)
+
+    assert len(grouped) == 1
+    assert grouped[0]["title"] == "西南大学预算管理办法"
+
+
+def test_group_documents_falls_back_when_only_synthetic_titles_exist():
+    service = EvaluationService(None, None, reports_dir=Path("."))
+    rows = [
+        ("doc-smoke", "smoke_1.csv", "冒烟内容"),
+    ]
+
+    grouped = service._group_documents(rows, sample_limit=2, exclude_synthetic=False)
+
+    assert len(grouped) == 1
+    assert grouped[0]["title"] == "smoke_1.csv"
+
+
 def _async_return(value):
     async def _inner(*_args, **_kwargs):
         return value

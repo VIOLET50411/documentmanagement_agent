@@ -28,7 +28,16 @@ class FakeDB:
 
 @pytest.mark.asyncio
 async def test_runtime_checkpoint_service_summarizes_latest_session_state(monkeypatch):
-    monkeypatch.setattr(settings, 'runtime_langgraph_native_checkpoint_enabled', True)
+    monkeypatch.setattr(
+        "app.services.runtime_checkpoint_service.native_checkpoint_support_status",
+        lambda: {
+            "enabled": True,
+            "available": True,
+            "compatible": True,
+            "reason": "ok",
+            "versions": {"langgraph": "0.5.0"},
+        },
+    )
     now = datetime.now(UTC).replace(tzinfo=None)
     items = [
         SimpleNamespace(
@@ -71,11 +80,23 @@ async def test_runtime_checkpoint_service_summarizes_latest_session_state(monkey
     assert rows[0]['warnings'] == ['retrieval_insufficient']
     assert rows[0]['resume_strategy'] == 'native'
     assert rows[0]['native_checkpoint_enabled'] is True
+    assert rows[0]['native_checkpoint_available'] is True
+    assert rows[0]['native_checkpoint_compatible'] is True
+    assert rows[0]['native_checkpoint_reason'] == 'ok'
 
 
 @pytest.mark.asyncio
 async def test_runtime_checkpoint_service_marks_terminal_sessions(monkeypatch):
-    monkeypatch.setattr(settings, 'runtime_langgraph_native_checkpoint_enabled', False)
+    monkeypatch.setattr(
+        "app.services.runtime_checkpoint_service.native_checkpoint_support_status",
+        lambda: {
+            "enabled": True,
+            "available": False,
+            "compatible": False,
+            "reason": "langgraph_checkpoint_postgres_requires_langgraph_gte_0_5",
+            "versions": {"langgraph": "0.2.34"},
+        },
+    )
     now = datetime.now(UTC).replace(tzinfo=None)
     items = [
         SimpleNamespace(
@@ -93,4 +114,7 @@ async def test_runtime_checkpoint_service_marks_terminal_sessions(monkeypatch):
 
     assert rows[0]['resumable'] is False
     assert rows[0]['resume_strategy'] == 'terminal'
-    assert rows[0]['native_checkpoint_enabled'] is False
+    assert rows[0]['native_checkpoint_enabled'] is True
+    assert rows[0]['native_checkpoint_available'] is False
+    assert rows[0]['native_checkpoint_compatible'] is False
+    assert rows[0]['native_checkpoint_reason'] == 'langgraph_checkpoint_postgres_requires_langgraph_gte_0_5'

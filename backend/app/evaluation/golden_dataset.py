@@ -11,6 +11,7 @@ class GoldenDatasetGenerator:
 
     async def generate(self, documents: list, count: int = 500) -> list:
         pairs = []
+        seen_signatures: set[str] = set()
         for document in documents:
             title = document.get("title") or document.get("doc_title") or "未命名文档"
             snippets = document.get("snippets") or document.get("chunks") or []
@@ -21,21 +22,28 @@ class GoldenDatasetGenerator:
 
                 table_pairs = self._build_table_pairs(title, text, document, limit=max(count - len(pairs), 0))
                 if table_pairs:
-                    pairs.extend(table_pairs)
+                    for item in table_pairs:
+                        signature = self._signature(item)
+                        if signature in seen_signatures:
+                            continue
+                        seen_signatures.add(signature)
+                        pairs.append(item)
                 else:
                     answer = self._build_reference_answer(text)
                     if not answer:
                         continue
-                    pairs.append(
-                        {
-                            "question": f"What is the key point of paragraph {index + 1} in {title}?",
-                            "answer": answer,
-                            "reference": answer,
-                            "contexts": [text],
-                            "context_doc_ids": [document.get("doc_id") or document.get("id")],
-                            "difficulty": "basic",
-                        }
-                    )
+                    item = {
+                        "question": f"{self._humanize_title(title)}第{index + 1}段的核心内容是什么？",
+                        "answer": answer,
+                        "reference": answer,
+                        "contexts": [text],
+                        "context_doc_ids": [document.get("doc_id") or document.get("id")],
+                        "difficulty": "basic",
+                    }
+                    signature = self._signature(item)
+                    if signature not in seen_signatures:
+                        seen_signatures.add(signature)
+                        pairs.append(item)
                 if len(pairs) >= count:
                     return pairs[:count]
         return pairs[:count]
@@ -98,3 +106,14 @@ class GoldenDatasetGenerator:
             return True
         except InvalidOperation:
             return False
+
+    def _signature(self, item: dict) -> str:
+        return f"{item.get('question','')}||{item.get('answer','')}"
+
+    def _humanize_title(self, title: str) -> str:
+        cleaned = str(title or "").strip()
+        if not cleaned:
+            return "文档中，"
+        if cleaned.lower().endswith((".csv", ".xlsx", ".xls", ".pdf", ".docx")):
+            return ""
+        return f"{cleaned}中，"

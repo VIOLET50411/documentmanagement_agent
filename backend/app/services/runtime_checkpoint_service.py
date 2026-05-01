@@ -7,7 +7,7 @@ import json
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
+from app.agent.runtime.langgraph_compat import native_checkpoint_support_status
 from app.models.db.runtime_checkpoint import RuntimeCheckpoint
 
 
@@ -16,6 +16,7 @@ class RuntimeCheckpointService:
         self.db = db
 
     async def summarize_sessions(self, tenant_id: str, limit: int = 100) -> list[dict]:
+        native_status = native_checkpoint_support_status()
         rows = await self.db.execute(
             select(RuntimeCheckpoint)
             .where(RuntimeCheckpoint.tenant_id == tenant_id)
@@ -38,7 +39,10 @@ class RuntimeCheckpointService:
                         "checkpoint_count": 0,
                         "resumable": True,
                         "resume_strategy": "manual",
-                        "native_checkpoint_enabled": bool(settings.runtime_langgraph_native_checkpoint_enabled),
+                        "native_checkpoint_enabled": bool(native_status.get("enabled")),
+                        "native_checkpoint_available": bool(native_status.get("available")),
+                        "native_checkpoint_compatible": bool(native_status.get("compatible")),
+                        "native_checkpoint_reason": native_status.get("reason"),
                         "degraded": False,
                         "intent": None,
                         "rewritten_query": None,
@@ -58,7 +62,10 @@ class RuntimeCheckpointService:
                         "latest_at": item.created_at.isoformat(),
                         "resumable": item.node_name not in {"done", "terminal"},
                         "resume_strategy": self._resume_strategy_for(item.node_name),
-                        "native_checkpoint_enabled": bool(settings.runtime_langgraph_native_checkpoint_enabled),
+                        "native_checkpoint_enabled": bool(native_status.get("enabled")),
+                        "native_checkpoint_available": bool(native_status.get("available")),
+                        "native_checkpoint_compatible": bool(native_status.get("compatible")),
+                        "native_checkpoint_reason": native_status.get("reason"),
                         "degraded": bool(payload.get("degraded", False)),
                         "intent": payload.get("intent"),
                         "rewritten_query": payload.get("rewritten_query"),
@@ -79,6 +86,7 @@ class RuntimeCheckpointService:
     def _resume_strategy_for(self, node_name: str) -> str:
         if node_name in {"done", "terminal"}:
             return "terminal"
-        if settings.runtime_langgraph_native_checkpoint_enabled:
+        native_status = native_checkpoint_support_status()
+        if native_status.get("available"):
             return "native"
         return "manual"

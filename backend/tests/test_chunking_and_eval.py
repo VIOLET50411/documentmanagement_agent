@@ -113,6 +113,29 @@ async def test_golden_dataset_uses_clean_default_title_and_sentence_split():
     assert "第一条：提交申请。第二条：经理审批！" in dataset[0]["answer"]
 
 
+@pytest.mark.asyncio
+async def test_golden_dataset_deduplicates_identical_pairs():
+    generator = GoldenDatasetGenerator()
+
+    dataset = await generator.generate(
+        [
+            {
+                "id": "doc-dup",
+                "title": "重复预算表",
+                "chunks": [
+                    {
+                        "content": "| policy | owner | amount |\n| --- | --- | --- |\n| 员工报销流程 | 财务部 | 5000 |\n| 员工报销流程 | 财务部 | 5000 |"
+                    }
+                ],
+            }
+        ],
+        count=10,
+    )
+
+    assert len(dataset) == 1
+    assert dataset[0]["question"] == "In 重复预算表, what is the owner for 员工报销流程?"
+
+
 def test_excel_parser_reads_gbk_csv_without_mojibake(tmp_path: Path):
     path = tmp_path / "policies.csv"
     path.write_bytes("policy,owner,amount\n员工报销流程,财务部,5000\n".encode("gb18030"))
