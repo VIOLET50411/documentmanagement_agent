@@ -156,6 +156,7 @@ async def test_publish_model_artifact_reports_unsupported_base_model(tmp_path: P
     monkeypatch.setattr(service, "get_model", fake_get_model)
     monkeypatch.setattr(settings, "llm_training_publish_enabled", True)
     monkeypatch.setattr(settings, "llm_training_publish_command", "ollama create {target_model_name} -f {modelfile_path}")
+    monkeypatch.setattr("app.services.llm_training_service.shutil.which", lambda name: "/usr/bin/ollama" if name == "ollama" else None)
     result = await service.publish_model_artifact(tenant_id="tenant-1", model_id="model-1")
     assert result["publish_ready"] is False
     assert result["reason"] == "unsupported_ollama_adapter_base_model"
@@ -217,6 +218,69 @@ async def test_publish_model_artifact_runs_publish_command(tmp_path: Path, monke
     assert model.status == "published"
     assert "ollama create tenant-model" in captured["command"]
     assert captured["cwd"] == str(artifact_dir.resolve())
+
+
+@pytest.mark.asyncio
+async def test_publish_model_artifact_prefers_merged_full_model_import(tmp_path: Path, monkeypatch):
+    service = LLMTrainingService(FakeDB(), redis_client=None)
+    artifact_dir = tmp_path / "artifact"
+    adapter_dir = artifact_dir / "adapter"
+    merged_model_dir = artifact_dir / "merged_model"
+    adapter_dir.mkdir(parents=True)
+    merged_model_dir.mkdir(parents=True)
+    (merged_model_dir / "model.safetensors").write_text("dummy", encoding="utf-8")
+    (artifact_dir / "adapter_manifest.json").write_text(
+        (
+            '{"hf_base_model":"TinyLlama/TinyLlama-1.1B-Chat-v1.0",'
+            '"adapter_dir":"' + str(adapter_dir).replace("\\", "/") + '",'
+            '"merged_model_dir":"' + str(merged_model_dir).replace("\\", "/") + '"}'
+        ),
+        encoding="utf-8",
+    )
+    (artifact_dir / "Modelfile").write_text(f"FROM {str(merged_model_dir).replace(chr(92), '/')}\n", encoding="utf-8")
+    model = SimpleNamespace(
+        id="model-1",
+        tenant_id="tenant-1",
+        artifact_dir=str(artifact_dir),
+        model_name="tenant-model",
+        base_model="tinyllama",
+        serving_base_url="http://ollama:11434/v1",
+        serving_model_name="tinyllama",
+        provider="openai-compatible",
+        status="registered",
+        updated_at=None,
+        metrics_json="{}",
+    )
+
+    async def fake_get_model(tenant_id: str, model_id: str):
+        return model
+
+    class FakeProcess:
+        returncode = 0
+
+        async def communicate(self):
+            return (b"published", b"")
+
+    captured = {}
+
+    async def fake_create_subprocess_shell(command, cwd=None, env=None, stdout=None, stderr=None):
+        captured["command"] = command
+        captured["cwd"] = cwd
+        captured["env"] = env
+        return FakeProcess()
+
+    monkeypatch.setattr(service, "get_model", fake_get_model)
+    monkeypatch.setattr(settings, "llm_training_publish_enabled", True)
+    monkeypatch.setattr(settings, "llm_training_publish_command", "ollama create {target_model_name} -f {modelfile_path}")
+    monkeypatch.setattr("app.services.llm_training_service.shutil.which", lambda name: "/usr/bin/ollama" if name == "ollama" else None)
+    monkeypatch.setattr("app.services.llm_training_service.asyncio.create_subprocess_shell", fake_create_subprocess_shell)
+
+    result = await service.publish_model_artifact(tenant_id="tenant-1", model_id="model-1")
+
+    assert result["published"] is True
+    assert result["publish_mode"] == "full_model_import"
+    assert captured["env"]["DOCMIND_TRAINING_PUBLISH_MODE"] == "full_model_import"
+    assert captured["env"]["DOCMIND_TRAINING_MERGED_MODEL_DIR"] == str(merged_model_dir.resolve())
 
 
 @pytest.mark.asyncio

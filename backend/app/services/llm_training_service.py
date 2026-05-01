@@ -22,7 +22,7 @@ from app.models.db.llm_training import LLMModelRegistry, LLMTrainingJob
 class LLMTrainingService:
     ACTIVE_MODEL_KEY_PREFIX = "llm:active_model:"
     PREVIOUS_ACTIVE_MODEL_KEY_PREFIX = "llm:previous_active_model:"
-    OLLAMA_ADAPTER_SUPPORTED_PREFIXES = ("llama", "mistral", "gemma")
+    OLLAMA_ADAPTER_SUPPORTED_PREFIXES = ("llama2", "llama3", "llama3.1", "llama3.2", "mistral", "gemma")
     TERMINAL_JOB_STATUSES = {"completed", "failed", "killed"}
 
     def __init__(self, db: AsyncSession, redis_client=None, reports_dir: str | Path | None = None):
@@ -148,6 +148,20 @@ class LLMTrainingService:
     async def get_model(self, tenant_id: str, model_id: str) -> LLMModelRegistry | None:
         row = await self.db.execute(select(LLMModelRegistry).where(LLMModelRegistry.id == model_id, LLMModelRegistry.tenant_id == tenant_id))
         return row.scalar_one_or_none()
+
+    @classmethod
+    def supports_ollama_adapter_base_model(cls, base_model: str) -> bool:
+        normalized = str(base_model or "").strip().lower()
+        if not normalized:
+            return False
+        if "tinyllama" in normalized or "open_llama" in normalized:
+            return False
+        patterns = (
+            r"(?:^|[/: _-])llama(?:[ _-]?)(?:2|3(?:\.\d+)?)(?:$|[/: _-])",
+            r"(?:^|[/: _-])mistral(?:$|[/: _-])",
+            r"(?:^|[/: _-])gemma(?:2)?(?:$|[/: _-])",
+        )
+        return any(re.search(pattern, normalized) for pattern in patterns)
 
     async def activate_model(self, *, tenant_id: str, model_id: str, actor_id: str | None = None) -> LLMModelRegistry:
         model = await self.get_model(tenant_id, model_id)
@@ -455,33 +469,9 @@ class LLMTrainingService:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         adapter_dir_raw = str(manifest.get("adapter_dir") or "").strip()
         adapter_dir = Path(adapter_dir_raw).resolve() if adapter_dir_raw else None
+        merged_model_dir_raw = str(manifest.get("merged_model_dir") or "").strip()
+        merged_model_dir = Path(merged_model_dir_raw).resolve() if merged_model_dir_raw else None
         hf_base_model = str(manifest.get("hf_base_model") or model.base_model or "").strip()
-        normalized_base = hf_base_model.lower()
-        if not any(prefix in normalized_base for prefix in self.OLLAMA_ADAPTER_SUPPORTED_PREFIXES):
-            return await self._record_publish_outcome(
-                model,
-                {
-                    "ok": False,
-                    "publish_ready": False,
-                    "published": False,
-                    "reason": "unsupported_ollama_adapter_base_model",
-                    "message": f"Ollama 适配器发布当前仅支持 {', '.join(self.OLLAMA_ADAPTER_SUPPORTED_PREFIXES)} 系列，当前基座为 {hf_base_model}",
-                    "hf_base_model": hf_base_model,
-                },
-            )
-
-        if adapter_dir is None or not adapter_dir.exists():
-            return await self._record_publish_outcome(
-                model,
-                {
-                    "ok": False,
-                    "publish_ready": False,
-                    "published": False,
-                    "reason": "adapter_dir_missing",
-                    "message": f"适配器目录不存在: {adapter_dir}",
-                    "hf_base_model": hf_base_model,
-                },
-            )
 
         modelfile_path = artifact_dir / "Modelfile"
         if not modelfile_path.exists():
@@ -527,13 +517,55 @@ class LLMTrainingService:
                 },
             )
 
+        publish_mode = "full_model_import" if merged_model_dir and merged_model_dir.exists() else "adapter"
+        if publish_mode == "adapter":
+            normalized_base = hf_base_model.lower()
+            if not self.supports_ollama_adapter_base_model(normalized_base):
+                return await self._record_publish_outcome(
+                    model,
+                    {
+                        "ok": False,
+                        "publish_ready": False,
+                        "published": False,
+                        "reason": "unsupported_ollama_adapter_base_model",
+                        "message": f"Ollama 适配器发布当前仅支持 {', '.join(self.OLLAMA_ADAPTER_SUPPORTED_PREFIXES)} 系列，当前基座为 {hf_base_model}",
+                        "hf_base_model": hf_base_model,
+                    },
+                )
+            if adapter_dir is None or not adapter_dir.exists():
+                return await self._record_publish_outcome(
+                    model,
+                    {
+                        "ok": False,
+                        "publish_ready": False,
+                        "published": False,
+                        "reason": "adapter_dir_missing",
+                        "message": f"适配器目录不存在: {adapter_dir}",
+                        "hf_base_model": hf_base_model,
+                    },
+                )
+        else:
+            if merged_model_dir is None or not merged_model_dir.exists():
+                return await self._record_publish_outcome(
+                    model,
+                    {
+                        "ok": False,
+                        "publish_ready": False,
+                        "published": False,
+                        "reason": "merged_model_dir_missing",
+                        "message": f"完整模型目录不存在: {merged_model_dir}",
+                        "hf_base_model": hf_base_model,
+                    },
+                )
+
         target_model_name = str(model.model_name or "").strip()
         format_args = {
             "model_name": target_model_name,
             "target_model_name": target_model_name,
             "base_model": model.base_model,
             "artifact_dir": str(artifact_dir),
-            "adapter_dir": str(adapter_dir),
+            "adapter_dir": str(adapter_dir) if adapter_dir else "",
+            "merged_model_dir": str(merged_model_dir) if merged_model_dir else "",
             "modelfile_path": str(modelfile_path),
             "serving_base_url": model.serving_base_url,
             "serving_model_name": target_model_name,
@@ -545,8 +577,10 @@ class LLMTrainingService:
             "OLLAMA_HOST": self._normalize_ollama_host(model.serving_base_url),
             "DOCMIND_TRAINING_ARTIFACT_DIR": str(artifact_dir),
             "DOCMIND_TRAINING_MODEFILE_PATH": str(modelfile_path),
-            "DOCMIND_TRAINING_ADAPTER_DIR": str(adapter_dir),
+            "DOCMIND_TRAINING_ADAPTER_DIR": str(adapter_dir) if adapter_dir else "",
+            "DOCMIND_TRAINING_MERGED_MODEL_DIR": str(merged_model_dir) if merged_model_dir else "",
             "DOCMIND_TRAINING_TARGET_MODEL_NAME": target_model_name,
+            "DOCMIND_TRAINING_PUBLISH_MODE": publish_mode,
         }
         configured_workdir = str(settings.llm_training_publish_workdir or "").strip()
         if configured_workdir:
@@ -565,9 +599,10 @@ class LLMTrainingService:
         if process.returncode != 0:
             error_message = stderr_text or stdout_text or f"发布命令退出码 {process.returncode}"
             if "no Modelfile or safetensors files found" in error_message and "ollama" in command_template.lower():
+                target_dir = merged_model_dir if publish_mode == "full_model_import" else artifact_dir
                 error_message = (
-                    f"{error_message}；当前 Ollama 服务端无法直接读取训练产物目录 {artifact_dir}，"
-                    "请确保 `reports` 目录已挂载到 ollama 容器且容器内路径与发布命令中的路径一致。"
+                    f"{error_message}；当前 Ollama 服务端无法直接读取发布目录 {target_dir}，"
+                    "请确保 `reports` 目录已挂载到 ollama 容器且容器内路径一致。"
                 )
             return await self._record_publish_outcome(
                 model,
@@ -581,6 +616,8 @@ class LLMTrainingService:
                     "artifact_dir": str(artifact_dir),
                     "modelfile_path": str(modelfile_path),
                     "workdir": str(workdir),
+                    "publish_mode": publish_mode,
+                    "merged_model_dir": str(merged_model_dir) if merged_model_dir else None,
                 },
             )
 
@@ -591,6 +628,7 @@ class LLMTrainingService:
         metrics = self._load_json(model.metrics_json)
         metrics["publish_command"] = command
         metrics["published_at"] = model.updated_at.isoformat()
+        metrics["publish_mode"] = publish_mode
         model.metrics_json = json.dumps(metrics, ensure_ascii=False)
         await self.db.flush()
         return {
@@ -602,6 +640,7 @@ class LLMTrainingService:
             "command": command,
             "serving_model_name": target_model_name,
             "stdout": stdout_text[-2000:],
+            "publish_mode": publish_mode,
         }
 
     async def _record_publish_outcome(self, model: LLMModelRegistry, payload: dict[str, Any]) -> dict[str, Any]:

@@ -60,7 +60,7 @@ async def test_build_report_flags_unpublishable_dev_tiny_model(tmp_path: Path, m
 
 
 @pytest.mark.asyncio
-async def test_build_report_accepts_tinyllama_family_alignment(tmp_path: Path, monkeypatch):
+async def test_build_report_rejects_tinyllama_family_alignment(tmp_path: Path, monkeypatch):
     reports_dir = tmp_path / "reports"
     reports_dir.mkdir(parents=True)
     monkeypatch.setattr(settings, "docmind_reports_dir", str(reports_dir))
@@ -72,8 +72,8 @@ async def test_build_report_accepts_tinyllama_family_alignment(tmp_path: Path, m
 
     payload = await DeliveryGapService().build_report("default")
 
-    assert "training_publishable_base_model_alignment" in payload["completed"]
-    assert payload["training_publish_status"]["publishable_base_aligned"] is True
+    assert "training_publishable_base_model_alignment" in payload["pending"]
+    assert payload["training_publish_status"]["publishable_base_aligned"] is False
 
 
 @pytest.mark.asyncio

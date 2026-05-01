@@ -95,6 +95,7 @@ def resolve_hf_base_model(base_model: str) -> str:
         "qwen2.5:14b": "Qwen/Qwen2.5-14B-Instruct",
         "llama3.1:8b": "meta-llama/Llama-3.1-8B-Instruct",
         "llama3.1:70b": "meta-llama/Llama-3.1-70B-Instruct",
+        "llama3.2:1b": "unsloth/Llama-3.2-1B-Instruct",
         "tinyllama": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
     }
     return mapping.get(normalized, base_model)
@@ -227,6 +228,7 @@ def write_training_artifacts(
     plan: dict[str, Any],
     executed: bool,
     adapter_dir: str | None,
+    merged_model_dir: str | None = None,
     notes: str,
     publish_ready: bool,
     extra_metadata: dict[str, Any] | None = None,
@@ -249,14 +251,18 @@ def write_training_artifacts(
         "target_model_name": context.target_model_name,
         "artifact_dir": str(context.artifact_dir),
         "adapter_dir": adapter_dir,
+        "merged_model_dir": merged_model_dir,
         "executed": executed,
         "publish_ready": bool(publish_ready),
         "notes": notes,
     }
     manifest_path.write_text(json.dumps(adapter_manifest, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
 
-    modelfile_lines = [f"FROM {context.base_model}"]
-    if adapter_dir:
+    if merged_model_dir:
+        modelfile_lines = [f"FROM {merged_model_dir}"]
+    else:
+        modelfile_lines = [f"FROM {context.base_model}"]
+    if adapter_dir and not merged_model_dir:
         adapter_name = Path(adapter_dir).name
         modelfile_lines.append(f"ADAPTER ./{adapter_name}")
     modelfile_lines.append(f'PARAMETER num_ctx {os.getenv("DOCMIND_TRAINING_OLLAMA_NUM_CTX", "4096")}')
@@ -292,6 +298,7 @@ def write_training_artifacts(
     result = {
         "artifact_dir": str(context.artifact_dir),
         "adapter_dir": adapter_dir,
+        "merged_model_dir": merged_model_dir,
         "executed": bool(executed),
         "serving_base_url": context.serving_base_url,
         "serving_model_name": context.serving_model_name,

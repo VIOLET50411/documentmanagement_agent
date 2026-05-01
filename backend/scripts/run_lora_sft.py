@@ -51,6 +51,29 @@ def _resolve_target_modules(model, configured_modules: list[str]) -> list[str]:
     return linear_like[:8] or configured_modules
 
 
+def _should_export_merged_model() -> bool:
+    raw = os.getenv("DOCMIND_TRAINING_EXPORT_MERGED_MODEL", "").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return os.getenv("DOCMIND_TRAINING_DEV_TINY_MODEL_ENABLED", "false").lower() == "true"
+
+
+def _prepare_generation_config(model, tokenizer) -> None:
+    pad_token_id = tokenizer.pad_token_id
+    if pad_token_id is None or pad_token_id < 0:
+        pad_token_id = tokenizer.eos_token_id or tokenizer.bos_token_id or 0
+    model.config.pad_token_id = pad_token_id
+    generation_config = getattr(model, "generation_config", None)
+    if generation_config is not None:
+        generation_config.pad_token_id = pad_token_id
+        if generation_config.eos_token_id is None:
+            generation_config.eos_token_id = tokenizer.eos_token_id or 1
+        if generation_config.bos_token_id is None:
+            generation_config.bos_token_id = tokenizer.bos_token_id or 0
+
+
 def _train_with_transformers(context, train_rows: list[dict], val_rows: list[dict], plan: dict) -> dict:
     write_training_status(
         context,
@@ -179,19 +202,36 @@ def _train_with_transformers(context, train_rows: list[dict], val_rows: list[dic
         extra={"adapter_dir": str(adapter_dir)},
     )
 
+    merged_model_dir = None
+    if _should_export_merged_model():
+        write_training_status(
+            context,
+            stage="saving_artifacts",
+            message="训练已完成，正在导出可发布的完整模型产物",
+            plan=plan,
+            extra={"adapter_dir": str(adapter_dir), "export_mode": "merged_full_model"},
+        )
+        merged_model_dir = context.artifact_dir / "merged_model"
+        merged_model = model.merge_and_unload()
+        _prepare_generation_config(merged_model, tokenizer)
+        merged_model.save_pretrained(str(merged_model_dir), safe_serialization=True, max_shard_size="2GB")
+        tokenizer.save_pretrained(str(merged_model_dir))
+
     publish_ready = os.getenv("DOCMIND_TRAINING_PUBLISH_ENABLED", "false").lower() == "true"
-    notes = "\u5df2\u5b8c\u6210\u672c\u5730 LoRA/SFT \u8bad\u7ec3\u3002\u5982\u9700\u53d1\u5e03\u5230 Ollama \u6216 vLLM\uff0c\u8bf7\u6309 Modelfile \u6216\u90e8\u7f72\u811a\u672c\u7ee7\u7eed\u53d1\u5e03\u3002"
+    notes = "已完成本地 LoRA/SFT 训练。如需发布到 Ollama 或 vLLM，请按 Modelfile 或部署脚本继续发布。"
     return write_training_artifacts(
         context,
         plan=plan,
         executed=True,
         adapter_dir=str(adapter_dir),
+        merged_model_dir=str(merged_model_dir) if merged_model_dir else None,
         notes=notes,
         publish_ready=publish_ready,
         extra_metadata={
             "device": "cuda" if torch.cuda.is_available() else "cpu",
             "train_dataset_size": len(train_rows),
             "val_dataset_size": len(val_rows),
+            "publish_strategy": "full_model_import" if merged_model_dir else "adapter",
         },
     )
 
@@ -226,7 +266,7 @@ def main() -> None:
     )
 
     if not train_rows:
-        raise RuntimeError("\u8bad\u7ec3\u96c6\u4e3a\u7a7a\uff0c\u65e0\u6cd5\u6267\u884c LoRA/SFT")
+        raise RuntimeError("训练集为空，无法执行 LoRA/SFT")
 
     try:
         result = _train_with_transformers(context, train_rows, val_rows, plan)
@@ -244,7 +284,8 @@ def main() -> None:
             plan=plan,
             executed=False,
             adapter_dir=None,
-            notes=f"\u672a\u6267\u884c\u771f\u5b9e\u8bad\u7ec3\uff0c\u5df2\u8f93\u51fa\u8bad\u7ec3\u8ba1\u5212\u3002\u539f\u56e0: {type(exc).__name__}: {exc}",
+            merged_model_dir=None,
+            notes=f"未执行真实训练，已输出训练计划。原因: {type(exc).__name__}: {exc}",
             publish_ready=False,
             extra_metadata={
                 "fallback_reason": f"{type(exc).__name__}: {exc}",
@@ -258,7 +299,11 @@ def main() -> None:
             stage="completed",
             message="训练执行完成，已生成训练结果",
             plan=plan,
-            extra={"artifact_dir": result.get("artifact_dir"), "adapter_dir": result.get("adapter_dir")},
+            extra={
+                "artifact_dir": result.get("artifact_dir"),
+                "adapter_dir": result.get("adapter_dir"),
+                "merged_model_dir": result.get("merged_model_dir"),
+            },
         )
 
     print(json.dumps(result, ensure_ascii=False))

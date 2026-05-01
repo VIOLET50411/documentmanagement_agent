@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.db.llm_training import LLMModelRegistry, LLMTrainingJob
+from app.services.llm_training_service import LLMTrainingService
 from app.services.security_policy_service import SecurityPolicyService
 
 
@@ -134,9 +135,9 @@ class DeliveryGapService:
 
         tiny_enabled = os.getenv("DOCMIND_TRAINING_DEV_TINY_MODEL_ENABLED", "false").lower() == "true"
         tiny_model = os.getenv("DOCMIND_TRAINING_DEV_TINY_MODEL", "sshleifer/tiny-gpt2").strip()
-        supported_prefixes = ("llama", "mistral", "gemma")
+        supported_prefixes = LLMTrainingService.OLLAMA_ADAPTER_SUPPORTED_PREFIXES
         normalized_tiny = tiny_model.lower()
-        publishable_base_aligned = not tiny_enabled or any(prefix in normalized_tiny for prefix in supported_prefixes)
+        publishable_base_aligned = not tiny_enabled or LLMTrainingService.supports_ollama_adapter_base_model(normalized_tiny)
         publish_runtime_ready = publish_enabled and bool(publish_command) and ollama_cli_available
         evidence = await self._load_training_publish_evidence(tenant_id)
         pipeline_ready = publish_runtime_ready and evidence["published_model_present"]
