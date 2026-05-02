@@ -4,10 +4,10 @@
       <div>
         <p class="tasks-kicker">任务中心</p>
         <h2>统一查看运行、入库、训练与恢复任务</h2>
-        <p class="tasks-copy">把原本散在管理页和对话页的运行态汇总到一处，便于排查链路阻塞、失败类型和恢复点。</p>
+        <p class="tasks-copy">把原本散落在管理页和对话页的运行状态汇总到一处，便于排查链路阻塞、失败类型和恢复点。</p>
       </div>
       <button class="btn btn-primary" :disabled="tasksStore.loading" @click="tasksStore.loadDashboard()">
-        {{ tasksStore.loading ? "刷新中…" : "刷新任务中心" }}
+        {{ tasksStore.loading ? '刷新中...' : '刷新任务中心' }}
       </button>
     </header>
 
@@ -39,11 +39,11 @@
     <section class="metric-grid">
       <article class="metric-card card-shell">
         <span>TTFT P95</span>
-        <strong>{{ tasksStore.runtimeMetrics?.summary?.ttft_ms_p95 ?? "-" }} ms</strong>
+        <strong>{{ tasksStore.runtimeMetrics?.summary?.ttft_ms_p95 ?? '-' }} ms</strong>
       </article>
       <article class="metric-card card-shell">
         <span>完成耗时 P95</span>
-        <strong>{{ tasksStore.runtimeMetrics?.summary?.completion_ms_p95 ?? "-" }} ms</strong>
+        <strong>{{ tasksStore.runtimeMetrics?.summary?.completion_ms_p95 ?? '-' }} ms</strong>
       </article>
       <article class="metric-card card-shell">
         <span>回退率</span>
@@ -55,11 +55,34 @@
       </article>
       <article class="metric-card card-shell">
         <span>平均工具调用</span>
-        <strong>{{ tasksStore.runtimeMetrics?.summary?.avg_tool_calls ?? "-" }}</strong>
+        <strong>{{ tasksStore.runtimeMetrics?.summary?.avg_tool_calls ?? '-' }}</strong>
       </article>
       <article class="metric-card card-shell">
         <span>SSE 断连</span>
         <strong>{{ tasksStore.runtimeMetrics?.summary?.sse_disconnects ?? 0 }}</strong>
+      </article>
+    </section>
+
+    <section class="deployment-grid">
+      <article class="deployment-card card-shell">
+        <span>已发布模型</span>
+        <strong>{{ tasksStore.deploymentSummary?.publish_counts?.published ?? 0 }}</strong>
+        <small>已进入服务端模型注册表</small>
+      </article>
+      <article class="deployment-card card-shell">
+        <span>发布失败</span>
+        <strong>{{ tasksStore.deploymentSummary?.publish_counts?.failed ?? 0 }}</strong>
+        <small>需重试或更换基座模型</small>
+      </article>
+      <article class="deployment-card card-shell">
+        <span>部署校验通过</span>
+        <strong>{{ tasksStore.deploymentSummary?.verify_counts?.verified ?? 0 }}</strong>
+        <small>已通过健康探针与推理校验</small>
+      </article>
+      <article class="deployment-card card-shell">
+        <span>可回滚</span>
+        <strong>{{ tasksStore.deploymentSummary?.can_rollback ? '是' : '否' }}</strong>
+        <small>存在上一版激活模型可切回</small>
       </article>
     </section>
 
@@ -75,18 +98,18 @@
           <article v-for="item in tasksStore.runtimeTasks" :key="item.task_id" class="task-row">
             <div class="task-main">
               <div class="task-line">
-                <strong>{{ item.description || item.type || "运行任务" }}</strong>
+                <strong>{{ item.description || item.type || '运行任务' }}</strong>
                 <span class="status-pill" :data-status="item.status">{{ statusLabel(item.status) }}</span>
               </div>
               <div class="task-meta">
-                <span>类型：{{ item.type || "-" }}</span>
-                <span>Trace：{{ item.trace_id || "-" }}</span>
+                <span>类型：{{ item.type || '-' }}</span>
+                <span>Trace：{{ item.trace_id || '-' }}</span>
                 <span>重试：{{ item.retries ?? 0 }}</span>
               </div>
             </div>
             <div class="task-side">
               <span>{{ formatTime(item.updated_at || item.end_time || item.start_time) }}</span>
-              <small>{{ item.stage || "standard" }}</small>
+              <small>{{ item.stage || 'standard' }}</small>
             </div>
           </article>
           <p v-if="tasksStore.runtimeTasks.length === 0" class="empty-text">最近没有 Runtime 任务。</p>
@@ -116,7 +139,7 @@
             </div>
             <div class="task-side">
               <span>{{ formatTime(item.updated_at) }}</span>
-              <small>{{ item.task_id || "未绑定任务 ID" }}</small>
+              <small>{{ item.task_id || '未绑定任务 ID' }}</small>
             </div>
           </article>
           <p v-if="activePipelineJobs.length === 0" class="empty-text">当前没有活动中的文档处理任务。</p>
@@ -131,9 +154,7 @@
             <h3>训练任务</h3>
             <p>查看数据导出、LoRA/SFT、产物注册和激活前状态。</p>
           </div>
-          <span class="panel-note">
-            活跃模型：{{ tasksStore.trainingSummary?.active_model?.model_name || "未激活" }}
-          </span>
+          <span class="panel-note">活跃模型：{{ tasksStore.trainingSummary?.active_model?.model || '未激活' }}</span>
         </div>
         <div class="task-list">
           <article v-for="item in tasksStore.trainingJobs" :key="item.id" class="task-row">
@@ -143,15 +164,15 @@
                 <span class="status-pill" :data-status="item.status">{{ statusLabel(item.status) }}</span>
               </div>
               <div class="task-meta">
-                <span>阶段：{{ item.stage || "-" }}</span>
-                <span>Provider：{{ item.provider || "-" }}</span>
+                <span>阶段：{{ item.stage || '-' }}</span>
+                <span>Provider：{{ item.provider || '-' }}</span>
                 <span>样本：{{ item.train_records ?? 0 }}/{{ item.val_records ?? 0 }}</span>
               </div>
               <p v-if="item.error_message" class="task-error">{{ item.error_message }}</p>
             </div>
             <div class="task-side">
               <span>{{ formatTime(item.updated_at || item.created_at) }}</span>
-              <small>{{ item.runtime_task_id || "无 runtime 任务" }}</small>
+              <small>{{ item.runtime_task_id || '无 runtime 任务' }}</small>
             </div>
           </article>
           <p v-if="tasksStore.trainingJobs.length === 0" class="empty-text">当前没有训练任务记录。</p>
@@ -169,11 +190,11 @@
           <article v-for="item in tasksStore.checkpointSummary" :key="item.session_id" class="checkpoint-row">
             <div>
               <strong>{{ item.session_id }}</strong>
-              <p>{{ item.latest_node_name }} · 迭代 {{ item.latest_iteration }}</p>
+              <p>{{ item.latest_node_name }} | 迭代 {{ item.latest_iteration }}</p>
             </div>
             <div class="checkpoint-side">
               <span class="status-pill" :data-status="item.resumable ? 'completed' : 'failed'">
-                {{ item.resumable ? "可恢复" : "待补齐" }}
+                {{ item.resumable ? '可恢复' : '待补齐' }}
               </span>
               <small>{{ formatTime(item.latest_at) }}</small>
             </div>
@@ -182,6 +203,35 @@
         </div>
       </section>
     </div>
+
+    <section class="panel card-shell">
+      <div class="panel-head">
+        <div>
+          <h3>最近部署失败摘要</h3>
+          <p>定位训练产物发布失败、校验失败和建议动作。</p>
+        </div>
+      </div>
+      <div class="task-list">
+        <article v-for="item in recentDeploymentFailures" :key="item.model_id" class="task-row">
+          <div class="task-main">
+            <div class="task-line">
+              <strong>{{ item.model_name }}</strong>
+              <span class="status-pill" data-status="failed">{{ item.failure_category }}</span>
+            </div>
+            <div class="task-meta">
+              <span>状态：{{ item.status || '-' }}</span>
+              <span>可恢复：{{ item.recoverable ? '是' : '否' }}</span>
+            </div>
+            <p class="trace-message">{{ item.recommended_action || item.publish_reason || item.verify_reason || '暂无更多信息' }}</p>
+          </div>
+          <div class="task-side">
+            <span>{{ formatTime(item.updated_at) }}</span>
+            <small>{{ item.model_id }}</small>
+          </div>
+        </article>
+        <p v-if="recentDeploymentFailures.length === 0" class="empty-text">当前没有最近部署失败记录。</p>
+      </div>
+    </section>
 
     <section class="panel card-shell">
       <div class="panel-head">
@@ -196,10 +246,10 @@
           v-model="traceId"
           class="input trace-input"
           type="text"
-          placeholder="输入 trace_id，例如 runtime-xxx / UUID"
+          placeholder="输入 trace_id，例如 runtime-xxx 或 UUID"
         />
         <button class="btn btn-primary" :disabled="replayingTrace || !traceId.trim()" @click="loadTraceReplay">
-          {{ replayingTrace ? "回放中…" : "回放轨迹" }}
+          {{ replayingTrace ? '回放中...' : '回放轨迹' }}
         </button>
       </div>
 
@@ -211,18 +261,18 @@
           <div class="trace-main">
             <div class="task-line">
               <strong>{{ traceStatusLabel(event.status || event.type) }}</strong>
-              <span class="status-pill" :data-status="event.status || event.type">{{ event.source || "runtime" }}</span>
+              <span class="status-pill" :data-status="event.status || event.type">{{ event.source || 'runtime' }}</span>
             </div>
             <div class="task-meta">
               <span>Trace：{{ event.trace_id || traceId }}</span>
               <span v-if="event.event_id">Event：{{ event.event_id }}</span>
               <span v-if="event.fallback_reason">回退：{{ event.fallback_reason }}</span>
             </div>
-            <p class="trace-message">{{ event.message || event.msg || event.answer || event.content || "无附加内容" }}</p>
+            <p class="trace-message">{{ event.message || event.msg || event.answer || event.content || '无附加内容' }}</p>
           </div>
           <div class="task-side">
             <span>{{ formatTime(event.timestamp || event.created_at) }}</span>
-            <small>{{ event.degraded ? "已降级" : "正常" }}</small>
+            <small>{{ event.degraded ? '已降级' : '正常' }}</small>
           </div>
         </article>
       </div>
@@ -232,19 +282,19 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue"
-import { adminApi } from "@/api/admin"
-import { useTasksStore } from "@/stores/tasks"
+import { computed, onMounted, ref } from 'vue'
+import { adminApi } from '@/api/admin'
+import { useTasksStore } from '@/stores/tasks'
 
 const tasksStore = useTasksStore()
-const traceId = ref("")
+const traceId = ref('')
 const traceEvents = ref<Record<string, any>[]>([])
 const replayingTrace = ref(false)
-const traceError = ref("")
+const traceError = ref('')
 
 const activePipelineJobs = computed(() =>
   tasksStore.pipelineJobs.filter((item) =>
-    ["queued", "parsing", "chunking", "indexing", "retrying", "failed", "partial_failed"].includes(item.status)
+    ['queued', 'parsing', 'chunking', 'indexing', 'retrying', 'failed', 'partial_failed'].includes(item.status)
   )
 )
 
@@ -252,38 +302,36 @@ const resumableCheckpointCount = computed(
   () => tasksStore.checkpointSummary.filter((item) => Boolean(item.resumable)).length
 )
 
+const recentDeploymentFailures = computed(() => tasksStore.deploymentSummary?.recent_failures || [])
+
 onMounted(() => {
-  if (!tasksStore.updatedAt) {
-    tasksStore.loadDashboard()
-    return
-  }
   tasksStore.loadDashboard()
 })
 
 async function loadTraceReplay() {
   replayingTrace.value = true
-  traceError.value = ""
+  traceError.value = ''
   traceEvents.value = []
   try {
     const response = await adminApi.replayRuntimeTrace(traceId.value.trim())
     traceEvents.value = response.events || []
     if (!traceEvents.value.length) {
-      traceError.value = "没有找到这条运行轨迹，或该轨迹不属于当前租户。"
+      traceError.value = '没有找到这条运行轨迹，或该轨迹不属于当前租户。'
     }
   } catch (caught: any) {
-    traceError.value = caught?.response?.data?.detail || "运行轨迹回放失败。"
+    traceError.value = caught?.response?.data?.detail || '运行轨迹回放失败。'
   } finally {
     replayingTrace.value = false
   }
 }
 
 function percent(value: number | null | undefined) {
-  if (value === null || value === undefined) return "-"
+  if (value === null || value === undefined) return '-'
   return `${(Number(value) * 100).toFixed(1)}%`
 }
 
 function formatTime(value: string | null | undefined) {
-  if (!value) return "-"
+  if (!value) return '-'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
   return date.toLocaleString()
@@ -291,40 +339,40 @@ function formatTime(value: string | null | undefined) {
 
 function statusLabel(status: string | null | undefined) {
   const map: Record<string, string> = {
-    pending: "待执行",
-    running: "运行中",
-    completed: "已完成",
-    failed: "失败",
-    killed: "已终止",
+    pending: '待执行',
+    running: '运行中',
+    completed: '已完成',
+    failed: '失败',
+    killed: '已终止',
   }
-  return map[status || ""] || (status || "未知")
+  return map[status || ''] || (status || '未知')
 }
 
 function pipelineStatusLabel(status: string | null | undefined) {
   const map: Record<string, string> = {
-    queued: "排队中",
-    parsing: "解析中",
-    chunking: "切块中",
-    indexing: "索引中",
-    retrying: "重试中",
-    failed: "失败",
-    partial_failed: "部分失败",
-    ready: "已完成",
+    queued: '排队中',
+    parsing: '解析中',
+    chunking: '切块中',
+    indexing: '索引中',
+    retrying: '重试中',
+    failed: '失败',
+    partial_failed: '部分失败',
+    ready: '已完成',
   }
-  return map[status || ""] || (status || "未知")
+  return map[status || ''] || (status || '未知')
 }
 
 function traceStatusLabel(status: string | null | undefined) {
   const map: Record<string, string> = {
-    thinking: "问题理解",
-    searching: "知识检索",
-    reading: "证据读取",
-    tool_call: "工具调用",
-    streaming: "回答生成",
-    done: "完成",
-    error: "失败",
+    thinking: '问题理解',
+    searching: '知识检索',
+    reading: '证据读取',
+    tool_call: '工具调用',
+    streaming: '回答生成',
+    done: '完成',
+    error: '失败',
   }
-  return map[status || ""] || (status || "运行事件")
+  return map[status || ''] || (status || '运行事件')
 }
 </script>
 
@@ -373,7 +421,7 @@ function traceStatusLabel(status: string | null | undefined) {
   margin-top: 8px;
   font-size: clamp(1.7rem, 1vw + 1.4rem, 2.35rem);
   line-height: 1.1;
-  font-family: "Manrope", "PingFang SC", "Microsoft YaHei UI", sans-serif;
+  font-family: 'Manrope', 'PingFang SC', 'Microsoft YaHei UI', sans-serif;
 }
 
 .tasks-copy {
@@ -391,12 +439,14 @@ function traceStatusLabel(status: string | null | undefined) {
 
 .summary-grid,
 .metric-grid,
-.tasks-layout {
+.tasks-layout,
+.deployment-grid {
   display: grid;
   gap: 14px;
 }
 
-.summary-grid {
+.summary-grid,
+.deployment-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
@@ -409,18 +459,21 @@ function traceStatusLabel(status: string | null | undefined) {
 }
 
 .summary-card,
-.metric-card {
+.metric-card,
+.deployment-card {
   padding: 18px 20px;
 }
 
 .summary-card span,
-.metric-card span {
+.metric-card span,
+.deployment-card span {
   color: var(--text-secondary);
   font-size: 13px;
 }
 
 .summary-card strong,
-.metric-card strong {
+.metric-card strong,
+.deployment-card strong {
   display: block;
   margin-top: 10px;
   font-size: 1.9rem;
@@ -429,6 +482,7 @@ function traceStatusLabel(status: string | null | undefined) {
 
 .summary-card small,
 .metric-card small,
+.deployment-card small,
 .panel-note {
   display: block;
   margin-top: 8px;
@@ -561,24 +615,25 @@ function traceStatusLabel(status: string | null | undefined) {
   color: var(--text-secondary);
 }
 
-.status-pill[data-status="running"],
-.status-pill[data-status="parsing"],
-.status-pill[data-status="chunking"],
-.status-pill[data-status="indexing"],
-.status-pill[data-status="retrying"] {
+.status-pill[data-status='running'],
+.status-pill[data-status='parsing'],
+.status-pill[data-status='chunking'],
+.status-pill[data-status='indexing'],
+.status-pill[data-status='retrying'] {
   color: #0f766e;
   border-color: rgba(15, 118, 110, 0.2);
 }
 
-.status-pill[data-status="completed"],
-.status-pill[data-status="ready"] {
+.status-pill[data-status='completed'],
+.status-pill[data-status='ready'] {
   color: #0f766e;
   border-color: rgba(15, 118, 110, 0.2);
 }
 
-.status-pill[data-status="failed"],
-.status-pill[data-status="partial_failed"],
-.status-pill[data-status="killed"] {
+.status-pill[data-status='failed'],
+.status-pill[data-status='partial_failed'],
+.status-pill[data-status='killed'],
+.status-pill[data-status='error'] {
   color: #b42318;
   border-color: rgba(217, 45, 32, 0.22);
   background: rgba(255, 244, 243, 0.76);
@@ -596,7 +651,8 @@ function traceStatusLabel(status: string | null | undefined) {
   }
 
   .tasks-layout,
-  .summary-grid {
+  .summary-grid,
+  .deployment-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -604,7 +660,8 @@ function traceStatusLabel(status: string | null | undefined) {
 @media (max-width: 768px) {
   .summary-grid,
   .metric-grid,
-  .tasks-layout {
+  .tasks-layout,
+  .deployment-grid {
     grid-template-columns: 1fr;
   }
 

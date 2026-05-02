@@ -1,4 +1,4 @@
-﻿"""Admin API - user management, analytics, pipeline, security, and evaluation."""
+"""Admin API - user management, analytics, pipeline, security, and evaluation."""
 
 from __future__ import annotations
 
@@ -717,6 +717,9 @@ async def get_llm_training_summary(
 
     effective_tenant = tenant_id or current_user.tenant_id
     service = LLMTrainingService(db, redis_client=get_redis(), reports_dir=REPORTS_DIR)
+    models = await service.list_models(effective_tenant, limit=max(limit, 1))
+    if await service.reconcile_model_registry_states(effective_tenant, models):
+        await db.commit()
     summary = await service.summarize_rollout(effective_tenant, limit=max(limit, 1))
     return summary
 
@@ -732,7 +735,25 @@ async def get_llm_deployment_summary(
 
     effective_tenant = tenant_id or current_user.tenant_id
     service = LLMTrainingService(db, redis_client=get_redis(), reports_dir=REPORTS_DIR)
+    models = await service.list_models(effective_tenant, limit=max(limit, 1))
+    if await service.reconcile_model_registry_states(effective_tenant, models):
+        await db.commit()
     return await service.summarize_deployment(effective_tenant, limit=max(limit, 1))
+
+
+@router.get("/llm/training/deployment")
+async def get_llm_training_deployment_alias(
+    tenant_id: str | None = None,
+    limit: int = 20,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    return await get_llm_deployment_summary(
+        tenant_id=tenant_id,
+        limit=limit,
+        current_user=current_user,
+        db=db,
+    )
 
 
 @router.get("/llm/training/jobs/{job_id}")
@@ -913,6 +934,41 @@ async def publish_llm_model(
         )
 
     return response
+
+
+@router.post("/llm/models/retry-failed-publishes")
+async def retry_failed_llm_model_publishes(
+    tenant_id: str | None = None,
+    limit: int = 10,
+    verify: bool = True,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.llm_training_service import LLMTrainingService
+    from app.services.security_audit_service import SecurityAuditService
+
+    effective_tenant = tenant_id or current_user.tenant_id
+    redis_client = get_redis()
+    service = LLMTrainingService(db, redis_client=redis_client, reports_dir=REPORTS_DIR)
+    payload = await service.retry_failed_publications(
+        tenant_id=effective_tenant,
+        limit=max(limit, 1),
+        verify=bool(verify),
+    )
+    await SecurityAuditService(redis_client, db).log_event(
+        effective_tenant,
+        "llm_model_batch_republish",
+        "medium",
+        f"管理员批量重试模型发布，共尝试 {payload.get('attempted_count', 0)} 个模型",
+        user_id=current_user.id,
+        result="ok",
+        metadata={
+            "attempted_count": payload.get("attempted_count", 0),
+            "skipped_count": payload.get("skipped_count", 0),
+            "models": [item.get("model_id") for item in payload.get("attempted", [])],
+        },
+    )
+    return payload
 
 
 @router.post("/llm/models/rollback")

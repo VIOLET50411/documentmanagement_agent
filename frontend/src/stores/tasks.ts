@@ -13,6 +13,7 @@ export const useTasksStore = defineStore("tasks", () => {
   const checkpointSummary = ref<GenericRecord[]>([])
   const runtimeMetrics = ref<GenericRecord | null>(null)
   const trainingSummary = ref<GenericRecord | null>(null)
+  const deploymentSummary = ref<GenericRecord | null>(null)
   const updatedAt = ref("")
 
   async function loadDashboard() {
@@ -26,6 +27,7 @@ export const useTasksStore = defineStore("tasks", () => {
         checkpointSummaryRes,
         runtimeMetricsRes,
         trainingSummaryRes,
+        deploymentSummaryRes,
       ] = await Promise.all([
         adminApi.getRuntimeTasks(30, 0),
         adminApi.getPipelineJobs({ limit: 20, offset: 0 }),
@@ -33,6 +35,7 @@ export const useTasksStore = defineStore("tasks", () => {
         adminApi.getRuntimeCheckpointSummary(20),
         adminApi.getRuntimeMetrics(120),
         adminApi.getLLMTrainingSummary(100),
+        adminApi.getLLMDeploymentSummary(20),
       ])
 
       runtimeTasks.value = runtimeTasksRes.items || []
@@ -41,6 +44,7 @@ export const useTasksStore = defineStore("tasks", () => {
       checkpointSummary.value = checkpointSummaryRes.items || []
       runtimeMetrics.value = runtimeMetricsRes || null
       trainingSummary.value = trainingSummaryRes || null
+      deploymentSummary.value = deploymentSummaryRes || null
       updatedAt.value = new Date().toISOString()
     } catch (caught: any) {
       error.value = caught?.response?.data?.detail || "加载任务中心失败。"
@@ -58,6 +62,7 @@ export const useTasksStore = defineStore("tasks", () => {
     checkpointSummary,
     runtimeMetrics,
     trainingSummary,
+    deploymentSummary,
     updatedAt,
     loadDashboard,
   }

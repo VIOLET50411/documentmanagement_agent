@@ -30,10 +30,12 @@ class LLMTrainingService:
         ("training_plan_only_result", "plan_only_result", False, "当前训练执行器仅返回计划结果，需要切换到真实训练运行时"),
         ("publish_command_failed", "publish_command_failed", True, "检查发布命令、Ollama 挂载路径与模型目录"),
         ("artifact_dir_missing", "artifact_missing", False, "检查训练产物目录是否生成并已挂载"),
+        ("adapter_dir_missing", "artifact_missing", False, "检查适配器目录是否完整导出并已挂载"),
         ("adapter_manifest_missing", "artifact_manifest_missing", False, "检查训练产物是否完整导出 adapter_manifest.json"),
         ("unsupported_ollama_adapter_base_model", "unsupported_base_model", False, "切换到受支持的基座模型或启用 merged model 导出"),
         ("all_health_checks_failed", "serving_verification_failed", True, "检查推理服务健康探针、网络连通性与模型注册状态"),
     )
+    ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
     def __init__(self, db: AsyncSession, redis_client=None, reports_dir: str | Path | None = None):
         self.db = db
@@ -348,9 +350,12 @@ class LLMTrainingService:
         publish_counts = {"published": 0, "publish_ready": 0, "failed": 0, "unknown": 0}
         verify_counts = {"verified": 0, "failed": 0, "unknown": 0}
         failure_category_counts: dict[str, int] = {}
+        recommendation_counts: dict[str, int] = {}
         recent_failures: list[dict[str, Any]] = []
         latest_job = jobs[0] if jobs else None
         latest_model = models[0] if models else None
+        recoverable_failure_count = 0
+        non_recoverable_failure_count = 0
 
         for job in jobs:
             result_payload = self._load_json(getattr(job, "result_json", None))
@@ -386,14 +391,21 @@ class LLMTrainingService:
                 failure_category = self.classify_failure(
                     str(publish_result.get("reason") or verify_result.get("reason") or verify_result.get("message") or "")
                 )
+                if failure_category["recoverable"]:
+                    recoverable_failure_count += 1
+                else:
+                    non_recoverable_failure_count += 1
                 failure_category_counts[failure_category["category"]] = failure_category_counts.get(failure_category["category"], 0) + 1
+                recommendation = str(failure_category.get("recommended_action") or "").strip()
+                if recommendation:
+                    recommendation_counts[recommendation] = recommendation_counts.get(recommendation, 0) + 1
                 recent_failures.append(
                     {
                         "model_id": model.id,
                         "model_name": model.model_name,
                         "status": model.status,
                         "publish_reason": publish_result.get("reason"),
-                        "verify_reason": verify_result.get("reason") or verify_result.get("message"),
+                        "verify_reason": self._sanitize_terminal_output(verify_result.get("reason") or verify_result.get("message")),
                         "failure_category": failure_category["category"],
                         "recoverable": failure_category["recoverable"],
                         "recommended_action": failure_category["recommended_action"],
@@ -410,12 +422,66 @@ class LLMTrainingService:
             "publish_counts": publish_counts,
             "verify_counts": verify_counts,
             "failure_category_counts": failure_category_counts,
+            "recoverable_failure_count": recoverable_failure_count,
+            "non_recoverable_failure_count": non_recoverable_failure_count,
+            "top_recommendations": [
+                {"action": action, "count": count}
+                for action, count in sorted(recommendation_counts.items(), key=lambda item: (-item[1], item[0]))[:5]
+            ],
             "can_rollback": bool(previous_active and previous_active.get("model_id")),
             "recent_failures": recent_failures[:10],
             "auto_activate_enabled": bool(settings.llm_training_auto_activate),
             "publish_enabled": bool(settings.llm_training_publish_enabled),
             "deploy_verify_enabled": bool(settings.llm_training_deploy_verify_enabled),
             "deploy_fail_rollback": bool(settings.llm_training_deploy_fail_rollback),
+        }
+
+    async def retry_failed_publications(
+        self,
+        *,
+        tenant_id: str,
+        limit: int = 10,
+        verify: bool = True,
+    ) -> dict[str, Any]:
+        models = await self.list_models(tenant_id, limit=max(limit * 5, 20))
+        attempted: list[dict[str, Any]] = []
+        skipped: list[dict[str, Any]] = []
+
+        for model in models:
+            if len(attempted) >= max(limit, 1):
+                break
+            metrics = self._load_json(getattr(model, "metrics_json", None))
+            publish_result = metrics.get("publish_result") if isinstance(metrics.get("publish_result"), dict) else {}
+            if publish_result.get("published") is True or str(getattr(model, "status", "")).strip().lower() in {"published", "active", "verified"}:
+                continue
+            failure = self.classify_failure(str(publish_result.get("reason") or publish_result.get("message") or ""))
+            if not failure.get("recoverable"):
+                skipped.append(
+                    {
+                        "model_id": model.id,
+                        "model_name": model.model_name,
+                        "reason": failure.get("category"),
+                        "recoverable": False,
+                    }
+                )
+                continue
+
+            publish_outcome = await self.publish_model_artifact(tenant_id=tenant_id, model_id=model.id)
+            item: dict[str, Any] = {
+                "model_id": model.id,
+                "model_name": model.model_name,
+                "publish_result": publish_outcome,
+            }
+            if verify and publish_outcome.get("published"):
+                item["verify_result"] = await self.verify_model_serving(tenant_id=tenant_id, model_id=model.id)
+            attempted.append(item)
+
+        return {
+            "tenant_id": tenant_id,
+            "attempted_count": len(attempted),
+            "skipped_count": len(skipped),
+            "attempted": attempted,
+            "skipped": skipped[:20],
         }
 
     def classify_failure(self, error_message: str | None) -> dict[str, Any]:
@@ -819,8 +885,8 @@ class LLMTrainingService:
             stderr=asyncio.subprocess.PIPE,
         )
         stdout_raw, stderr_raw = await process.communicate()
-        stdout_text = stdout_raw.decode("utf-8", errors="replace").strip()
-        stderr_text = stderr_raw.decode("utf-8", errors="replace").strip()
+        stdout_text = self._sanitize_terminal_output(stdout_raw.decode("utf-8", errors="replace").strip())
+        stderr_text = self._sanitize_terminal_output(stderr_raw.decode("utf-8", errors="replace").strip())
         if process.returncode != 0:
             error_message = stderr_text or stdout_text or f"发布命令退出码 {process.returncode}"
             if "no Modelfile or safetensors files found" in error_message and "ollama" in command_template.lower():
@@ -880,12 +946,13 @@ class LLMTrainingService:
     async def _record_publish_outcome(self, model: LLMModelRegistry, payload: dict[str, Any]) -> dict[str, Any]:
         model.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         metrics = self._load_json(model.metrics_json)
-        metrics["publish_result"] = payload
+        sanitized_payload = self._sanitize_publish_payload(payload)
+        metrics["publish_result"] = sanitized_payload
         model.metrics_json = json.dumps(metrics, ensure_ascii=False)
-        if payload.get("message"):
-            model.notes = str(payload.get("message"))[:2000]
+        if sanitized_payload.get("message"):
+            model.notes = str(sanitized_payload.get("message"))[:2000]
         await self.db.flush()
-        return payload
+        return sanitized_payload
 
     async def _record_verify_outcome(self, model: LLMModelRegistry, payload: dict[str, Any]) -> dict[str, Any]:
         model.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -1000,6 +1067,21 @@ class LLMTrainingService:
         if raw.endswith("/v1"):
             return raw[:-3]
         return raw.rstrip("/")
+
+    def _sanitize_publish_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        sanitized = dict(payload)
+        for key in ("message", "stdout", "stderr"):
+            value = sanitized.get(key)
+            if value is not None:
+                sanitized[key] = self._sanitize_terminal_output(value)
+        return sanitized
+
+    def _sanitize_terminal_output(self, value: Any) -> str:
+        text = str(value or "")
+        text = self.ANSI_ESCAPE_RE.sub("", text)
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        text = "\n".join(line.rstrip() for line in text.splitlines())
+        return text.strip()
 
     def _infer_inactive_model_status(self, model: LLMModelRegistry) -> str:
         metrics = self._load_json(getattr(model, "metrics_json", None))

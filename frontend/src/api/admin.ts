@@ -155,4 +155,8 @@ export const adminApi = {
   getLLMTrainingSummary(limit = 100, tenantId?: string) {
     return apiGet("/admin/llm/training/summary", { params: { limit, tenant_id: tenantId } })
   },
+
+  getLLMDeploymentSummary(limit = 20, tenantId?: string) {
+    return apiGet("/admin/llm/deployment/summary", { params: { limit, tenant_id: tenantId } })
+  },
 }

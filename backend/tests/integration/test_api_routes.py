@@ -1016,6 +1016,15 @@ async def test_admin_llm_training_summary_route(api_client: AsyncClient, monkeyp
     app.dependency_overrides[get_db] = override_db
     monkeypatch.setattr(admin_module, "get_redis", lambda: fake_redis)
 
+    async def fake_list_models(self, tenant_id: str, limit: int = 100):
+        assert tenant_id == "tenant-1"
+        assert limit == 100
+        return []
+
+    async def fake_reconcile(self, tenant_id: str, models=None):
+        assert tenant_id == "tenant-1"
+        return False
+
     async def fake_summary(self, tenant_id: str, *, limit: int = 100):
         assert tenant_id == "tenant-1"
         assert limit == 100
@@ -1032,6 +1041,8 @@ async def test_admin_llm_training_summary_route(api_client: AsyncClient, monkeyp
             "deploy_fail_rollback": True,
         }
 
+    monkeypatch.setattr(LLMTrainingService, "list_models", fake_list_models)
+    monkeypatch.setattr(LLMTrainingService, "reconcile_model_registry_states", fake_reconcile)
     monkeypatch.setattr(LLMTrainingService, "summarize_rollout", fake_summary)
 
     response = await api_client.get("/api/v1/admin/llm/training/summary")
@@ -1070,6 +1081,15 @@ async def test_admin_llm_deployment_summary_route(api_client: AsyncClient, monke
     app.dependency_overrides[get_current_user] = override_current_user
     app.dependency_overrides[get_db] = override_db
 
+    async def fake_list_models(self, tenant_id: str, limit: int = 20):
+        assert tenant_id == "tenant-1"
+        assert limit == 20
+        return []
+
+    async def fake_reconcile(self, tenant_id: str, models=None):
+        assert tenant_id == "tenant-1"
+        return False
+
     async def fake_summary(self, tenant_id: str, *, limit: int = 20):
         assert tenant_id == "tenant-1"
         assert limit == 20
@@ -1089,6 +1109,8 @@ async def test_admin_llm_deployment_summary_route(api_client: AsyncClient, monke
             "deploy_fail_rollback": True,
         }
 
+    monkeypatch.setattr(LLMTrainingService, "list_models", fake_list_models)
+    monkeypatch.setattr(LLMTrainingService, "reconcile_model_registry_states", fake_reconcile)
     monkeypatch.setattr(LLMTrainingService, "summarize_deployment", fake_summary)
 
     response = await api_client.get("/api/v1/admin/llm/deployment/summary")
@@ -1097,6 +1119,64 @@ async def test_admin_llm_deployment_summary_route(api_client: AsyncClient, monke
     payload = response.json()
     assert payload["publish_counts"]["published"] == 1
     assert payload["verify_counts"]["verified"] == 1
+    assert payload["can_rollback"] is True
+
+
+@pytest.mark.asyncio
+async def test_admin_llm_training_deployment_alias_route(api_client: AsyncClient, monkeypatch):
+    current_user = SimpleNamespace(
+        id="user-1",
+        username="admin_demo",
+        email="admin@example.com",
+        role="ADMIN",
+        department="operations",
+        tenant_id="tenant-1",
+        level=9,
+        email_verified=True,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    async def override_current_user():
+        return current_user
+
+    async def override_db():
+        yield DummyDB()
+
+    from app.dependencies import get_db
+    from app.services.llm_training_service import LLMTrainingService
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_db] = override_db
+
+    async def fake_list_models(self, tenant_id: str, limit: int = 20):
+        assert tenant_id == "tenant-1"
+        assert limit == 20
+        return []
+
+    async def fake_reconcile(self, tenant_id: str, models=None):
+        assert tenant_id == "tenant-1"
+        return False
+
+    async def fake_summary(self, tenant_id: str, *, limit: int = 20):
+        assert tenant_id == "tenant-1"
+        assert limit == 20
+        return {
+            "tenant_id": tenant_id,
+            "publish_counts": {"published": 2, "publish_ready": 1, "failed": 0, "unknown": 0},
+            "verify_counts": {"verified": 2, "failed": 0, "unknown": 0},
+            "can_rollback": True,
+        }
+
+    monkeypatch.setattr(LLMTrainingService, "list_models", fake_list_models)
+    monkeypatch.setattr(LLMTrainingService, "reconcile_model_registry_states", fake_reconcile)
+    monkeypatch.setattr(LLMTrainingService, "summarize_deployment", fake_summary)
+
+    response = await api_client.get("/api/v1/admin/llm/training/deployment")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["publish_counts"]["published"] == 2
+    assert payload["verify_counts"]["verified"] == 2
     assert payload["can_rollback"] is True
 
 

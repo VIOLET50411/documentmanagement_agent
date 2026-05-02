@@ -417,6 +417,99 @@ async def test_publish_model_artifact_reports_missing_artifact_dir(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_publish_model_artifact_sanitizes_ansi_sequences(tmp_path: Path, monkeypatch):
+    service = LLMTrainingService(FakeDB(), redis_client=None)
+    artifact_dir = tmp_path / "artifact"
+    adapter_dir = artifact_dir / "adapter"
+    adapter_dir.mkdir(parents=True)
+    (artifact_dir / "adapter_manifest.json").write_text(
+        '{"hf_base_model":"meta-llama/Llama-3.1-8B-Instruct","adapter_dir":"'
+        + str(adapter_dir).replace("\\", "/")
+        + '"}',
+        encoding="utf-8",
+    )
+    (artifact_dir / "Modelfile").write_text("FROM llama3.1:8b\nADAPTER ./adapter\n", encoding="utf-8")
+    model = SimpleNamespace(
+        id="model-1",
+        tenant_id="tenant-1",
+        artifact_dir=str(artifact_dir),
+        model_name="tenant-model",
+        base_model="llama3.1:8b",
+        serving_base_url="http://ollama:11434/v1",
+        serving_model_name="llama3.1:8b",
+        provider="openai-compatible",
+        status="registered",
+        updated_at=None,
+        metrics_json="{}",
+        notes=None,
+    )
+
+    async def fake_get_model(tenant_id: str, model_id: str):
+        return model
+
+    class FakeProcess:
+        returncode = 1
+
+        async def communicate(self):
+            return (b"", b"\x1b[?2026hError: no Modelfile or safetensors files found\x1b[?25l")
+
+    async def fake_create_subprocess_shell(command, cwd=None, env=None, stdout=None, stderr=None):
+        return FakeProcess()
+
+    monkeypatch.setattr(service, "get_model", fake_get_model)
+    monkeypatch.setattr(settings, "llm_training_publish_enabled", True)
+    monkeypatch.setattr(settings, "llm_training_publish_command", "ollama create {target_model_name} -f {modelfile_path}")
+    monkeypatch.setattr("app.services.llm_training_service.shutil.which", lambda name: "/usr/bin/ollama" if name == "ollama" else None)
+    monkeypatch.setattr("app.services.llm_training_service.asyncio.create_subprocess_shell", fake_create_subprocess_shell)
+
+    result = await service.publish_model_artifact(tenant_id="tenant-1", model_id="model-1")
+
+    assert "\x1b" not in result["message"]
+    assert "\x1b" not in (model.notes or "")
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_publications_retries_only_recoverable_models(monkeypatch):
+    service = LLMTrainingService(FakeDB(), redis_client=None)
+    recoverable = SimpleNamespace(
+        id="model-retry",
+        model_name="tenant-model-retry",
+        status="registered",
+        metrics_json='{"publish_result":{"published":false,"reason":"publish_command_failed","message":"failed"}}',
+    )
+    skipped = SimpleNamespace(
+        id="model-skip",
+        model_name="tenant-model-skip",
+        status="registered",
+        metrics_json='{"publish_result":{"published":false,"reason":"unsupported_ollama_adapter_base_model","message":"unsupported"}}',
+    )
+
+    async def fake_list_models(tenant_id: str, limit: int = 50):
+        assert tenant_id == "tenant-1"
+        return [recoverable, skipped]
+
+    async def fake_publish_model_artifact(*, tenant_id: str, model_id: str):
+        assert tenant_id == "tenant-1"
+        assert model_id == "model-retry"
+        return {"published": True, "publish_ready": True, "reason": "published", "message": "ok"}
+
+    async def fake_verify_model_serving(*, tenant_id: str, model_id: str):
+        return {"ok": True, "reason": "verified"}
+
+    monkeypatch.setattr(service, "list_models", fake_list_models)
+    monkeypatch.setattr(service, "publish_model_artifact", fake_publish_model_artifact)
+    monkeypatch.setattr(service, "verify_model_serving", fake_verify_model_serving)
+
+    result = await service.retry_failed_publications(tenant_id="tenant-1", limit=5, verify=True)
+
+    assert result["attempted_count"] == 1
+    assert result["skipped_count"] == 1
+    assert result["attempted"][0]["model_id"] == "model-retry"
+    assert result["attempted"][0]["verify_result"]["ok"] is True
+    assert result["skipped"][0]["model_id"] == "model-skip"
+
+
+@pytest.mark.asyncio
 async def test_summarize_rollout_aggregates_jobs_models_and_rollback(monkeypatch):
     redis_client = FakeRedis()
     redis_client.data["llm:active_model:tenant-1"] = '{"model_id":"model-active","tenant_id":"tenant-1","model":"tenant-model-active"}'
@@ -500,6 +593,92 @@ async def test_summarize_rollout_aggregates_jobs_models_and_rollback(monkeypatch
     assert summary["executor_runtime"]["command_source"] == "builtin"
     assert summary["active_model"]["model_id"] == "model-active"
     assert summary["previous_active_model"]["model_id"] == "model-prev"
+
+
+@pytest.mark.asyncio
+async def test_summarize_deployment_aggregates_failure_recoverability(monkeypatch):
+    redis_client = FakeRedis()
+    redis_client.data["llm:active_model:tenant-1"] = '{"model_id":"model-active","tenant_id":"tenant-1","model":"tenant-model-active"}'
+    service = LLMTrainingService(FakeDB(), redis_client=redis_client)
+
+    jobs = [
+        SimpleNamespace(
+            id="job-1",
+            dataset_name="dataset-a",
+            status="completed",
+            stage="completed",
+            target_model_name="tenant-model-a",
+            runtime_task_id="task-1",
+            activated_model_id="model-ok",
+            result_json='{"deployment_verification":{"ok":true,"reason":"verified"}}',
+            updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        )
+    ]
+    models = [
+        SimpleNamespace(
+            id="model-ok",
+            model_name="tenant-model-active",
+            status="active",
+            is_active=True,
+            canary_percent=0,
+            provider="ollama",
+            metrics_json='{"publish_result":{"published":true},"verify_result":{"ok":true,"reason":"verified"}}',
+            updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        ),
+        SimpleNamespace(
+            id="model-recoverable",
+            model_name="tenant-model-recoverable",
+            status="registered",
+            is_active=False,
+            canary_percent=0,
+            provider="openai-compatible",
+            metrics_json='{"publish_result":{"published":false,"reason":"publish_command_failed","message":"failed"}}',
+            updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        ),
+        SimpleNamespace(
+            id="model-nonrecoverable",
+            model_name="tenant-model-nonrecoverable",
+            status="registered",
+            is_active=False,
+            canary_percent=0,
+            provider="openai-compatible",
+            metrics_json='{"publish_result":{"published":false,"reason":"unsupported_ollama_adapter_base_model","message":"unsupported"}}',
+            updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        ),
+    ]
+
+    async def fake_list_jobs(tenant_id: str, limit: int = 20):
+        assert tenant_id == "tenant-1"
+        return jobs
+
+    async def fake_list_models(tenant_id: str, limit: int = 20):
+        assert tenant_id == "tenant-1"
+        return models
+
+    monkeypatch.setattr(service, "list_jobs", fake_list_jobs)
+    monkeypatch.setattr(service, "list_models", fake_list_models)
+
+    summary = await service.summarize_deployment("tenant-1", limit=20)
+
+    assert summary["publish_counts"]["published"] == 1
+    assert summary["publish_counts"]["failed"] == 2
+    assert summary["verify_counts"]["verified"] == 1
+    assert summary["recoverable_failure_count"] == 1
+    assert summary["non_recoverable_failure_count"] == 1
+    assert summary["failure_category_counts"]["publish_command_failed"] == 1
+    assert summary["failure_category_counts"]["unsupported_base_model"] == 1
+    assert summary["top_recommendations"][0]["count"] == 1
+    assert summary["recent_failures"][0]["model_id"] in {"model-recoverable", "model-nonrecoverable"}
+
+
+@pytest.mark.asyncio
+async def test_classify_failure_maps_adapter_dir_missing():
+    service = LLMTrainingService(FakeDB(), redis_client=None)
+
+    failure = service.classify_failure("adapter_dir_missing")
+
+    assert failure["category"] == "artifact_missing"
+    assert failure["recoverable"] is False
 
 
 @pytest.mark.asyncio
