@@ -23,6 +23,12 @@ export interface ChatRuntimeEvent {
   status: string
   message: string
   timestamp: string
+  eventId?: string
+  sequenceNum?: number
+  traceId?: string
+  source?: string
+  degraded?: boolean
+  fallbackReason?: string | null
 }
 
 export const useChatStore = defineStore("chat", () => {
@@ -129,26 +135,46 @@ export const useChatStore = defineStore("chat", () => {
     }
   }
 
-  function setStreamState(status: string, message = "") {
+  function setStreamState(
+    status: string,
+    message = "",
+    meta: Partial<Pick<ChatRuntimeEvent, "eventId" | "sequenceNum" | "traceId" | "source" | "degraded" | "fallbackReason">> = {}
+  ) {
     streamStatus.value = status
     streamStatusMsg.value = message
     isStreaming.value = !["done", "error", ""].includes(status)
     if (["thinking", "searching", "reading", "tool_call", "error"].includes(status)) {
-      appendRuntimeEvent(status, message || defaultRuntimeMessage(status))
+      appendRuntimeEvent(status, message || defaultRuntimeMessage(status), meta)
     }
   }
 
-  function appendRuntimeEvent(status: string, message: string) {
+  function appendRuntimeEvent(
+    status: string,
+    message: string,
+    meta: Partial<Pick<ChatRuntimeEvent, "eventId" | "sequenceNum" | "traceId" | "source" | "degraded" | "fallbackReason">> = {}
+  ) {
     const normalized = message.trim()
     const last = runtimeEvents.value[runtimeEvents.value.length - 1]
-    if (last && last.status === status && last.message === normalized) {
+    if (
+      last &&
+      last.status === status &&
+      last.message === normalized &&
+      last.traceId === meta.traceId &&
+      last.sequenceNum === meta.sequenceNum
+    ) {
       return
     }
     runtimeEvents.value.push({
-      id: `${status}-${Date.now()}-${runtimeEvents.value.length}`,
+      id: meta.eventId || `${status}-${Date.now()}-${runtimeEvents.value.length}`,
       status,
       message: normalized,
       timestamp: new Date().toISOString(),
+      eventId: meta.eventId,
+      sequenceNum: meta.sequenceNum,
+      traceId: meta.traceId,
+      source: meta.source,
+      degraded: meta.degraded,
+      fallbackReason: meta.fallbackReason,
     })
   }
 

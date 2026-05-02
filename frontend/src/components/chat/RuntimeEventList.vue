@@ -14,23 +14,31 @@
 
     <transition name="runtime-collapse">
       <div v-if="expanded" class="runtime-list">
-      <article
-        v-for="event in events"
-        :key="event.id"
-        class="runtime-card"
-        :data-status="event.status"
-      >
-        <div class="runtime-card-head">
-          <div class="runtime-card-label">
-            <span class="runtime-icon">{{ statusIcon(event.status) }}</span>
-            <strong>{{ statusLabel(event.status) }}</strong>
-          </div>
-          <span class="runtime-time">
-            {{ isActiveEvent(event) ? "进行中" : formatTime(event.timestamp) }}
-          </span>
-        </div>
-        <p class="runtime-message">{{ event.message }}</p>
-      </article>
+        <template v-for="event in events" :key="event.id">
+          <ToolCallBlock v-if="event.status === 'tool_call'" :event="event" />
+          <article
+            v-else
+            class="runtime-card"
+            :data-status="event.status"
+          >
+            <div class="runtime-card-head">
+              <div class="runtime-card-label">
+                <span class="runtime-icon">{{ statusIcon(event.status) }}</span>
+                <strong>{{ statusLabel(event.status) }}</strong>
+              </div>
+              <span class="runtime-time">
+                {{ isActiveEvent(event) ? "进行中" : formatTime(event.timestamp) }}
+              </span>
+            </div>
+            <p class="runtime-message">{{ event.message }}</p>
+            <div class="runtime-meta">
+              <span v-if="event.source">{{ event.source }}</span>
+              <span v-if="event.sequenceNum">#{{ event.sequenceNum }}</span>
+              <span v-if="event.traceId">Trace：{{ event.traceId }}</span>
+            </div>
+            <FallbackNotice :event="event" />
+          </article>
+        </template>
       </div>
     </transition>
   </div>
@@ -39,6 +47,8 @@
 <script setup lang="ts">
 import { computed, ref } from "vue"
 import type { ChatRuntimeEvent } from "@/stores/chat"
+import FallbackNotice from "./FallbackNotice.vue"
+import ToolCallBlock from "./ToolCallBlock.vue"
 
 const props = defineProps<{
   events: ChatRuntimeEvent[]
@@ -252,6 +262,15 @@ function formatTime(value: string) {
   color: var(--text-secondary);
   font-size: 14px;
   line-height: 1.65;
+}
+
+.runtime-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+  color: var(--text-tertiary);
+  font-size: 12px;
 }
 
 .runtime-collapse-enter-active,

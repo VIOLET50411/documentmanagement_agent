@@ -7,30 +7,30 @@
           <p class="inspect-copy">把工具治理、检查点恢复和轨迹回放放到同一处，便于排查请求链路、降级点和失败原因。</p>
         </div>
         <div class="action-group">
-          <button class="refresh-btn" @click="loadRuntimeToolDecisionSummary" :disabled="dashboard.loadingRuntimeToolSummary">
-            {{ dashboard.loadingRuntimeToolSummary ? "加载中..." : "刷新工具统计" }}
+          <button class="refresh-btn" @click="runtimeStore.loadToolDecisionSummary()" :disabled="runtimeStore.loadingToolSummary">
+            {{ runtimeStore.loadingToolSummary ? "加载中..." : "刷新工具统计" }}
           </button>
-          <button class="refresh-btn" @click="loadRuntimeCheckpointSummary" :disabled="dashboard.loadingRuntimeCheckpointSummary">
-            {{ dashboard.loadingRuntimeCheckpointSummary ? "加载中..." : "刷新检查点" }}
+          <button class="refresh-btn" @click="runtimeStore.loadCheckpointSummary()" :disabled="runtimeStore.loadingCheckpointSummary">
+            {{ runtimeStore.loadingCheckpointSummary ? "加载中..." : "刷新检查点" }}
           </button>
         </div>
       </div>
 
       <div class="stats-grid pipeline-grid">
         <div class="stat-card card compact">
-          <span class="stat-value small">{{ dashboard.runtimeToolDecisionSummary?.total ?? 0 }}</span>
+          <span class="stat-value small">{{ runtimeStore.toolDecisionSummary?.total ?? 0 }}</span>
           <span class="stat-label">决策总数</span>
         </div>
         <div class="stat-card card compact">
-          <span class="stat-value small">{{ dashboard.runtimeToolDecisionSummary?.decision_counts?.allow ?? 0 }}</span>
+          <span class="stat-value small">{{ runtimeStore.toolDecisionSummary?.decision_counts?.allow ?? 0 }}</span>
           <span class="stat-label">allow</span>
         </div>
         <div class="stat-card card compact">
-          <span class="stat-value small">{{ dashboard.runtimeToolDecisionSummary?.decision_counts?.ask ?? 0 }}</span>
+          <span class="stat-value small">{{ runtimeStore.toolDecisionSummary?.decision_counts?.ask ?? 0 }}</span>
           <span class="stat-label">ask</span>
         </div>
         <div class="stat-card card compact">
-          <span class="stat-value small">{{ dashboard.runtimeToolDecisionSummary?.decision_counts?.deny ?? 0 }}</span>
+          <span class="stat-value small">{{ runtimeStore.toolDecisionSummary?.decision_counts?.deny ?? 0 }}</span>
           <span class="stat-label">deny</span>
         </div>
       </div>
@@ -41,7 +41,7 @@
             <h3>按工具统计</h3>
             <p>按工具观察 allow / ask / deny 分布。</p>
           </div>
-          <table v-if="runtimeToolMatrixRows.length" class="data-table">
+          <table v-if="runtimeStore.toolMatrixRows.length" class="data-table">
             <thead>
               <tr>
                 <th>工具</th>
@@ -51,7 +51,7 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="row in runtimeToolMatrixRows" :key="row.tool_name">
+              <tr v-for="row in runtimeStore.toolMatrixRows" :key="row.tool_name">
                 <td>{{ row.tool_name }}</td>
                 <td>{{ row.allow ?? 0 }}</td>
                 <td>{{ row.ask ?? 0 }}</td>
@@ -67,8 +67,8 @@
             <h3>检查点恢复摘要</h3>
             <p>查看最近可恢复的 session 节点与意图。</p>
           </div>
-          <div v-if="dashboard.runtimeCheckpointSummary?.length" class="checkpoint-list">
-            <article v-for="row in dashboard.runtimeCheckpointSummary" :key="row.session_id" class="checkpoint-card">
+          <div v-if="runtimeStore.checkpointSummary?.length" class="checkpoint-list">
+            <article v-for="row in runtimeStore.checkpointSummary" :key="row.session_id" class="checkpoint-card">
               <div class="checkpoint-head">
                 <strong>{{ row.session_id }}</strong>
                 <span class="badge badge-primary">{{ row.resumable ? "可恢复" : "待补齐" }}</span>
@@ -91,19 +91,19 @@
 
         <div class="trace-toolbar">
           <input
-            v-model="dashboard.runtimeReplayTraceId"
+            v-model="runtimeStore.replayTraceId"
             class="input"
             type="text"
             placeholder="请输入 trace_id"
           />
-          <button class="btn btn-primary" @click="loadRuntimeReplay" :disabled="dashboard.loadingRuntimeReplay">
-            {{ dashboard.loadingRuntimeReplay ? "回放中..." : "回放轨迹" }}
+          <button class="btn btn-primary" @click="runtimeStore.loadReplay()" :disabled="runtimeStore.loadingReplay">
+            {{ runtimeStore.loadingReplay ? "回放中..." : "回放轨迹" }}
           </button>
         </div>
 
-        <div v-if="dashboard.runtimeReplay?.length" class="trace-list">
+        <div v-if="runtimeStore.replayEvents?.length" class="trace-list">
           <article
-            v-for="(event, index) in dashboard.runtimeReplay"
+            v-for="(event, index) in runtimeStore.replayEvents"
             :key="`${event.event_id || event.sequence_num || index}`"
             class="trace-row"
           >
@@ -115,7 +115,7 @@
               </div>
               <p class="trace-meta">
                 <span>event_id：{{ event.event_id || "-" }}</span>
-                <span>trace：{{ event.trace_id || dashboard.runtimeReplayTraceId }}</span>
+                <span>trace：{{ event.trace_id || runtimeStore.replayTraceId }}</span>
                 <span v-if="event.degraded">已降级</span>
               </p>
               <p class="trace-message">{{ event.message || event.msg || event.answer || event.content || "无附加内容" }}</p>
@@ -130,14 +130,23 @@
 </template>
 
 <script setup lang="ts">
+import { onMounted } from "vue"
+import { useRuntimeStore } from "@/stores/runtime"
+
 defineProps<{
-  dashboard: Record<string, any>
-  runtimeToolMatrixRows: Record<string, any>[]
-  loadRuntimeToolDecisionSummary: () => Promise<void>
-  loadRuntimeCheckpointSummary: () => Promise<void>
-  loadRuntimeReplay: () => Promise<void>
   formatDate: (value?: string | null) => string
 }>()
+
+const runtimeStore = useRuntimeStore()
+
+onMounted(async () => {
+  if (!runtimeStore.toolDecisionSummary) {
+    await runtimeStore.loadToolDecisionSummary()
+  }
+  if (!runtimeStore.checkpointSummary.length) {
+    await runtimeStore.loadCheckpointSummary()
+  }
+})
 
 function traceStatusLabel(status?: string) {
   const labels: Record<string, string> = {

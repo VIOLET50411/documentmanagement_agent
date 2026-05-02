@@ -63,11 +63,6 @@
     />
     <RuntimeInspect
       v-else-if="dashboard.activeTab === 'inspect'"
-      :dashboard="dashboard"
-      :runtime-tool-matrix-rows="runtimeToolMatrixRows"
-      :load-runtime-tool-decision-summary="loadRuntimeToolDecisionSummary"
-      :load-runtime-checkpoint-summary="loadRuntimeCheckpointSummary"
-      :load-runtime-replay="loadRuntimeReplay"
       :format-date="formatDate"
     />
     <SecurityAudit

@@ -11,6 +11,12 @@ interface RuntimeEvent {
   citations?: any[]
   message_id?: string
   thread_id?: string
+  event_id?: string
+  sequence_num?: number
+  trace_id?: string
+  source?: string
+  degraded?: boolean
+  fallback_reason?: string | null
 }
 
 const transientStreamingContent = new Set([
@@ -44,13 +50,20 @@ export function useSSE() {
         buffer = chunks.pop() || ""
 
         for (const chunk of chunks) {
+          const idLine = chunk
+            .split("\n")
+            .find((line) => line.startsWith("id: "))
           const dataLines = chunk
             .split("\n")
             .filter((line) => line.startsWith("data: "))
             .map((line) => line.slice(6))
           if (dataLines.length === 0) continue
           try {
-            handleEvent(JSON.parse(dataLines.join("\n")) as RuntimeEvent)
+            const parsed = JSON.parse(dataLines.join("\n")) as RuntimeEvent
+            if (idLine && !parsed.event_id) {
+              parsed.event_id = idLine.slice(4).trim()
+            }
+            handleEvent(parsed)
           } catch {
             // Ignore malformed events from interrupted streams.
           }
@@ -65,12 +78,20 @@ export function useSSE() {
   }
 
   function handleEvent(event: RuntimeEvent) {
+    const meta = {
+      eventId: event.event_id,
+      sequenceNum: event.sequence_num,
+      traceId: event.trace_id,
+      source: event.source,
+      degraded: event.degraded,
+      fallbackReason: event.fallback_reason,
+    }
     switch (event.status) {
       case "thinking":
       case "searching":
       case "reading":
       case "tool_call":
-        chatStore.setStreamState(event.status, event.msg || "")
+        chatStore.setStreamState(event.status, event.msg || "", meta)
         break
       case "streaming":
         chatStore.setStreamState("streaming")
@@ -82,7 +103,7 @@ export function useSSE() {
         break
       case "error":
         chatStore.replaceLastAssistantMessage(event.msg || "请求失败")
-        chatStore.setStreamState("error", event.msg || "请求失败")
+        chatStore.setStreamState("error", event.msg || "请求失败", meta)
         break
       case "done":
         if (event.answer) {

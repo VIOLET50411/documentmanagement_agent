@@ -56,6 +56,30 @@ describe("useSSE", () => {
     expect(chatStore.messages[1].id).toBe("m-1")
   })
 
+  it("captures runtime metadata for tool call and degraded events", async () => {
+    const { useSSE } = await import("../useSSE")
+    const chatStore = useChatStore()
+
+    streamChatMock.mockResolvedValue({
+      ok: true,
+      body: streamFromChunks([
+        'id: trace-a:1\ndata: {"status":"tool_call","msg":"正在调用 retrieval.search","sequence_num":1,"trace_id":"trace-a","source":"agent_runtime_v2","degraded":true,"fallback_reason":"partial_backend_failure"}\n\n',
+        'id: trace-a:2\ndata: {"status":"error","msg":"检索阶段已降级","sequence_num":2,"trace_id":"trace-a","source":"agent_runtime_v2","degraded":true,"fallback_reason":"partial_backend_failure"}\n\n',
+      ]),
+    })
+
+    const runtime = useSSE()
+    await runtime.sendMessage("测试工具调用")
+
+    expect(chatStore.runtimeEvents).toHaveLength(2)
+    expect(chatStore.runtimeEvents[0].status).toBe("tool_call")
+    expect(chatStore.runtimeEvents[0].traceId).toBe("trace-a")
+    expect(chatStore.runtimeEvents[0].source).toBe("agent_runtime_v2")
+    expect(chatStore.runtimeEvents[0].degraded).toBe(true)
+    expect(chatStore.runtimeEvents[0].fallbackReason).toBe("partial_backend_failure")
+    expect(chatStore.runtimeEvents[1].status).toBe("error")
+  })
+
   it("uses done answer as fallback when no token stream is present", async () => {
     const { useSSE } = await import("../useSSE")
     const chatStore = useChatStore()
