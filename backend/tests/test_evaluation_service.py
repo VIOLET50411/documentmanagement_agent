@@ -42,6 +42,46 @@ def test_build_gate_fails_when_metric_below_threshold():
     assert gate["failures"][0]["metric"] == "faithfulness"
 
 
+def test_build_gate_fails_when_dataset_summary_lacks_coverage(monkeypatch):
+    service = EvaluationService(None, None, reports_dir=Path("."))
+    monkeypatch.setattr(settings, "ci_gate_min_eval_unique_docs", 2)
+    monkeypatch.setattr(settings, "ci_gate_min_eval_difficulty_buckets", 2)
+
+    gate = service._build_gate(
+        {
+            "faithfulness": settings.ci_gate_min_faithfulness,
+            "answer_relevancy": settings.ci_gate_min_answer_relevancy,
+            "context_precision": settings.ci_gate_min_context_precision,
+            "context_recall": settings.ci_gate_min_context_recall,
+            "_meta": {"real_mode": True, "mode": "ragas_api"},
+        },
+        dataset_summary={"dataset_size": 3, "unique_doc_count": 1, "difficulty_counts": {"basic": 3}},
+    )
+
+    assert gate["passed"] is False
+    failure_metrics = {item["metric"] for item in gate["failures"]}
+    assert "unique_doc_count" in failure_metrics
+    assert "difficulty_buckets" in failure_metrics
+
+
+def test_build_gate_uses_ragas_ollama_thresholds(monkeypatch):
+    service = EvaluationService(None, None, reports_dir=Path("."))
+    monkeypatch.setattr(settings, "ci_gate_min_answer_relevancy_ragas_ollama", 0.4)
+
+    gate = service._build_gate(
+        {
+            "faithfulness": 0.9,
+            "answer_relevancy": 0.5,
+            "context_precision": 0.9,
+            "context_recall": 0.9,
+            "_meta": {"real_mode": True, "mode": "ragas_ollama"},
+        }
+    )
+
+    assert gate["passed"] is True
+    assert gate["thresholds"]["answer_relevancy"] == 0.4
+
+
 @pytest.mark.asyncio
 async def test_latest_reads_new_payload_shape(tmp_path: Path):
     tenant_id = "tenant-test"
@@ -162,6 +202,51 @@ def test_group_documents_falls_back_when_only_synthetic_titles_exist():
 
     assert len(grouped) == 1
     assert grouped[0]["title"] == "smoke_1.csv"
+
+
+def test_build_seed_documents_returns_enterprise_corpus():
+    service = EvaluationService(None, None, reports_dir=Path("."))
+
+    seeds = service._build_seed_documents(sample_limit=3)
+
+    assert len(seeds) == 3
+    assert seeds[0]["title"] == "预算管理办法"
+    assert "审批" in seeds[1]["chunks"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_run_includes_dataset_summary_in_payload(tmp_path: Path):
+    service = EvaluationService(None, None, reports_dir=tmp_path)
+    service._load_documents = _async_return(  # type: ignore[method-assign]
+        [{"id": "doc-1", "title": "预算管理办法", "chunks": [{"content": "预算编制应当遵循统筹安排。预算执行应当严格审批。"}]}]
+    )
+    service.dataset_generator.generate = _async_return(  # type: ignore[method-assign]
+        [
+            {
+                "question": "预算管理办法第1段的核心内容是什么？",
+                "answer": "预算编制应当遵循统筹安排。预算执行应当严格审批。",
+                "contexts": ["预算编制应当遵循统筹安排。预算执行应当严格审批。"],
+                "context_doc_ids": ["doc-1"],
+                "difficulty": "basic",
+            }
+        ]
+    )
+    service.runner.evaluate = _async_return(  # type: ignore[method-assign]
+        {
+            "faithfulness": settings.ci_gate_min_faithfulness,
+            "answer_relevancy": settings.ci_gate_min_answer_relevancy,
+            "context_precision": settings.ci_gate_min_context_precision,
+            "context_recall": settings.ci_gate_min_context_recall,
+            "_meta": {"real_mode": True, "mode": "ragas_api"},
+        }
+    )
+    service.audit.log_event = _async_return(None)  # type: ignore[method-assign]
+
+    result = await service.run("tenant-summary", sample_limit=1)
+
+    assert result["generated_from"]["dataset_summary"]["dataset_size"] == 1
+    assert result["generated_from"]["dataset_summary"]["unique_doc_count"] == 1
+    assert result["generated_from"]["dataset_summary"]["difficulty_counts"]["basic"] == 1
 
 
 def _async_return(value):

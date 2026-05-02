@@ -257,6 +257,12 @@ async def mobile_openid_configuration(request: Request, db: AsyncSession = Depen
     return MobileOAuthService(db).discovery_document(issuer)
 
 
+@router.get("/mobile/bootstrap")
+async def mobile_bootstrap_document(request: Request, db: AsyncSession = Depends(get_db)):
+    issuer = str(request.base_url).rstrip("/")
+    return MobileOAuthService(db).bootstrap_document(issuer)
+
+
 @router.get("/mobile/jwks")
 async def mobile_openid_jwks(db: AsyncSession = Depends(get_db)):
     return MobileOAuthService(db).jwks()

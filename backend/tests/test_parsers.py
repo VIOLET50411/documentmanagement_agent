@@ -48,6 +48,38 @@ def test_ocr_parser_converts_pdf_pages_before_calling_engine(tmp_path: Path, mon
     assert engine.paths == ["page-1.png", "page-2.png"]
 
 
+def test_ocr_parser_normalizes_image_result_with_page_summary(tmp_path: Path, monkeypatch):
+    parser = OCRParser()
+    image_path = tmp_path / "receipt.png"
+    image_path.write_bytes(b"png")
+
+    class DummyEngine:
+        def ocr(self, path, cls=True):
+            assert Path(path).name == "receipt.png"
+            return [
+                [
+                    [[0, 0], [10, 0], [10, 10], [0, 10]],
+                    ("第一行", 0.95),
+                ],
+                [
+                    [[0, 12], [12, 12], [12, 20], [0, 20]],
+                    ("第二行", 0.88),
+                ],
+            ]
+
+    monkeypatch.setattr(parser, "_get_engine", lambda: DummyEngine())
+
+    rows = parser.parse(str(image_path))
+
+    assert [item["type"] for item in rows] == ["ocr_text", "ocr_text", "ocr_page"]
+    assert rows[0]["metadata"]["line_index"] == 1
+    assert rows[0]["metadata"]["source_type"] == "image"
+    assert rows[0]["metadata"]["section_title"] == "receipt 第1页"
+    assert rows[0]["metadata"]["bbox"] == [[0, 0], [10, 0], [10, 10], [0, 10]]
+    assert rows[2]["text"] == "第一行\n第二行"
+    assert rows[2]["metadata"]["line_count"] == 2
+
+
 def test_pdf_parser_falls_back_to_pypdf_when_unstructured_backend_errors(tmp_path: Path, monkeypatch):
     parser = PDFParser()
 
@@ -124,6 +156,36 @@ startxref
     assert rows
     assert any("Hello PDF" in row["text"] for row in rows)
     assert all(row["metadata"]["parser"] == "pypdf" for row in rows)
+    assert all("char_count" in row["metadata"] for row in rows)
+
+
+def test_pdf_parser_infers_heading_blocks_from_pypdf_text(tmp_path: Path, monkeypatch):
+    parser = PDFParser()
+
+    monkeypatch.setattr(
+        parser,
+        "_parse_with_pypdf",
+        lambda path: [
+            {
+                "type": parser._infer_block_type("第一章 总则"),
+                "text": "第一章 总则",
+                "metadata": {
+                    "page_number": 1,
+                    "section_title": "第一章 总则",
+                    "block_index": 1,
+                    "char_count": 6,
+                    "file_name": path.name,
+                    "parser": "pypdf",
+                },
+            }
+        ],
+    )
+    monkeypatch.setattr(parser, "_parse_with_unstructured", lambda _path: [])
+
+    rows = parser.parse(str(tmp_path / "policy.pdf"))
+
+    assert rows[0]["type"] == "heading"
+    assert rows[0]["metadata"]["file_name"] == "policy.pdf"
 
 
 def test_excel_parser_import_fallback_is_clean_text(tmp_path: Path, monkeypatch):

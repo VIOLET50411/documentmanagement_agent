@@ -92,11 +92,11 @@ async def test_golden_dataset_builds_structured_pairs_from_markdown_table():
         count=5,
     )
 
-    assert len(dataset) == 2
-    assert dataset[0]["question"].startswith("In 预算表, what is the owner for ")
+    assert len(dataset) == 4
+    assert dataset[0]["question"] == "员工报销流程的负责部门是什么？"
     assert dataset[0]["reference"] == dataset[0]["answer"]
-    assert "owner" in dataset[0]["answer"]
-    assert "amount is 5000" in dataset[0]["contexts"][1]
+    assert dataset[0]["answer"] == "财务部"
+    assert dataset[1]["contexts"] == ["预算表中，员工报销流程：负责部门是财务部；金额是5000。"]
 
 
 @pytest.mark.asyncio
@@ -110,7 +110,7 @@ async def test_golden_dataset_uses_clean_default_title_and_sentence_split():
 
     assert dataset
     assert "未命名文档" in dataset[0]["question"]
-    assert "第一条：提交申请。第二条：经理审批！" in dataset[0]["answer"]
+    assert dataset[0]["answer"] == "第一条：提交申请。"
 
 
 @pytest.mark.asyncio
@@ -132,8 +132,8 @@ async def test_golden_dataset_deduplicates_identical_pairs():
         count=10,
     )
 
-    assert len(dataset) == 1
-    assert dataset[0]["question"] == "In 重复预算表, what is the owner for 员工报销流程?"
+    assert len(dataset) == 2
+    assert dataset[0]["question"] == "员工报销流程的负责部门是什么？"
 
 
 def test_excel_parser_reads_gbk_csv_without_mojibake(tmp_path: Path):

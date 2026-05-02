@@ -1,6 +1,24 @@
+const { resolveRuntimeConfig, persistRuntimeConfig } = require('./utils/config')
+
 App({
   globalData: {
-    apiBase: 'http://172.20.10.3:18000/api/v1',
-    wsBase: 'ws://172.20.10.3:18000/api/v1/ws/chat',
+    ...resolveRuntimeConfig(),
+    appVersion: 'miniapp-0.1.0',
+  },
+
+  onLaunch() {
+    this.globalData = {
+      ...this.globalData,
+      ...resolveRuntimeConfig(),
+    }
+  },
+
+  setRuntimeConfig(config) {
+    const nextConfig = persistRuntimeConfig(config)
+    this.globalData = {
+      ...this.globalData,
+      ...nextConfig,
+    }
+    return nextConfig
   },
 })

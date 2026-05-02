@@ -40,6 +40,9 @@ async def _wait_document_ready(client: httpx.AsyncClient, doc_id: str, timeout_s
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
         response = await client.get(f"/api/v1/documents/{doc_id}/status")
+        if response.status_code in {502, 503, 504}:  # pragma: no cover - transient startup window
+            await asyncio.sleep(2)
+            continue
         response.raise_for_status()
         payload = response.json()
         status = payload.get("status")

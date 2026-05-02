@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -32,7 +33,15 @@ class DummyDB:
     async def flush(self):
         return None
 
-    def add(self, _item):
+    def add(self, item):
+        if getattr(item, "id", None) is None:
+            item.id = str(uuid.uuid4())
+        return None
+
+    async def commit(self):
+        return None
+
+    async def rollback(self):
         return None
 
 
@@ -721,6 +730,25 @@ async def test_mobile_openid_configuration_route_returns_expected_endpoints(api_
 
 
 @pytest.mark.asyncio
+async def test_mobile_bootstrap_route_returns_runtime_endpoints(api_client: AsyncClient, monkeypatch):
+    async def override_db():
+        yield DummyDB()
+
+    from app.dependencies import get_db
+
+    app.dependency_overrides[get_db] = override_db
+
+    response = await api_client.get("/api/v1/auth/mobile/bootstrap")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["api_base"].endswith("/api/v1")
+    assert payload["ws_base"].endswith("/api/v1/ws/chat")
+    assert payload["endpoints"]["chat_message"].endswith("/api/v1/chat/message")
+    assert payload["auth"]["discovery"]["authorization_endpoint"].endswith("/api/v1/auth/mobile/authorize")
+
+
+@pytest.mark.asyncio
 async def test_mobile_authorize_and_token_routes(api_client: AsyncClient, monkeypatch):
     async def override_db():
         yield DummyDB()
@@ -861,14 +889,23 @@ async def test_admin_mobile_auth_status_route(api_client: AsyncClient, monkeypat
             "enabled": True,
             "ready": True,
             "issues": [],
-            "clients": ["docmind-capacitor"],
-            "redirect_uris": ["docmind://auth/callback"],
+            "clients": ["docmind-capacitor", "docmind-miniapp"],
+            "redirect_uris": ["docmind://auth/callback", "https://servicewechat.com/docmind/callback"],
             "authorization_code_expire_minutes": 5,
             "grant_types_supported": ["authorization_code", "refresh_token"],
             "response_types_supported": ["code"],
             "pkce_methods_supported": ["S256", "plain"],
             "token_endpoint_auth_methods_supported": ["none"],
             "jwt_algorithm": "HS256",
+            "client_profiles": [{"client_id": "docmind-miniapp", "recommended_for": "miniapp", "redirect_uris": ["https://servicewechat.com/docmind/callback"]}],
+            "miniapp": {
+                "ready": True,
+                "issues": [],
+                "clients": ["docmind-miniapp"],
+                "redirect_uris": ["https://servicewechat.com/docmind/callback"],
+                "recommended_api_base": "https://testserver/api/v1",
+                "recommended_ws_base": "wss://testserver/api/v1/ws/chat",
+            },
             "discovery": {"issuer": issuer},
         }
 
@@ -880,7 +917,8 @@ async def test_admin_mobile_auth_status_route(api_client: AsyncClient, monkeypat
     payload = response.json()
     assert payload["tenant_id"] == "tenant-1"
     assert payload["ready"] is True
-    assert payload["clients"] == ["docmind-capacitor"]
+    assert payload["clients"] == ["docmind-capacitor", "docmind-miniapp"]
+    assert payload["miniapp"]["ready"] is True
 
 
 @pytest.mark.asyncio
@@ -920,9 +958,19 @@ async def test_admin_push_notification_status_route(api_client: AsyncClient, mon
             "auto_deactivate_invalid_tokens": True,
             "ready": True,
             "issues": [],
-            "providers": {"fcm": {"configured": True, "ready": True, "mode": "v1"}},
+            "providers": {
+                "fcm": {
+                    "configured": True,
+                    "ready": True,
+                    "mode": "v1",
+                    "required_env_vars": ["PUSH_FCM_ACCESS_TOKEN + PUSH_FCM_PROJECT_ID"],
+                    "missing_env_vars": [],
+                }
+            },
             "tenant_id": tenant_id,
             "device_summary": {"total": 2, "active": 2, "inactive": 0, "by_platform": {"android": 2}},
+            "provider_coverage": {"android": {"device_count": 2, "required_provider": "fcm", "provider_ready": True, "delivery_mode": "direct", "deliverable": True}},
+            "delivery_gaps": [],
             "redis_available": True,
         }
 
@@ -935,6 +983,8 @@ async def test_admin_push_notification_status_route(api_client: AsyncClient, mon
     assert payload["tenant_id"] == "tenant-1"
     assert payload["provider"] == "fcm"
     assert payload["device_summary"]["total"] == 2
+    assert payload["provider_coverage"]["android"]["deliverable"] is True
+    assert payload["providers"]["fcm"]["missing_env_vars"] == []
 
 
 @pytest.mark.asyncio
@@ -995,6 +1045,182 @@ async def test_admin_llm_training_summary_route(api_client: AsyncClient, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_admin_llm_deployment_summary_route(api_client: AsyncClient, monkeypatch):
+    current_user = SimpleNamespace(
+        id="user-1",
+        username="admin_demo",
+        email="admin@example.com",
+        role="ADMIN",
+        department="operations",
+        tenant_id="tenant-1",
+        level=9,
+        email_verified=True,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    async def override_current_user():
+        return current_user
+
+    async def override_db():
+        yield DummyDB()
+
+    from app.dependencies import get_db
+    from app.services.llm_training_service import LLMTrainingService
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_db] = override_db
+
+    async def fake_summary(self, tenant_id: str, *, limit: int = 20):
+        assert tenant_id == "tenant-1"
+        assert limit == 20
+        return {
+            "tenant_id": tenant_id,
+            "active_model": {"model_id": "model-1"},
+            "previous_active_model": {"model_id": "model-prev"},
+            "latest_job": {"id": "job-1"},
+            "latest_model": {"id": "model-1"},
+            "publish_counts": {"published": 1, "publish_ready": 0, "failed": 0, "unknown": 0},
+            "verify_counts": {"verified": 1, "failed": 0, "unknown": 0},
+            "can_rollback": True,
+            "recent_failures": [],
+            "auto_activate_enabled": True,
+            "publish_enabled": True,
+            "deploy_verify_enabled": True,
+            "deploy_fail_rollback": True,
+        }
+
+    monkeypatch.setattr(LLMTrainingService, "summarize_deployment", fake_summary)
+
+    response = await api_client.get("/api/v1/admin/llm/deployment/summary")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["publish_counts"]["published"] == 1
+    assert payload["verify_counts"]["verified"] == 1
+    assert payload["can_rollback"] is True
+
+
+@pytest.mark.asyncio
+async def test_admin_llm_publish_model_route(api_client: AsyncClient, monkeypatch):
+    current_user = SimpleNamespace(
+        id="user-1",
+        username="admin_demo",
+        email="admin@example.com",
+        role="ADMIN",
+        department="operations",
+        tenant_id="tenant-1",
+        level=9,
+        email_verified=True,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    async def override_current_user():
+        return current_user
+
+    async def override_db():
+        yield DummyDB()
+
+    from app.dependencies import get_db
+    from app.services.llm_training_service import LLMTrainingService
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_db] = override_db
+
+    async def fake_publish(self, *, tenant_id: str, model_id: str):
+        assert tenant_id == "tenant-1"
+        assert model_id == "model-1"
+        return {
+            "ok": True,
+            "publish_ready": True,
+            "published": True,
+            "reason": "published",
+            "serving_model_name": "tenant-model-1",
+        }
+
+    async def fake_activate(self, *, tenant_id: str, model_id: str, actor_id: str | None = None):
+        return SimpleNamespace(
+            id="model-1",
+            tenant_id=tenant_id,
+            training_job_id="job-1",
+            model_name="tenant-model-1",
+            provider="ollama",
+            serving_base_url="http://ollama:11434/v1",
+            serving_model_name="tenant-model-1",
+            base_model="llama3.1:8b",
+            artifact_dir="/tmp/artifact",
+            source_export_dir="/tmp/export",
+            source_dataset_name="swu_public_docs",
+            status="active",
+            is_active=True,
+            canary_percent=0,
+            metrics_json="{}",
+            notes=None,
+            created_by=actor_id,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            activated_at=datetime.now(timezone.utc),
+        )
+
+    async def fake_verify(self, *, tenant_id: str, model_id: str):
+        return {"ok": True, "reason": "verified", "url": "http://ollama:11434/health"}
+
+    monkeypatch.setattr(LLMTrainingService, "publish_model_artifact", fake_publish)
+    monkeypatch.setattr(LLMTrainingService, "activate_model", fake_activate)
+    monkeypatch.setattr(LLMTrainingService, "verify_model_serving", fake_verify)
+
+    response = await api_client.post("/api/v1/admin/llm/models/model-1/publish?activate=true&verify=true")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["publish_result"]["published"] is True
+    assert payload["verify_result"]["ok"] is True
+    assert payload["activated_model"]["status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_admin_public_corpus_latest_compat_route(api_client: AsyncClient, monkeypatch):
+    current_user = SimpleNamespace(
+        id="user-1",
+        username="admin_demo",
+        email="admin@example.com",
+        role="ADMIN",
+        department="operations",
+        tenant_id="tenant-1",
+        level=9,
+        email_verified=True,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    async def override_current_user():
+        return current_user
+
+    from app.services.public_corpus_service import PublicCorpusService
+
+    app.dependency_overrides[get_current_user] = override_current_user
+
+    def fake_latest(self, reports_dir, tenant_id="public_cold_start"):
+        assert tenant_id == "public_cold_start"
+        return {
+            "exists": True,
+            "tenant_id": tenant_id,
+            "export_dir": "/workspace/reports/domain_tuning/public_cold_start/swu_public_docs_latest",
+            "manifest_path": "/workspace/reports/domain_tuning/public_cold_start/swu_public_docs_latest/manifest.json",
+        }
+
+    monkeypatch.setattr(PublicCorpusService, "latest_export_summary", fake_latest)
+
+    response = await api_client.get("/api/v1/admin/public-corpus/latest?dataset_name=swu_public_docs&tenant_id=public_cold_start")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["exists"] is True
+    assert payload["dataset_name"] == "swu_public_docs"
+    assert payload["tenant_id"] == "public_cold_start"
+    assert payload["requested_by"] == "user-1"
+
+
+@pytest.mark.asyncio
 async def test_admin_security_summary_route(api_client: AsyncClient, monkeypatch):
     current_user = SimpleNamespace(
         id="user-1",
@@ -1046,3 +1272,251 @@ async def test_admin_security_summary_route(api_client: AsyncClient, monkeypatch
     assert payload["total"] == 3
     assert payload["severity_counts"]["high"] == 2
     assert payload["action_counts"]["runtime_tool_decision"] == 2
+
+
+@pytest.mark.asyncio
+async def test_chat_message_route_audits_guard_decisions(api_client: AsyncClient, monkeypatch):
+    current_user = SimpleNamespace(
+        id="user-1",
+        username="admin_demo",
+        email="admin@example.com",
+        role="ADMIN",
+        department="operations",
+        tenant_id="tenant-1",
+        level=9,
+        email_verified=True,
+        created_at=datetime.now(timezone.utc),
+    )
+    fake_redis = FakeRedis()
+    audit_events: list[dict] = []
+
+    async def override_current_user():
+        return current_user
+
+    async def override_db():
+        yield DummyDB()
+
+    class DummyRuntime:
+        def __init__(self, _redis):
+            pass
+
+        async def run(self, _request, **_kwargs):
+            yield {"status": "done", "answer": "请联系 13800138000", "citations": [], "agent_used": "runtime"}
+
+    class DummyMasker:
+        def mask(self, text):
+            return text, {}
+
+        def restore(self, text, mapping):
+            return text
+
+    class DummyCache:
+        def __init__(self, _redis):
+            pass
+
+        async def get(self, *_args, **_kwargs):
+            return None
+
+        async def put(self, *_args, **_kwargs):
+            return True
+
+    class DummyResult:
+        def scalars(self):
+            return self
+
+        def all(self):
+            return []
+
+    async def fake_input_check(self, _text: str):
+        return {
+            "safe": True,
+            "blocked": False,
+            "reason": "sidecar timeout",
+            "severity": "low",
+            "issues": [],
+            "mode": "degraded",
+            "decision_source": "guardrails_sidecar",
+            "degraded": True,
+        }
+
+    async def fake_output_check(self, _text: str, context=None):
+        return {
+            "safe": False,
+            "blocked": True,
+            "reason": "输出内容命中本地敏感信息规则。",
+            "severity": "high",
+            "issues": ["Possible phone number in output"],
+            "mode": "local_rule",
+            "decision_source": "local_heuristic",
+            "degraded": False,
+        }
+
+    async def fake_log_event(self, tenant_id, event_type, severity, message, **kwargs):
+        audit_events.append(
+            {
+                "tenant_id": tenant_id,
+                "event_type": event_type,
+                "severity": severity,
+                "message": message,
+                **kwargs,
+            }
+        )
+
+    from app.dependencies import get_db
+    from app.api.v1 import chat as chat_module
+    from app.api.middleware import rate_limit as rate_limit_module
+    from app.services.security_audit_service import SecurityAuditService
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_db] = override_db
+    monkeypatch.setattr(chat_module, "get_redis", lambda: fake_redis)
+    monkeypatch.setattr(rate_limit_module, "get_redis", lambda: fake_redis)
+    monkeypatch.setattr("app.agent.runtime.AgentRuntime", DummyRuntime)
+    monkeypatch.setattr("app.retrieval.semantic_cache.SemanticCache", DummyCache)
+    monkeypatch.setattr("app.security.pii_masker.PIIMasker", DummyMasker)
+    monkeypatch.setattr("app.security.input_guard.InputGuard.check", fake_input_check)
+    monkeypatch.setattr("app.security.output_guard.OutputGuard.check", fake_output_check)
+    monkeypatch.setattr(SecurityAuditService, "log_event", fake_log_event)
+    async def fake_execute(self, *_args, **_kwargs):
+        return DummyResult()
+
+    monkeypatch.setattr(DummyDB, "execute", fake_execute)
+
+    response = await api_client.post(
+        "/api/v1/chat/message",
+        json={"message": "请总结制度并附联系方式", "search_type": "hybrid"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["agent_used"] == "output_guard"
+    assert payload["answer"] == "输出内容命中安全规则，系统已拦截。"
+    assert [item["event_type"] for item in audit_events] == ["input_guard_decision", "output_guard_decision"]
+    assert audit_events[0]["result"] == "warning"
+    assert audit_events[1]["result"] == "blocked"
+
+
+@pytest.mark.asyncio
+async def test_ws_handle_chat_message_audits_guard_decisions(monkeypatch):
+    current_user = SimpleNamespace(
+        id="user-1",
+        username="admin_demo",
+        email="admin@example.com",
+        role="ADMIN",
+        department="operations",
+        tenant_id="tenant-1",
+        level=9,
+        email_verified=True,
+        created_at=datetime.now(timezone.utc),
+    )
+    fake_redis = FakeRedis()
+    audit_events: list[dict] = []
+
+    class FakeWebSocket:
+        def __init__(self):
+            self.sent: list[dict] = []
+
+        async def send_json(self, payload):
+            self.sent.append(payload)
+
+    class DummyWsDB(DummyDB):
+        async def scalar(self, *_args, **_kwargs):
+            return None
+
+        async def execute(self, *_args, **_kwargs):
+            class DummyResult:
+                def scalars(self_inner):
+                    return self_inner
+
+                def all(self_inner):
+                    return []
+
+            return DummyResult()
+
+    class DummyRuntime:
+        def __init__(self, _redis):
+            pass
+
+        async def run(self, _request, **_kwargs):
+            yield {"status": "thinking", "msg": "正在分析"}
+            yield {"status": "done", "answer": "制度要点总结", "citations": [], "trace_id": "trace-ws-1"}
+
+    class DummyMasker:
+        def mask(self, text):
+            return text, {}
+
+        def restore(self, text, mapping):
+            return text
+
+    class DummyCache:
+        def __init__(self, _redis):
+            pass
+
+        async def get(self, *_args, **_kwargs):
+            return None
+
+        async def put(self, *_args, **_kwargs):
+            return True
+
+    async def fake_input_check(self, _text: str):
+        return {
+            "safe": True,
+            "blocked": False,
+            "reason": "sidecar timeout",
+            "severity": "low",
+            "issues": [],
+            "mode": "degraded",
+            "decision_source": "guardrails_sidecar",
+            "degraded": True,
+        }
+
+    async def fake_output_check(self, _text: str, context=None):
+        return {
+            "safe": True,
+            "blocked": False,
+            "reason": "",
+            "severity": "low",
+            "issues": [],
+            "mode": "sidecar",
+            "decision_source": "guardrails_sidecar",
+            "degraded": False,
+        }
+
+    async def fake_log_event(self, tenant_id, event_type, severity, message, **kwargs):
+        audit_events.append(
+            {
+                "tenant_id": tenant_id,
+                "event_type": event_type,
+                "severity": severity,
+                "message": message,
+                **kwargs,
+            }
+        )
+
+    from app.api.v1 import ws_chat as ws_chat_module
+    from app.services.security_audit_service import SecurityAuditService
+
+    monkeypatch.setattr(ws_chat_module, "get_redis", lambda: fake_redis)
+    monkeypatch.setattr("app.agent.runtime.AgentRuntime", DummyRuntime)
+    monkeypatch.setattr("app.retrieval.semantic_cache.SemanticCache", DummyCache)
+    monkeypatch.setattr("app.security.pii_masker.PIIMasker", DummyMasker)
+    monkeypatch.setattr("app.security.input_guard.InputGuard.check", fake_input_check)
+    monkeypatch.setattr("app.security.output_guard.OutputGuard.check", fake_output_check)
+    monkeypatch.setattr(SecurityAuditService, "log_event", fake_log_event)
+
+    websocket = FakeWebSocket()
+    db = DummyWsDB()
+
+    await ws_chat_module._handle_chat_message(
+        websocket=websocket,
+        db=db,
+        current_user=current_user,
+        content="请总结制度",
+        thread_id=None,
+        search_type="hybrid",
+    )
+
+    assert [item["event_type"] for item in audit_events] == ["input_guard_decision", "output_guard_decision"]
+    assert audit_events[0]["result"] == "warning"
+    assert audit_events[1]["result"] == "ok"
+    assert any(item["type"] == "done" for item in websocket.sent)

@@ -147,6 +147,30 @@ class MobileOAuthService:
             "code_challenge_methods_supported": ["S256", "plain"],
         }
 
+    def bootstrap_document(self, issuer: str) -> dict:
+        issuer = issuer.rstrip("/")
+        api_base = f"{issuer}/api/v1"
+        ws_base = issuer.replace("https://", "wss://").replace("http://", "ws://")
+        status_payload = self.status(issuer)
+        return {
+            "api_base": api_base,
+            "ws_base": f"{ws_base}/api/v1/ws/chat",
+            "auth": {
+                "discovery": status_payload.get("discovery") or self.discovery_document(issuer),
+                "miniapp": status_payload.get("miniapp"),
+                "client_profiles": status_payload.get("client_profiles", []),
+            },
+            "endpoints": {
+                "chat_message": f"{api_base}/chat/message",
+                "chat_stream": f"{api_base}/chat/stream",
+                "chat_history": f"{api_base}/chat/history",
+                "documents": f"{api_base}/documents",
+                "search": f"{api_base}/search",
+                "push_devices": f"{api_base}/notifications/devices",
+                "push_summary": f"{api_base}/notifications/devices/summary",
+            },
+        }
+
     def status(self, issuer: str | None = None) -> dict:
         enabled = bool(settings.auth_mobile_oauth_enabled)
         clients = list(settings.auth_mobile_oauth_client_list)
@@ -170,9 +194,11 @@ class MobileOAuthService:
             "pkce_methods_supported": ["S256", "plain"],
             "token_endpoint_auth_methods_supported": ["none"],
             "jwt_algorithm": settings.jwt_algorithm,
+            "client_profiles": self._build_client_profiles(clients, redirects),
         }
         if issuer:
             payload["discovery"] = self.discovery_document(issuer)
+            payload["miniapp"] = self._build_miniapp_status(issuer, clients, redirects, enabled, issues)
         return payload
 
     def jwks(self) -> dict:
@@ -216,3 +242,59 @@ class MobileOAuthService:
             "scope": scope,
         }
         return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+    def _build_client_profiles(self, clients: list[str], redirects: list[str]) -> list[dict]:
+        profiles: list[dict] = []
+        for client_id in clients:
+            recommended_for = "mobile_app"
+            if "miniapp" in client_id or "wechat" in client_id:
+                recommended_for = "miniapp"
+            elif "capacitor" in client_id:
+                recommended_for = "capacitor_app"
+
+            matched_redirects = [item for item in redirects if self._redirect_matches_client(item, client_id)]
+            profiles.append(
+                {
+                    "client_id": client_id,
+                    "recommended_for": recommended_for,
+                    "redirect_uris": matched_redirects,
+                }
+            )
+        return profiles
+
+    def _build_miniapp_status(
+        self,
+        issuer: str,
+        clients: list[str],
+        redirects: list[str],
+        enabled: bool,
+        issues: list[str],
+    ) -> dict:
+        normalized_issuer = issuer.rstrip("/")
+        ws_base = normalized_issuer.replace("https://", "wss://").replace("http://", "ws://")
+        miniapp_clients = [item for item in clients if "miniapp" in item or "wechat" in item]
+        miniapp_redirects = [item for item in redirects if "servicewechat.com" in item or "miniapp" in item]
+        miniapp_issues: list[str] = []
+        if enabled and not miniapp_clients:
+            miniapp_issues.append("missing_miniapp_client")
+        if enabled and not miniapp_redirects:
+            miniapp_issues.append("missing_miniapp_redirect_uri")
+        miniapp_issues.extend(issue for issue in issues if issue not in miniapp_issues)
+
+        return {
+            "ready": enabled and not miniapp_issues,
+            "issues": miniapp_issues,
+            "clients": miniapp_clients,
+            "redirect_uris": miniapp_redirects,
+            "recommended_api_base": f"{normalized_issuer}/api/v1",
+            "recommended_ws_base": f"{ws_base}/api/v1/ws/chat",
+        }
+
+    def _redirect_matches_client(self, redirect_uri: str, client_id: str) -> bool:
+        normalized_redirect = redirect_uri.lower()
+        normalized_client = client_id.lower()
+        if "miniapp" in normalized_client or "wechat" in normalized_client:
+            return "servicewechat.com" in normalized_redirect or "miniapp" in normalized_redirect
+        if "capacitor" in normalized_client:
+            return "://" in normalized_redirect
+        return True

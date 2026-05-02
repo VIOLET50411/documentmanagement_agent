@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -14,6 +14,7 @@ async def test_build_report_tracks_training_runtime_readiness(tmp_path: Path, mo
     reports_dir = tmp_path / "reports"
     reports_dir.mkdir(parents=True)
     monkeypatch.setattr(settings, "docmind_reports_dir", str(reports_dir))
+    monkeypatch.setattr(settings, "app_public_base_url", "https://docmind.example.com")
     monkeypatch.setattr(
         "app.services.delivery_gap_service.describe_training_runtime",
         lambda: {
@@ -30,6 +31,7 @@ async def test_build_report_tracks_training_runtime_readiness(tmp_path: Path, mo
     assert "training_executor_runtime_ready" in payload["completed"]
     assert payload["training_runtime_status"]["ready"] is True
     assert "训练执行器已就绪" in payload["notes"][2]
+    assert payload["mobile_auth_status"]["discovery"]["issuer"] == "https://docmind.example.com"
 
 
 @pytest.mark.asyncio
@@ -189,3 +191,53 @@ async def test_build_report_detects_publish_evidence_from_artifacts_without_db(t
     assert payload["training_publish_status"]["published_model_present"] is True
     assert payload["training_publish_status"]["latest_training_job_id"] == "job-1"
     assert payload["training_publish_status"]["latest_model_id"] == "default-swu:latest"
+
+
+@pytest.mark.asyncio
+async def test_build_report_marks_mobile_and_push_gaps(tmp_path: Path, monkeypatch):
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir(parents=True)
+    monkeypatch.setattr(settings, "docmind_reports_dir", str(reports_dir))
+
+    def fake_mobile_status(self, issuer=None):
+        return {
+            "enabled": True,
+            "ready": True,
+            "issues": [],
+            "clients": ["docmind-miniapp"],
+            "redirect_uris": ["https://servicewechat.com/docmind/callback"],
+            "miniapp": {
+                "ready": False,
+                "issues": ["missing_miniapp_redirect_uri"],
+                "clients": ["docmind-miniapp"],
+                "redirect_uris": [],
+            },
+        }
+
+    async def fake_push_health(self, *, tenant_id: str):
+        assert tenant_id == "default"
+        return {
+            "enabled": True,
+            "provider": "multi",
+            "ready": True,
+            "issues": [],
+            "providers": {
+                "fcm": {"ready": True},
+                "apns": {"ready": False},
+                "wechat": {"ready": False},
+            },
+        }
+
+    monkeypatch.setattr("app.services.delivery_gap_service.MobileOAuthService.status", fake_mobile_status)
+    monkeypatch.setattr("app.services.delivery_gap_service.PushNotificationService.get_health_summary", fake_push_health)
+
+    payload = await DeliveryGapService().build_report("default")
+
+    assert "mobile_oauth_runtime_ready" in payload["completed"]
+    assert "miniapp_oauth_bootstrap_ready" in payload["pending"]
+    assert "push_notification_runtime_ready" in payload["completed"]
+    assert "apns_push_provider_ready" in payload["pending"]
+    assert "wechat_push_provider_ready" in payload["pending"]
+    assert "推送主链路已就绪" in payload["notes"][5]
+
+

@@ -3,9 +3,29 @@
     <view class="title">DocMind 移动入口</view>
     <view class="subtitle">使用移动端 OAuth2 登录，访问文档检索与智能问答。</view>
   </view>
+
   <view class="form-card">
-    <input class="field" value="{{username}}" bindinput="onUsernameInput" placeholder="用户名" />
-    <input class="field" password value="{{password}}" bindinput="onPasswordInput" placeholder="密码" />
+    <view class="label">后端地址</view>
+    <input
+      class="field"
+      value="{{apiBase}}"
+      bindinput="onApiBaseInput"
+      placeholder="https://your-domain/api/v1"
+    />
+    <view class="button-row">
+      <button class="ghost half" loading="{{configSaving}}" bindtap="saveApiBase">保存地址</button>
+      <button class="ghost half" loading="{{bootstrapLoading}}" bindtap="bootstrapFromServer">自动探测</button>
+    </view>
+    <view class="hint">请确保该域名已加入微信小程序 request 合法域名，且 WebSocket 域名也已同步配置。</view>
+    <view wx:if="{{configMessage}}" class="hint success">{{configMessage}}</view>
+    <view wx:if="{{bootstrapSummary}}" class="hint success">{{bootstrapSummary}}</view>
+
+    <view class="label">用户名</view>
+    <input class="field" value="{{username}}" bindinput="onUsernameInput" placeholder="请输入用户名" />
+
+    <view class="label">密码</view>
+    <input class="field" password value="{{password}}" bindinput="onPasswordInput" placeholder="请输入密码" />
+
     <button class="submit" loading="{{loading}}" bindtap="submit">登录</button>
     <view wx:if="{{error}}" class="error">{{error}}</view>
   </view>

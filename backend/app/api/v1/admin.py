@@ -623,6 +623,19 @@ async def get_latest_public_corpus_export(
     return summary
 
 
+@router.get("/public-corpus/latest")
+async def get_latest_public_corpus_export_compat(
+    dataset_name: str = "swu_public_docs",
+    tenant_id: str = "public_cold_start",
+    current_user: User = Depends(require_role("ADMIN")),
+):
+    return await get_latest_public_corpus_export(
+        dataset_name=dataset_name,
+        tenant_id=tenant_id,
+        current_user=current_user,
+    )
+
+
 @router.post("/llm/training/run-async")
 async def run_llm_training_async(
     dataset_name: str = "swu_public_docs",
@@ -708,6 +721,20 @@ async def get_llm_training_summary(
     return summary
 
 
+@router.get("/llm/deployment/summary")
+async def get_llm_deployment_summary(
+    tenant_id: str | None = None,
+    limit: int = 20,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.llm_training_service import LLMTrainingService
+
+    effective_tenant = tenant_id or current_user.tenant_id
+    service = LLMTrainingService(db, redis_client=get_redis(), reports_dir=REPORTS_DIR)
+    return await service.summarize_deployment(effective_tenant, limit=max(limit, 1))
+
+
 @router.get("/llm/training/jobs/{job_id}")
 async def get_llm_training_job(
     job_id: str,
@@ -757,12 +784,25 @@ async def activate_llm_model(
     db: AsyncSession = Depends(get_db),
 ):
     from app.services.llm_training_service import LLMTrainingService
+    from app.services.security_audit_service import SecurityAuditService
 
     effective_tenant = tenant_id or current_user.tenant_id
-    model = await LLMTrainingService(db, redis_client=get_redis(), reports_dir=REPORTS_DIR).activate_model(
+    redis_client = get_redis()
+    service = LLMTrainingService(db, redis_client=redis_client, reports_dir=REPORTS_DIR)
+    model = await service.activate_model(
         tenant_id=effective_tenant,
         model_id=model_id,
         actor_id=current_user.id,
+    )
+    await SecurityAuditService(redis_client, db).log_event(
+        effective_tenant,
+        "llm_model_manual_activate",
+        "medium",
+        f"管理员激活模型: {model.model_name}",
+        user_id=current_user.id,
+        target=model_id,
+        result="ok",
+        metadata={"model_id": model_id, "model_name": model.model_name},
     )
     return {"ok": True, "item": _serialize_registry_model(model)}
 
@@ -795,13 +835,84 @@ async def verify_llm_model_serving(
     db: AsyncSession = Depends(get_db),
 ):
     from app.services.llm_training_service import LLMTrainingService
+    from app.services.security_audit_service import SecurityAuditService
 
     effective_tenant = tenant_id or current_user.tenant_id
-    result = await LLMTrainingService(db, redis_client=get_redis(), reports_dir=REPORTS_DIR).verify_model_serving(
+    redis_client = get_redis()
+    result = await LLMTrainingService(db, redis_client=redis_client, reports_dir=REPORTS_DIR).verify_model_serving(
         tenant_id=effective_tenant,
         model_id=model_id,
     )
+    await SecurityAuditService(redis_client, db).log_event(
+        effective_tenant,
+        "llm_model_manual_verify",
+        "low" if result.get("ok") else "high",
+        "管理员触发模型部署校验",
+        user_id=current_user.id,
+        target=model_id,
+        result="ok" if result.get("ok") else "error",
+        metadata={"model_id": model_id, "verify_result": result},
+    )
     return {"ok": bool(result.get("ok")), "result": result}
+
+
+@router.post("/llm/models/{model_id}/publish")
+async def publish_llm_model(
+    model_id: str,
+    tenant_id: str | None = None,
+    activate: bool = False,
+    verify: bool = True,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.llm_training_service import LLMTrainingService
+    from app.services.security_audit_service import SecurityAuditService
+
+    effective_tenant = tenant_id or current_user.tenant_id
+    redis_client = get_redis()
+    service = LLMTrainingService(db, redis_client=redis_client, reports_dir=REPORTS_DIR)
+    publish_result = await service.publish_model_artifact(tenant_id=effective_tenant, model_id=model_id)
+    response: dict[str, object] = {"ok": bool(publish_result.get("ok")), "publish_result": publish_result}
+    await SecurityAuditService(redis_client, db).log_event(
+        effective_tenant,
+        "llm_model_manual_publish",
+        "medium" if publish_result.get("published") else "high",
+        str(publish_result.get("message") or "管理员触发模型发布"),
+        user_id=current_user.id,
+        target=model_id,
+        result="ok" if publish_result.get("published") else "warning",
+        metadata={"model_id": model_id, "publish_result": publish_result},
+    )
+
+    if activate and publish_result.get("publish_ready"):
+        model = await service.activate_model(tenant_id=effective_tenant, model_id=model_id, actor_id=current_user.id)
+        response["activated_model"] = _serialize_registry_model(model)
+        await SecurityAuditService(redis_client, db).log_event(
+            effective_tenant,
+            "llm_model_manual_activate",
+            "medium",
+            f"管理员激活模型: {model.model_name}",
+            user_id=current_user.id,
+            target=model_id,
+            result="ok",
+            metadata={"model_id": model_id, "model_name": model.model_name, "source": "publish_endpoint"},
+        )
+
+    if verify and publish_result.get("published"):
+        response["verify_result"] = await service.verify_model_serving(tenant_id=effective_tenant, model_id=model_id)
+        response["ok"] = bool(response["verify_result"].get("ok"))  # type: ignore[index]
+        await SecurityAuditService(redis_client, db).log_event(
+            effective_tenant,
+            "llm_model_manual_verify",
+            "low" if response["verify_result"].get("ok") else "high",  # type: ignore[index]
+            "管理员触发模型部署校验",
+            user_id=current_user.id,
+            target=model_id,
+            result="ok" if response["verify_result"].get("ok") else "error",  # type: ignore[index]
+            metadata={"model_id": model_id, "verify_result": response["verify_result"]},
+        )
+
+    return response
 
 
 @router.post("/llm/models/rollback")
@@ -811,11 +922,23 @@ async def rollback_llm_model(
     db: AsyncSession = Depends(get_db),
 ):
     from app.services.llm_training_service import LLMTrainingService
+    from app.services.security_audit_service import SecurityAuditService
 
     effective_tenant = tenant_id or current_user.tenant_id
-    result = await LLMTrainingService(db, redis_client=get_redis(), reports_dir=REPORTS_DIR).rollback_active_model(
+    redis_client = get_redis()
+    result = await LLMTrainingService(db, redis_client=redis_client, reports_dir=REPORTS_DIR).rollback_active_model(
         tenant_id=effective_tenant,
         actor_id=current_user.id,
+    )
+    await SecurityAuditService(redis_client, db).log_event(
+        effective_tenant,
+        "llm_model_manual_rollback",
+        "high",
+        "管理员回滚上一版激活模型",
+        user_id=current_user.id,
+        target=str((result.get("rolled_back_to") or {}).get("model_id") or ""),
+        result="warning",
+        metadata={"rollback_result": result},
     )
     return result
 
@@ -835,10 +958,19 @@ async def get_platform_readiness(current_user: User = Depends(require_role("ADMI
 
 
 @router.get("/system/gap-report")
-async def get_delivery_gap_report(current_user: User = Depends(require_role("ADMIN"))):
+async def get_delivery_gap_report(
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
     from app.services.delivery_gap_service import DeliveryGapService
+    from app.services.push_notification_service import PushNotificationService
 
-    return await DeliveryGapService().build_report(current_user.tenant_id)
+    redis_client = get_redis()
+    report = await DeliveryGapService(db, redis_client).build_report(current_user.tenant_id)
+    report["push_runtime_status"] = await PushNotificationService(db, redis_client).get_health_summary(
+        tenant_id=current_user.tenant_id
+    )
+    return report
 
 
 @router.get("/system/security-policy")

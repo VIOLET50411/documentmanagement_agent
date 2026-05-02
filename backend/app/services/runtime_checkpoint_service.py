@@ -36,16 +36,18 @@ class RuntimeCheckpointService:
                     "latest_node_name": item.node_name,
                     "latest_iteration": item.iteration,
                     "latest_at": item.created_at.isoformat(),
-                        "checkpoint_count": 0,
-                        "resumable": True,
-                        "resume_strategy": "manual",
-                        "native_checkpoint_enabled": bool(native_status.get("enabled")),
-                        "native_checkpoint_available": bool(native_status.get("available")),
-                        "native_checkpoint_compatible": bool(native_status.get("compatible")),
-                        "native_checkpoint_reason": native_status.get("reason"),
-                        "degraded": False,
-                        "intent": None,
-                        "rewritten_query": None,
+                    "checkpoint_count": 0,
+                    "resumable": True,
+                    "resume_strategy": "manual",
+                    "resume_node": item.node_name,
+                    "resume_capability": self._resume_capability_for(item.node_name, native_status),
+                    "native_checkpoint_enabled": bool(native_status.get("enabled")),
+                    "native_checkpoint_available": bool(native_status.get("available")),
+                    "native_checkpoint_compatible": bool(native_status.get("compatible")),
+                    "native_checkpoint_reason": native_status.get("reason"),
+                    "degraded": False,
+                    "intent": None,
+                    "rewritten_query": None,
                     "answer_preview": "",
                     "warnings": [],
                 },
@@ -62,6 +64,8 @@ class RuntimeCheckpointService:
                         "latest_at": item.created_at.isoformat(),
                         "resumable": item.node_name not in {"done", "terminal"},
                         "resume_strategy": self._resume_strategy_for(item.node_name),
+                        "resume_node": item.node_name,
+                        "resume_capability": self._resume_capability_for(item.node_name, native_status),
                         "native_checkpoint_enabled": bool(native_status.get("enabled")),
                         "native_checkpoint_available": bool(native_status.get("available")),
                         "native_checkpoint_compatible": bool(native_status.get("compatible")),
@@ -90,3 +94,10 @@ class RuntimeCheckpointService:
         if native_status.get("available"):
             return "native"
         return "manual"
+
+    def _resume_capability_for(self, node_name: str, native_status: dict) -> str:
+        if node_name in {"done", "terminal"}:
+            return "completed"
+        if native_status.get("available"):
+            return "native_ready"
+        return "manual_ready"

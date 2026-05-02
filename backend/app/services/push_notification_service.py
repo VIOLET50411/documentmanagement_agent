@@ -219,6 +219,8 @@ class PushNotificationService:
                 "configured": bool(settings.push_notification_webhook_url),
                 "ready": bool(settings.push_notification_webhook_url),
                 "webhook_url_configured": bool(settings.push_notification_webhook_url),
+                "required_env_vars": ["PUSH_NOTIFICATION_WEBHOOK_URL"],
+                "missing_env_vars": [] if settings.push_notification_webhook_url else ["PUSH_NOTIFICATION_WEBHOOK_URL"],
             },
             "fcm": {
                 "configured": self._fcm_configured(),
@@ -226,18 +228,24 @@ class PushNotificationService:
                 "mode": "v1" if self._uses_fcm_v1() else "legacy" if settings.push_fcm_server_key else "unconfigured",
                 "service_account_file_configured": bool(fcm_service_account_file),
                 "project_id": self._resolve_fcm_project_id(fcm_service_account_file) or settings.push_fcm_project_id or None,
+                "required_env_vars": self._required_push_env_vars("fcm"),
+                "missing_env_vars": self._missing_push_env_vars("fcm", fcm_service_account_file),
             },
             "apns": {
                 "configured": self._apns_configured(),
                 "ready": self._apns_configured(),
                 "topic_configured": bool(settings.push_apns_topic),
                 "auth_token_configured": bool(settings.push_apns_auth_token),
+                "required_env_vars": self._required_push_env_vars("apns"),
+                "missing_env_vars": self._missing_push_env_vars("apns"),
             },
             "wechat": {
                 "configured": self._wechat_configured(),
                 "ready": self._wechat_configured(),
                 "template_id_configured": bool(settings.push_wechat_template_id),
                 "access_token_configured": bool(settings.push_wechat_access_token),
+                "required_env_vars": self._required_push_env_vars("wechat"),
+                "missing_env_vars": self._missing_push_env_vars("wechat"),
             },
         }
         active_provider_keys = [name for name, meta in providers.items() if name != "log" and meta.get("configured")]
@@ -265,6 +273,10 @@ class PushNotificationService:
             issues.append("fail_closed_without_push_enabled")
 
         device_summary = None
+        provider_coverage = None
+        delivery_gaps: list[dict] = []
+        recent_event_stats = None
+        recent_events_sample: list[dict] = []
         if self.db is not None:
             devices = await self._list_tenant_devices(tenant_id=tenant_id)
             device_summary = {
@@ -272,7 +284,20 @@ class PushNotificationService:
                 "active": sum(1 for device in devices if device.is_active),
                 "inactive": sum(1 for device in devices if not device.is_active),
                 "by_platform": dict(Counter(self._normalize_platform(device.platform) for device in devices)),
+                "miniapp_debug": self._build_miniapp_debug_summary(devices),
             }
+            provider_coverage, delivery_gaps = self._assess_provider_coverage(
+                provider=provider,
+                providers=providers,
+                devices=devices,
+            )
+            recent_events_sample = await self._list_tenant_recent_events(tenant_id=tenant_id, limit=10)
+            recent_event_stats = self._summarize_recent_events(recent_events_sample)
+            issues.extend(
+                gap["issue"]
+                for gap in delivery_gaps
+                if gap.get("severity") == "error" and gap.get("issue") not in issues
+            )
 
         return {
             "enabled": bool(settings.push_notifications_enabled),
@@ -286,6 +311,10 @@ class PushNotificationService:
             "active_provider_readiness": active_provider_readiness,
             "tenant_id": tenant_id,
             "device_summary": device_summary,
+            "provider_coverage": provider_coverage,
+            "delivery_gaps": delivery_gaps,
+            "recent_event_stats": recent_event_stats,
+            "recent_events_sample": recent_events_sample,
             "redis_available": self.redis is not None,
         }
 
@@ -363,6 +392,31 @@ class PushNotificationService:
         )
         return list(result.scalars().all())
 
+    async def _list_tenant_recent_events(self, *, tenant_id: str, limit: int = 20) -> list[dict]:
+        if self.redis is None or not hasattr(self.redis, "scan"):
+            return []
+
+        cursor = 0
+        items: list[dict] = []
+        pattern = f"push:events:{tenant_id}:*"
+        while True:
+            cursor, keys = await self.redis.scan(cursor=cursor, match=pattern, count=100)
+            for key in keys or []:
+                rows = await self.redis.lrange(key, 0, max(limit - 1, 0))
+                for row in rows:
+                    try:
+                        payload = json.loads(row)
+                    except json.JSONDecodeError:
+                        continue
+                    payload.setdefault("event_scope", "user")
+                    payload.setdefault("event_key", key)
+                    items.append(payload)
+            if cursor == 0 or len(items) >= limit:
+                break
+
+        items.sort(key=lambda item: str(item.get("timestamp") or ""), reverse=True)
+        return items[:limit]
+
     async def _record_notification(self, payload: dict) -> None:
         if self.redis is None:
             return
@@ -387,6 +441,52 @@ class PushNotificationService:
                 import asyncio
 
                 asyncio.run(op)
+
+    def _build_miniapp_debug_summary(self, devices: list[PushDevice]) -> dict:
+        debug_devices = [device for device in devices if self._normalize_platform(device.platform) == "miniapp-debug"]
+        active_devices = [device for device in debug_devices if bool(getattr(device, "is_active", False))]
+        latest_seen = max(
+            (
+                device.last_seen_at or device.updated_at or device.created_at
+                for device in debug_devices
+                if device.last_seen_at or device.updated_at or device.created_at
+            ),
+            default=None,
+        )
+        latest_named = []
+        for device in debug_devices[:5]:
+            latest_named.append(
+                {
+                    "device_name": device.device_name,
+                    "app_version": device.app_version,
+                    "is_active": bool(device.is_active),
+                    "last_seen_at": device.last_seen_at.isoformat() if device.last_seen_at else None,
+                }
+            )
+        return {
+            "total": len(debug_devices),
+            "active": len(active_devices),
+            "inactive": max(len(debug_devices) - len(active_devices), 0),
+            "latest_seen_at": latest_seen.isoformat() if latest_seen else None,
+            "latest_devices": latest_named,
+        }
+
+    def _summarize_recent_events(self, events: list[dict]) -> dict:
+        status_counts = Counter(str(item.get("status") or "unknown") for item in events)
+        provider_counts = Counter()
+        for item in events:
+            delivery = item.get("delivery") if isinstance(item.get("delivery"), dict) else {}
+            providers = delivery.get("providers") if isinstance(delivery.get("providers"), dict) else {}
+            if providers:
+                provider_counts.update({str(key): int(value or 0) for key, value in providers.items()})
+            elif delivery.get("provider"):
+                provider_counts.update([str(delivery.get("provider"))])
+        return {
+            "count": len(events),
+            "status_counts": dict(status_counts),
+            "provider_counts": dict(provider_counts),
+            "latest_timestamp": events[0].get("timestamp") if events else None,
+        }
 
     async def _dispatch(self, payload: dict) -> dict:
         devices = payload.get("devices") or []
@@ -1028,6 +1128,126 @@ class PushNotificationService:
 
     def _normalize_platform(self, platform: str | None) -> str:
         return str(platform or "unknown").strip().lower()
+
+    def _required_push_env_vars(self, provider: str) -> list[str]:
+        if provider == "fcm":
+            return [
+                "PUSH_FCM_SERVICE_ACCOUNT_FILE or PUSH_FCM_ACCESS_TOKEN + PUSH_FCM_PROJECT_ID",
+                "PUSH_FCM_SERVER_KEY (legacy optional)",
+            ]
+        if provider == "apns":
+            return ["PUSH_APNS_TOPIC", "PUSH_APNS_AUTH_TOKEN"]
+        if provider == "wechat":
+            return ["PUSH_WECHAT_ACCESS_TOKEN", "PUSH_WECHAT_TEMPLATE_ID"]
+        return []
+
+    def _missing_push_env_vars(self, provider: str, fcm_service_account_file: str | None = None) -> list[str]:
+        if provider == "fcm":
+            has_service_account = bool(fcm_service_account_file and self._resolve_fcm_project_id(fcm_service_account_file))
+            has_v1 = bool(settings.push_fcm_access_token and settings.push_fcm_project_id)
+            has_legacy = bool(settings.push_fcm_server_key)
+            if has_service_account or has_v1 or has_legacy:
+                return []
+            return ["PUSH_FCM_SERVICE_ACCOUNT_FILE", "PUSH_FCM_ACCESS_TOKEN", "PUSH_FCM_PROJECT_ID"]
+        if provider == "apns":
+            missing = []
+            if not settings.push_apns_topic:
+                missing.append("PUSH_APNS_TOPIC")
+            if not settings.push_apns_auth_token:
+                missing.append("PUSH_APNS_AUTH_TOKEN")
+            return missing
+        if provider == "wechat":
+            missing = []
+            if not settings.push_wechat_access_token:
+                missing.append("PUSH_WECHAT_ACCESS_TOKEN")
+            if not settings.push_wechat_template_id:
+                missing.append("PUSH_WECHAT_TEMPLATE_ID")
+            return missing
+        return []
+
+    def _assess_provider_coverage(
+        self,
+        *,
+        provider: str,
+        providers: dict[str, dict],
+        devices: list[PushDevice],
+    ) -> tuple[dict[str, dict], list[dict]]:
+        platform_counts = Counter(
+            self._normalize_platform(device.platform)
+            for device in devices
+            if bool(getattr(device, "is_active", False))
+        )
+        required_by_platform = {
+            "android": "fcm",
+            "ios": "apns",
+            "wechat": "wechat",
+            "weapp": "wechat",
+            "miniapp": "wechat",
+            "miniprogram": "wechat",
+        }
+
+        provider_coverage: dict[str, dict] = {}
+        gaps: list[dict] = []
+        for platform_name, count in sorted(platform_counts.items()):
+            required_provider = required_by_platform.get(platform_name)
+            if required_provider is None:
+                provider_coverage[platform_name] = {
+                    "device_count": count,
+                    "required_provider": None,
+                    "provider_ready": provider == "log",
+                    "delivery_mode": "log_only" if provider == "log" else "unknown_platform",
+                }
+                continue
+
+            provider_meta = providers.get(required_provider, {})
+            ready = bool(provider_meta.get("ready"))
+            if provider == "multi":
+                enabled_for_platform = ready
+                delivery_mode = "multi"
+            elif provider == required_provider:
+                enabled_for_platform = ready
+                delivery_mode = "direct"
+            elif provider == "log":
+                enabled_for_platform = True
+                delivery_mode = "log_only"
+            else:
+                enabled_for_platform = False
+                delivery_mode = "unsupported_provider_mode"
+
+            provider_coverage[platform_name] = {
+                "device_count": count,
+                "required_provider": required_provider,
+                "provider_ready": ready,
+                "delivery_mode": delivery_mode,
+                "deliverable": enabled_for_platform,
+            }
+
+            if enabled_for_platform:
+                continue
+
+            severity = "error" if settings.push_notification_fail_closed else "warning"
+            if not ready:
+                issue = f"{required_provider}_required_for_{platform_name}"
+                recommendation = f"检测到 {count} 台 {platform_name} 设备，请补齐 {required_provider} 推送配置。"
+            else:
+                issue = f"{provider}_cannot_deliver_{platform_name}"
+                recommendation = (
+                    f"当前 provider={provider} 无法覆盖 {platform_name} 设备，"
+                    f"请切换到 {required_provider} 或 multi 模式。"
+                )
+            gaps.append(
+                {
+                    "platform": platform_name,
+                    "device_count": count,
+                    "required_provider": required_provider,
+                    "configured_provider": provider,
+                    "issue": issue,
+                    "severity": severity,
+                    "recommendation": recommendation,
+                }
+            )
+
+        return provider_coverage, gaps
 
     def _serialize_device(self, device: PushDevice) -> dict:
         return {

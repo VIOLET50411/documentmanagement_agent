@@ -54,7 +54,7 @@ class PDFParser:
         except (ImportError, PDFInfoNotInstalledError, PDFPageCountError, PDFSyntaxError, OSError, RuntimeError, ValueError, TypeError):
             return []
         parsed: list[dict] = []
-        for item in elements:
+        for element_index, item in enumerate(elements, start=1):
             text = str(item).strip()
             if not text:
                 continue
@@ -68,6 +68,9 @@ class PDFParser:
                     "metadata": {
                         "page_number": page_number,
                         "section_title": metadata.get("section_title") or metadata.get("filename") or path.stem,
+                        "element_index": element_index,
+                        "char_count": len(text),
+                        "file_name": path.name,
                         "parser": "unstructured",
                     },
                 }
@@ -91,14 +94,18 @@ class PDFParser:
             if not text:
                 continue
             blocks = self._split_text_blocks(text)
-            for block in blocks:
+            for block_index, block in enumerate(blocks, start=1):
+                element_type = self._infer_block_type(block)
                 parsed.append(
                     {
-                        "type": "paragraph",
+                        "type": element_type,
                         "text": block,
                         "metadata": {
                             "page_number": page_index,
                             "section_title": self._guess_section_title(block, path.stem),
+                            "block_index": block_index,
+                            "char_count": len(block),
+                            "file_name": path.name,
                             "parser": "pypdf",
                         },
                     }
@@ -128,6 +135,18 @@ class PDFParser:
             return "table"
         if "title" in lowered or "header" in lowered:
             return "heading"
+        return "paragraph"
+
+    def _infer_block_type(self, text: str) -> str:
+        compact = text.strip()
+        if not compact:
+            return "paragraph"
+        if re.fullmatch(r"[\u4e00-\u9fff一二三四五六七八九十0-9A-Za-z\-.、()（） ]{1,40}", compact):
+            return "heading"
+        if "|" in compact and compact.count("|") >= 2:
+            return "table"
+        if re.search(r"(表\d+|附表|项目|金额|部门|日期)", compact[:40]) and compact.count(" ") >= 2:
+            return "table"
         return "paragraph"
 
     def _fallback_notice(self, path: Path, reason: str) -> list[dict]:

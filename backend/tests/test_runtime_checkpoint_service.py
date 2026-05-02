@@ -79,6 +79,8 @@ async def test_runtime_checkpoint_service_summarizes_latest_session_state(monkey
     assert rows[0]['rewritten_query'] == '新查询'
     assert rows[0]['warnings'] == ['retrieval_insufficient']
     assert rows[0]['resume_strategy'] == 'native'
+    assert rows[0]['resume_node'] == 'critic'
+    assert rows[0]['resume_capability'] == 'native_ready'
     assert rows[0]['native_checkpoint_enabled'] is True
     assert rows[0]['native_checkpoint_available'] is True
     assert rows[0]['native_checkpoint_compatible'] is True
@@ -114,6 +116,8 @@ async def test_runtime_checkpoint_service_marks_terminal_sessions(monkeypatch):
 
     assert rows[0]['resumable'] is False
     assert rows[0]['resume_strategy'] == 'terminal'
+    assert rows[0]['resume_node'] == 'done'
+    assert rows[0]['resume_capability'] == 'completed'
     assert rows[0]['native_checkpoint_enabled'] is True
     assert rows[0]['native_checkpoint_available'] is False
     assert rows[0]['native_checkpoint_compatible'] is False

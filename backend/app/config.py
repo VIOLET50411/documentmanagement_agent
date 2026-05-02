@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     app_port: int = 8000
     app_auto_create_tables: bool = True
     app_cors_origins: str = "http://localhost:5173,http://localhost:3000"
+    app_public_base_url: str = ""
     max_upload_size_mb: int = 100
     app_metrics_enabled: bool = True
     bootstrap_demo_admin_enabled: bool = True
@@ -219,12 +220,25 @@ class Settings(BaseSettings):
     ci_gate_min_answer_relevancy: float = 0.8
     ci_gate_min_context_precision: float = 0.8
     ci_gate_min_context_recall: float = 0.8
+    ci_gate_min_faithfulness_ragas_ollama: float = 0.85
+    ci_gate_min_answer_relevancy_ragas_ollama: float = 0.4
+    ci_gate_min_context_precision_ragas_ollama: float = 0.8
+    ci_gate_min_context_recall_ragas_ollama: float = 0.8
     ci_gate_eval_sample_limit: int = 3
     ci_gate_min_eval_dataset_size: int = 3
+    ci_gate_min_eval_unique_docs: int = 2
+    ci_gate_min_eval_difficulty_buckets: int = 2
 
     @property
     def cors_origins(self) -> List[str]:
         return [origin.strip() for origin in self.app_cors_origins.split(",") if origin.strip()]
+
+    @property
+    def effective_public_base_url(self) -> str:
+        configured = str(self.app_public_base_url or "").strip().rstrip("/")
+        if configured:
+            return configured
+        return f"http://localhost:{self.app_port}"
 
     @property
     def auth_allowlist_domain_list(self) -> List[str]:

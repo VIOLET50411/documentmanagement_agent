@@ -68,6 +68,7 @@ class LangGraphRuntimeRunner:
                 "msg": "当前未启用 checkpoint 持久化，无法恢复执行。",
                 "degraded": True,
                 "fallback_reason": "checkpoint_store_unavailable",
+                "resume_strategy": "unavailable",
             }
             return
 
@@ -78,6 +79,7 @@ class LangGraphRuntimeRunner:
                 "msg": "未找到可恢复的运行时检查点，请重新发起请求。",
                 "degraded": True,
                 "fallback_reason": "checkpoint_not_found",
+                "resume_strategy": "not_found",
             }
             return
 
@@ -94,6 +96,8 @@ class LangGraphRuntimeRunner:
             "intent": state.get("intent"),
             "rewritten_query": state.get("rewritten_query"),
             "degraded": bool(state.get("degraded", False)),
+            "resume_strategy": "checkpoint_load",
+            "resume_node": checkpoint.node_name,
         }
 
         async with self._native_checkpointer() as checkpointer:
@@ -107,22 +111,32 @@ class LangGraphRuntimeRunner:
                 if next_nodes:
                     async for event in self._run_until_complete(graph, None, config=config):
                         state = event["state"]
-                        yield event["payload"]
-                yield self._done_event(state, agent_fallback="langgraph_runtime_resume")
+                        payload = dict(event["payload"])
+                        payload.setdefault("resume_strategy", "native")
+                        yield payload
+                yield self._done_event(state, agent_fallback="langgraph_runtime_resume", resume_strategy="native")
                 return
 
         next_node = self._next_node_after(checkpoint.node_name, state)
         if next_node is None:
-            yield self._done_event(state, agent_fallback="langgraph_runtime_resume", fallback_reason="resume_terminal_checkpoint")
+            yield self._done_event(
+                state,
+                agent_fallback="langgraph_runtime_resume",
+                fallback_reason="resume_terminal_checkpoint",
+                resume_strategy="terminal",
+            )
             return
 
         while next_node is not None:
             handler = self._node_handler(next_node)
             state = await handler(state)
-            yield await self._emit_node_event(next_node, state)
+            payload = await self._emit_node_event(next_node, state)
+            payload["resume_strategy"] = "manual"
+            payload["resume_node"] = next_node
+            yield payload
             next_node = self._next_node_after(next_node, state)
 
-        yield self._done_event(state, agent_fallback="langgraph_runtime_resume")
+        yield self._done_event(state, agent_fallback="langgraph_runtime_resume", resume_strategy="manual")
 
     async def _run_until_complete(self, graph, initial_input, *, config: dict) -> AsyncIterator[dict]:
         pending_input = initial_input
@@ -256,7 +270,14 @@ class LangGraphRuntimeRunner:
             "degraded": bool(node_state.get("degraded", False)),
         }
 
-    def _done_event(self, state: dict, *, agent_fallback: str, fallback_reason: str | None = None) -> dict:
+    def _done_event(
+        self,
+        state: dict,
+        *,
+        agent_fallback: str,
+        fallback_reason: str | None = None,
+        resume_strategy: str | None = None,
+    ) -> dict:
         return {
             "status": "done",
             "answer": state.get("answer", ""),
@@ -266,6 +287,7 @@ class LangGraphRuntimeRunner:
             "degraded": bool(state.get("degraded", False)),
             "fallback_reason": fallback_reason,
             "checkpoint_iteration": int(state.get("iteration", 0) or 0),
+            "resume_strategy": resume_strategy,
         }
 
     async def _route_intent(self, state: dict) -> dict:

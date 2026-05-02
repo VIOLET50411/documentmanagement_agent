@@ -45,7 +45,7 @@ def _resolve_script_command_template(command_template: str | None = None) -> tup
         return configured, "configured"
 
     if not settings.llm_training_executor_builtin_runner_enabled:
-        raise ValueError("未配置本地脚本训练执行器命令，且未启用内置训练脚本")
+        raise ValueError("未配置本地训练执行器命令，且未启用内置训练脚本。")
 
     runner_path = _builtin_training_runner_path()
     if not runner_path.exists():
@@ -53,7 +53,7 @@ def _resolve_script_command_template(command_template: str | None = None) -> tup
 
     python_executable = str(sys.executable or "").strip()
     if not python_executable:
-        raise ValueError("当前 Python 解释器不可用，无法执行内置训练脚本")
+        raise ValueError("当前 Python 解释器不可用，无法执行内置训练脚本。")
 
     command = f"{shlex.quote(python_executable)} {shlex.quote(str(runner_path))} --request-json {{request_json_path}}"
     if settings.llm_training_executor_allow_plan_fallback:
@@ -93,7 +93,7 @@ def describe_training_runtime(provider: str | None = None) -> dict[str, Any]:
             {
                 "resolved_provider": "mock",
                 "ready": True,
-                "note": "当前配置仍可退回 mock 训练执行器，不会产出真实 LoRA/SFT 结果。",
+                "note": "当前配置仍可退回 mock 训练执行器，但不会产出真实 LoRA/SFT 结果。",
             }
         )
         return payload
@@ -149,7 +149,7 @@ class TrainingExecutor:
         if not serving_model_name:
             raise ValueError("训练执行结果缺少 serving_model_name")
         if mode == "plan_only" or not executed:
-            raise ValueError("训练执行器仅输出训练计划，未生成可注册产物")
+            raise ValueError("训练执行器仅输出训练计划，未生成可注册产物。")
         if not adapter_dir:
             raise ValueError("训练执行结果缺少 adapter_dir")
         if not Path(adapter_dir).exists():
@@ -211,7 +211,7 @@ class MockTrainingExecutor(TrainingExecutor):
             "serving_base_url": settings.llm_enterprise_api_base_url or settings.llm_api_base_url,
             "serving_model_name": settings.llm_enterprise_model_name or settings.llm_model_name,
             "executor_metadata": {"executor": "mock", "mode": "executed"},
-            "notes": "当前为 mock 训练执行器输出，可替换为真实训练服务。",
+            "notes": "当前由 mock 训练执行器输出，可替换为真实训练服务。",
         }
 
 

@@ -20,6 +20,7 @@ from app.api.middleware.auth import decode_token
 from app.dependencies import get_redis, get_session_factory
 from app.models.db.session import ChatMessage, ChatSession
 from app.models.db.user import User
+from app.services.security_audit_service import SecurityAuditService
 
 router = APIRouter()
 
@@ -126,6 +127,7 @@ async def _handle_chat_message(
     from app.security.pii_masker import PIIMasker
 
     redis_client = get_redis()
+    audit = SecurityAuditService(redis_client, db)
 
     session = None
     if thread_id:
@@ -171,6 +173,16 @@ async def _handle_chat_message(
             return
 
         guard_result = await InputGuard().check(content)
+        await _audit_guard_decision(
+            audit,
+            tenant_id=current_user.tenant_id,
+            user_id=current_user.id,
+            trace_id=None,
+            guard_name="input",
+            target="ws.chat.query",
+            message=content,
+            guard_result=guard_result,
+        )
         if not guard_result["safe"]:
             assistant_message.content = guard_result["reason"]
             assistant_message.agent_used = "input_guard"
@@ -215,9 +227,11 @@ async def _handle_chat_message(
 
         final_answer = ""
         citations = []
+        trace_id: str | None = None
         async for event in runtime.run(runtime_request, db=db, current_user=current_user):
             status = event.get("status", "")
             if status == "done":
+                trace_id = event.get("trace_id")
                 final_answer = event.get("answer", "")
                 citations = event.get("citations", [])
                 break
@@ -225,6 +239,16 @@ async def _handle_chat_message(
 
         restored_answer = masker.restore(final_answer, pii_mapping)
         guarded = await OutputGuard().check(restored_answer)
+        await _audit_guard_decision(
+            audit,
+            tenant_id=current_user.tenant_id,
+            user_id=current_user.id,
+            trace_id=trace_id,
+            guard_name="output",
+            target="ws.chat.answer",
+            message=restored_answer,
+            guard_result=guarded,
+        )
         if not guarded["safe"]:
             restored_answer = "输出内容命中安全规则，系统已拦截。"
             citations = []
@@ -251,3 +275,43 @@ async def _handle_chat_message(
     except (asyncio.TimeoutError, RuntimeError, TypeError, ValueError) as exc:
         await websocket.send_json({"type": "error", "msg": f"处理失败：{str(exc)[:200]}"})
         await db.rollback()
+
+
+async def _audit_guard_decision(
+    audit: SecurityAuditService,
+    *,
+    tenant_id: str,
+    user_id: str,
+    trace_id: str | None,
+    guard_name: str,
+    target: str,
+    message: str,
+    guard_result: dict,
+) -> None:
+    result = "blocked" if not guard_result.get("safe", True) else ("warning" if guard_result.get("degraded") else "ok")
+    severity = str(guard_result.get("severity") or ("high" if result == "blocked" else "low"))
+    reason = str(guard_result.get("reason") or "")
+    summary = {
+        "input": "输入安全校验",
+        "output": "输出安全校验",
+    }.get(guard_name, "安全校验")
+    message_text = reason or f"{summary}{'通过' if result == 'ok' else '进入降级模式' if result == 'warning' else '已拦截'}。"
+    await audit.log_event(
+        tenant_id,
+        f"{guard_name}_guard_decision",
+        severity,
+        message_text,
+        user_id=user_id,
+        target=target,
+        result=result,
+        trace_id=trace_id,
+        metadata={
+            "guard": guard_name,
+            "mode": guard_result.get("mode"),
+            "decision_source": guard_result.get("decision_source"),
+            "issues": guard_result.get("issues", []),
+            "degraded": bool(guard_result.get("degraded", False)),
+            "blocked": not bool(guard_result.get("safe", True)),
+            "preview": (message or "")[:120],
+        },
+    )

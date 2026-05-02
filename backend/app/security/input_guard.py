@@ -28,21 +28,71 @@ class InputGuard:
 
     async def check(self, user_input: str) -> dict:
         if not self.enabled or not user_input:
-            return {"safe": True, "reason": "", "severity": "low"}
+            return self._build_result(
+                safe=True,
+                reason="",
+                severity="low",
+                issues=[],
+                mode="disabled" if not self.enabled else "empty",
+                decision_source="disabled" if not self.enabled else "input_validation",
+                degraded=False,
+            )
 
         sidecar_result = await self.sidecar.check_input(user_input)
         if not sidecar_result.get("safe", True):
-            return {
-                "safe": False,
-                "reason": sidecar_result.get("reason") or "Guardrails sidecar 拒绝该输入。",
-                "severity": "high" if sidecar_result.get("mode") == "fail_closed" else "medium",
-                "issues": sidecar_result.get("issues", []),
-                "mode": sidecar_result.get("mode"),
-            }
+            mode = sidecar_result.get("mode") or "sidecar"
+            return self._build_result(
+                safe=False,
+                reason=sidecar_result.get("reason") or "Guardrails sidecar 拒绝该输入。",
+                severity="high" if mode == "fail_closed" else "medium",
+                issues=sidecar_result.get("issues", []),
+                mode=mode,
+                decision_source="guardrails_sidecar",
+                degraded=mode in {"degraded", "fail_closed"},
+            )
 
         lowered = user_input.lower()
         for phrase in self.DANGER_PHRASES:
             if phrase.lower() in lowered:
-                return {"safe": False, "reason": "检测到疑似越权或提示注入请求，已拦截。", "severity": "medium"}
+                return self._build_result(
+                    safe=False,
+                    reason="检测到疑似越权或提示注入请求，已拦截。",
+                    severity="medium",
+                    issues=["prompt_injection_phrase"],
+                    mode="local_rule",
+                    decision_source="local_heuristic",
+                    degraded=False,
+                )
 
-        return {"safe": True, "reason": "", "severity": "low", "mode": sidecar_result.get("mode")}
+        mode = sidecar_result.get("mode") or "sidecar"
+        return self._build_result(
+            safe=True,
+            reason=sidecar_result.get("reason", ""),
+            severity="low",
+            issues=sidecar_result.get("issues", []),
+            mode=mode,
+            decision_source="guardrails_sidecar" if mode in {"sidecar", "degraded", "fail_closed"} else "local_heuristic",
+            degraded=mode == "degraded",
+        )
+
+    def _build_result(
+        self,
+        *,
+        safe: bool,
+        reason: str,
+        severity: str,
+        issues: list[str],
+        mode: str,
+        decision_source: str,
+        degraded: bool,
+    ) -> dict:
+        return {
+            "safe": safe,
+            "blocked": not safe,
+            "reason": reason,
+            "severity": severity,
+            "issues": issues,
+            "mode": mode,
+            "decision_source": decision_source,
+            "degraded": degraded,
+        }

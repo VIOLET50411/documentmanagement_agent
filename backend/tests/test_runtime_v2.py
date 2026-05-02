@@ -49,8 +49,8 @@ async def test_runtime_v2_resume_from_checkpoint_emits_events(monkeypatch):
 
         async def astream_resume(self, _trace_id, *, state_overrides=None):
             assert state_overrides["query"] == "resume me"
-            yield {"status": "reading", "msg": "已恢复"}
-            yield {"status": "done", "answer": "resumed", "citations": [], "agent_used": "dummy_resume"}
+            yield {"status": "reading", "msg": "已恢复", "resume_strategy": "checkpoint_load"}
+            yield {"status": "done", "answer": "resumed", "citations": [], "agent_used": "dummy_resume", "resume_strategy": "manual"}
 
     monkeypatch.setattr("app.agent.runtime.langgraph_runner.LangGraphRuntimeRunner", DummyGraphRunner)
     runtime = AgentRuntime(None)
@@ -69,8 +69,10 @@ async def test_runtime_v2_resume_from_checkpoint_emits_events(monkeypatch):
 
     assert events
     assert events[0]["status"] == "reading"
+    assert events[0]["resume_strategy"] == "checkpoint_load"
     assert events[-1]["status"] == "done"
     assert events[-1]["answer"] == "resumed"
+    assert events[-1]["resume_strategy"] == "manual"
     assert all(item["trace_id"] == "trace-resume" for item in events)
 
 
@@ -153,10 +155,13 @@ async def test_langgraph_runner_prefers_native_checkpoint_resume(monkeypatch):
         events.append(event)
 
     assert events[0]["status"] == "reading"
+    assert events[0]["resume_strategy"] == "checkpoint_load"
     assert events[1]["status"] == "streaming"
+    assert events[1]["resume_strategy"] == "native"
     assert events[-1]["status"] == "done"
     assert events[-1]["answer"] == "native resumed answer"
     assert events[-1]["agent_used"] == "langgraph_runtime_resume"
+    assert events[-1]["resume_strategy"] == "native"
 
 
 def test_langgraph_runner_checkpoint_payload_persists_degraded_state():

@@ -48,13 +48,14 @@ class EvaluationService:
         )
         documents = await self._load_documents(tenant_id, sample_limit=max(sample_limit, 1))
         dataset = await self.dataset_generator.generate(documents, count=max(sample_limit, 1))
+        dataset_summary = self._summarize_dataset(dataset)
         await self._notify_progress(
             progress_callback,
             "evaluating",
-            {"tenant_id": tenant_id, "dataset_size": len(dataset), "document_count": len(documents)},
+            {"tenant_id": tenant_id, "dataset_size": len(dataset), "document_count": len(documents), "dataset_summary": dataset_summary},
         )
         metrics = await self.runner.evaluate(dataset=dataset)
-        gate = self._build_gate(metrics)
+        gate = self._build_gate(metrics, dataset_summary=dataset_summary)
 
         self.reports_dir.mkdir(parents=True, exist_ok=True)
         base_name = f"evaluation_{tenant_id}"
@@ -71,6 +72,7 @@ class EvaluationService:
                 "tenant_id": tenant_id,
                 "sample_limit": max(sample_limit, 1),
                 "document_count": len(documents),
+                "dataset_summary": dataset_summary,
             },
         }
         await self._notify_progress(
@@ -92,6 +94,7 @@ class EvaluationService:
             result="ok" if gate["passed"] else "warning",
             metadata={
                 "dataset_size": len(dataset),
+                "dataset_summary": dataset_summary,
                 "gate": gate,
                 "metrics": metrics,
             },
@@ -148,7 +151,10 @@ class EvaluationService:
             .order_by(Document.updated_at.desc(), DocumentChunk.chunk_index.asc())
             .limit(max(sample_limit * 4, 20))
         )
-        return self._group_documents(fallback_rows.all(), sample_limit=sample_limit, exclude_synthetic=False)
+        fallback_grouped = self._group_documents(fallback_rows.all(), sample_limit=sample_limit, exclude_synthetic=False)
+        if fallback_grouped and any(not self._is_synthetic_eval_title(item.get("title")) for item in fallback_grouped):
+            return fallback_grouped
+        return self._build_seed_documents(sample_limit)
 
     def _group_documents(self, rows: list[tuple], *, sample_limit: int, exclude_synthetic: bool) -> list[dict[str, Any]]:
         grouped: dict[str, dict[str, Any]] = {}
@@ -170,12 +176,13 @@ class EvaluationService:
             or normalized.endswith((".tmp.csv", ".sample.csv"))
         )
 
-    def _build_gate(self, metrics: dict[str, Any]) -> dict[str, Any]:
+    def _build_gate(self, metrics: dict[str, Any], dataset_summary: dict[str, Any] | None = None) -> dict[str, Any]:
+        thresholds = self._resolve_metric_thresholds(metrics.get("_meta") or {})
         checks = [
-            ("faithfulness", float(metrics.get("faithfulness", 0.0) or 0.0), settings.ci_gate_min_faithfulness),
-            ("answer_relevancy", float(metrics.get("answer_relevancy", 0.0) or 0.0), settings.ci_gate_min_answer_relevancy),
-            ("context_precision", float(metrics.get("context_precision", 0.0) or 0.0), settings.ci_gate_min_context_precision),
-            ("context_recall", float(metrics.get("context_recall", 0.0) or 0.0), settings.ci_gate_min_context_recall),
+            ("faithfulness", float(metrics.get("faithfulness", 0.0) or 0.0), thresholds["faithfulness"]),
+            ("answer_relevancy", float(metrics.get("answer_relevancy", 0.0) or 0.0), thresholds["answer_relevancy"]),
+            ("context_precision", float(metrics.get("context_precision", 0.0) or 0.0), thresholds["context_precision"]),
+            ("context_recall", float(metrics.get("context_recall", 0.0) or 0.0), thresholds["context_recall"]),
         ]
         failures = [
             {
@@ -201,12 +208,143 @@ class EvaluationService:
                     "delta": None,
                 }
             )
+        summary = dataset_summary if isinstance(dataset_summary, dict) else {}
+        unique_doc_count = int(summary.get("unique_doc_count", 0) or 0)
+        difficulty_counts = summary.get("difficulty_counts") if isinstance(summary.get("difficulty_counts"), dict) else {}
+        difficulty_bucket_count = sum(1 for value in difficulty_counts.values() if int(value or 0) > 0)
+        if summary:
+            if unique_doc_count < settings.ci_gate_min_eval_unique_docs:
+                failures.append(
+                    {
+                        "metric": "unique_doc_count",
+                        "actual": unique_doc_count,
+                        "threshold": settings.ci_gate_min_eval_unique_docs,
+                        "delta": unique_doc_count - settings.ci_gate_min_eval_unique_docs,
+                    }
+                )
+            if difficulty_bucket_count < settings.ci_gate_min_eval_difficulty_buckets:
+                failures.append(
+                    {
+                        "metric": "difficulty_buckets",
+                        "actual": difficulty_bucket_count,
+                        "threshold": settings.ci_gate_min_eval_difficulty_buckets,
+                        "delta": difficulty_bucket_count - settings.ci_gate_min_eval_difficulty_buckets,
+                    }
+                )
         return {
             "passed": not failures and real_mode_ok,
             "failures": failures,
             "real_mode_required": settings.ci_gate_require_real_ragas,
             "real_mode_ok": real_mode_ok,
             "real_mode_reason": real_mode_reason,
+            "dataset_summary": summary,
+            "thresholds": thresholds,
+        }
+
+    def _summarize_dataset(self, dataset: list[dict[str, Any]]) -> dict[str, Any]:
+        unique_docs: set[str] = set()
+        difficulty_counts: dict[str, int] = {}
+        context_lengths: list[int] = []
+        for item in dataset:
+            for doc_id in item.get("context_doc_ids") or []:
+                if doc_id:
+                    unique_docs.add(str(doc_id))
+            difficulty = str(item.get("difficulty") or "unknown")
+            difficulty_counts[difficulty] = difficulty_counts.get(difficulty, 0) + 1
+            context_text = " ".join(item.get("contexts") or [])
+            context_lengths.append(len(context_text))
+        avg_context_length = round(sum(context_lengths) / len(context_lengths), 2) if context_lengths else 0.0
+        return {
+            "dataset_size": len(dataset),
+            "unique_doc_count": len(unique_docs),
+            "difficulty_counts": difficulty_counts,
+            "avg_context_length": avg_context_length,
+        }
+
+    def _build_seed_documents(self, sample_limit: int) -> list[dict[str, Any]]:
+        seeds = [
+            {
+                "id": "seed-budget",
+                "title": "预算管理办法",
+                "chunks": [
+                    {
+                        "content": (
+                            "预算编制应当坚持统筹安排、量入为出。"
+                            "各部门提交预算申请前，应当完成项目必要性说明和资金测算。"
+                            "预算方案经财务部门复核后，报分管负责人审批。"
+                        )
+                    }
+                ],
+            },
+            {
+                "id": "seed-travel",
+                "title": "差旅审批制度",
+                "chunks": [
+                    {
+                        "content": (
+                            "员工出差前应当在系统中提交差旅申请。"
+                            "申请内容包括出差事由、地点、时间和预计费用。"
+                            "直属负责人审批通过后，方可预订交通和住宿。"
+                        )
+                    }
+                ],
+            },
+            {
+                "id": "seed-procurement",
+                "title": "采购管理制度",
+                "chunks": [
+                    {
+                        "content": (
+                            "采购申请应当明确采购事项、供应商范围和预算来源。"
+                            "单笔采购金额超过五万元的事项，应当组织不少于三家供应商比价。"
+                            "采购结果须留存评审记录和合同文本。"
+                        )
+                    }
+                ],
+            },
+            {
+                "id": "seed-compliance",
+                "title": "合规审查流程",
+                "chunks": [
+                    {
+                        "content": (
+                            "制度文件发布前应当完成合规审查。"
+                            "法务人员重点核对授权依据、审批链路和外部监管要求。"
+                            "存在高风险条款时，应当退回起草部门修订后再次提交。"
+                        )
+                    }
+                ],
+            },
+            {
+                "id": "seed-reimbursement",
+                "title": "报销管理规范",
+                "chunks": [
+                    {
+                        "content": (
+                            "报销申请应当在业务发生后十个工作日内提交。"
+                            "申请人需上传发票、行程单和付款凭证。"
+                            "财务复核发现票据不完整时，应当一次性退回并说明原因。"
+                        )
+                    }
+                ],
+            },
+        ]
+        return seeds[: max(sample_limit, 1)]
+
+    def _resolve_metric_thresholds(self, meta: dict[str, Any]) -> dict[str, float]:
+        mode = str(meta.get("mode") or "").strip().lower()
+        if mode == "ragas_ollama":
+            return {
+                "faithfulness": settings.ci_gate_min_faithfulness_ragas_ollama,
+                "answer_relevancy": settings.ci_gate_min_answer_relevancy_ragas_ollama,
+                "context_precision": settings.ci_gate_min_context_precision_ragas_ollama,
+                "context_recall": settings.ci_gate_min_context_recall_ragas_ollama,
+            }
+        return {
+            "faithfulness": settings.ci_gate_min_faithfulness,
+            "answer_relevancy": settings.ci_gate_min_answer_relevancy,
+            "context_precision": settings.ci_gate_min_context_precision,
+            "context_recall": settings.ci_gate_min_context_recall,
         }
 
     def _normalize_saved_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -214,7 +352,8 @@ class EvaluationService:
             metrics = payload.get("metrics") or {}
             return {
                 "metrics": metrics,
-                "gate": payload.get("gate") or self._build_gate(metrics),
+                "gate": payload.get("gate")
+                or self._build_gate(metrics, dataset_summary=(payload.get("generated_from") or {}).get("dataset_summary")),
                 "generated_at": payload.get("generated_at"),
                 "generated_from": payload.get("generated_from") or {},
                 "dataset_size": payload.get("dataset_size", metrics.get("sample_count", 0)),

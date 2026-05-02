@@ -20,6 +20,7 @@ from app.dependencies import get_db, get_redis
 from app.models.db.session import ChatMessage, ChatSession
 from app.models.db.user import User
 from app.models.schemas.chat import ChatRequest, ChatResponse
+from app.services.security_audit_service import SecurityAuditService
 
 router = APIRouter()
 
@@ -48,6 +49,7 @@ async def chat_message(
     from app.security.input_guard import InputGuard
     from app.security.output_guard import OutputGuard
     from app.security.pii_masker import PIIMasker
+    audit = SecurityAuditService(redis_client, db)
 
     cache = SemanticCache(redis_client)
     cached = await cache.get(request.message, user_id=current_user.id)
@@ -65,6 +67,16 @@ async def chat_message(
         )
 
     guard_result = await InputGuard().check(request.message)
+    await _audit_guard_decision(
+        audit,
+        tenant_id=current_user.tenant_id,
+        user_id=current_user.id,
+        trace_id=None,
+        guard_name="input",
+        target="chat.query",
+        message=request.message,
+        guard_result=guard_result,
+    )
     if not guard_result["safe"]:
         assistant_message.content = guard_result["reason"]
         assistant_message.agent_used = "input_guard"
@@ -107,6 +119,16 @@ async def chat_message(
 
     restored_answer = masker.restore(final_answer, pii_mapping)
     guarded_output = await OutputGuard().check(restored_answer)
+    await _audit_guard_decision(
+        audit,
+        tenant_id=current_user.tenant_id,
+        user_id=current_user.id,
+        trace_id=None,
+        guard_name="output",
+        target="chat.answer",
+        message=restored_answer,
+        guard_result=guarded_output,
+    )
     if not guarded_output["safe"]:
         restored_answer = "输出内容命中安全规则，系统已拦截。"
         citations = []
@@ -238,8 +260,6 @@ async def chat_stream(
         from app.security.pii_masker import PIIMasker
         from app.security.watermark import Watermarker
         from app.services.dlp_forensics_service import DLPForensicsService
-        from app.services.security_audit_service import SecurityAuditService
-
         watermarker = Watermarker()
         cache = SemanticCache(redis_client)
         audit = SecurityAuditService(redis_client, db)
@@ -280,17 +300,17 @@ async def chat_stream(
                 return
 
             guard_result = await InputGuard().check(request.message)
+            await _audit_guard_decision(
+                audit,
+                tenant_id=current_user.tenant_id,
+                user_id=current_user.id,
+                trace_id=request_trace_id,
+                guard_name="input",
+                target="chat.query",
+                message=request.message,
+                guard_result=guard_result,
+            )
             if not guard_result["safe"]:
-                await audit.log_event(
-                    current_user.tenant_id,
-                    "input_blocked",
-                    guard_result.get("severity", "medium"),
-                    guard_result["reason"],
-                    user_id=current_user.id,
-                    target="chat.query",
-                    result="blocked",
-                    metadata={"query": request.message[:200]},
-                )
                 assistant_message.content = guard_result["reason"]
                 assistant_message.agent_used = "input_guard"
                 yield await emit({"status": "error", "msg": guard_result["reason"]})
@@ -329,17 +349,17 @@ async def chat_stream(
 
             restored_answer = masker.restore(final_answer, pii_mapping)
             guarded_output = await OutputGuard().check(restored_answer)
+            await _audit_guard_decision(
+                audit,
+                tenant_id=current_user.tenant_id,
+                user_id=current_user.id,
+                trace_id=request_trace_id,
+                guard_name="output",
+                target="chat.answer",
+                message=restored_answer,
+                guard_result=guarded_output,
+            )
             if not guarded_output["safe"]:
-                await audit.log_event(
-                    current_user.tenant_id,
-                    "output_blocked",
-                    "high",
-                    "输出命中安全规则",
-                    user_id=current_user.id,
-                    target="chat.answer",
-                    result="blocked",
-                    metadata={"issues": guarded_output.get("issues", [])},
-                )
                 restored_answer = "输出内容命中安全规则，系统已拦截。"
                 citations = []
                 final_agent = "output_guard"
@@ -450,6 +470,46 @@ async def _incr_runtime_counter(redis_client, tenant_id: str, name: str) -> None
     key = f"runtime:counters:{tenant_id}"
     await redis_client.hincrby(key, name, 1)
     await redis_client.expire(key, 14 * 24 * 3600)
+
+
+async def _audit_guard_decision(
+    audit: SecurityAuditService,
+    *,
+    tenant_id: str,
+    user_id: str,
+    trace_id: str | None,
+    guard_name: str,
+    target: str,
+    message: str,
+    guard_result: dict,
+) -> None:
+    result = "blocked" if not guard_result.get("safe", True) else ("warning" if guard_result.get("degraded") else "ok")
+    severity = str(guard_result.get("severity") or ("high" if result == "blocked" else "low"))
+    reason = str(guard_result.get("reason") or "")
+    summary = {
+        "input": "输入安全校验",
+        "output": "输出安全校验",
+    }.get(guard_name, "安全校验")
+    message_text = reason or f"{summary}{'通过' if result == 'ok' else '进入降级模式' if result == 'warning' else '已拦截'}。"
+    await audit.log_event(
+        tenant_id,
+        f"{guard_name}_guard_decision",
+        severity,
+        message_text,
+        user_id=user_id,
+        target=target,
+        result=result,
+        trace_id=trace_id,
+        metadata={
+            "guard": guard_name,
+            "mode": guard_result.get("mode"),
+            "decision_source": guard_result.get("decision_source"),
+            "issues": guard_result.get("issues", []),
+            "degraded": bool(guard_result.get("degraded", False)),
+            "blocked": not bool(guard_result.get("safe", True)),
+            "preview": (message or "")[:120],
+        },
+    )
 
 
 def _parse_resume_from_last_event_id(value: str | None) -> tuple[str | None, int]:

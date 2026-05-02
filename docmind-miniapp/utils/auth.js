@@ -15,6 +15,16 @@ function getApiBase() {
   return app.globalData.apiBase
 }
 
+function extractErrorMessage(payload, fallback) {
+  if (!payload) return fallback
+  if (typeof payload === 'string') return payload
+  if (payload instanceof Error && payload.message) return payload.message
+  if (payload.errMsg) return payload.errMsg
+  if (payload.data && typeof payload.data.detail === 'string') return payload.data.detail
+  if (typeof payload.statusCode === 'number') return `请求失败（${payload.statusCode}）`
+  return fallback
+}
+
 function requestWithAuth(options) {
   const token = getStorage('access_token')
   return new Promise((resolve, reject) => {
@@ -49,26 +59,26 @@ function requestWithAuth(options) {
                     return
                   }
                   console.error('requestWithAuth retry failed', options.url, retryResponse)
-                  reject(retryResponse)
+                  reject(new Error(extractErrorMessage(retryResponse, '认证刷新后重试失败')))
                 },
                 fail: (retryError) => {
                   console.error('requestWithAuth retry timeout/fail', options.url, retryError)
-                  reject(retryError)
+                  reject(new Error(extractErrorMessage(retryError, '认证刷新后请求失败')))
                 },
               })
             })
             .catch((refreshError) => {
               console.error('refreshAccessToken failed', refreshError)
-              reject(response)
+              reject(new Error(extractErrorMessage(refreshError, '刷新登录状态失败')))
             })
           return
         }
         console.error('requestWithAuth failed', options.url, response)
-        reject(response)
+        reject(new Error(extractErrorMessage(response, '请求失败')))
       },
       fail: (error) => {
         console.error('requestWithAuth timeout/fail', options.url, error)
-        reject(error)
+        reject(new Error(extractErrorMessage(error, '请求超时或网络不可用')))
       },
     })
   })
@@ -97,11 +107,11 @@ function refreshAccessToken() {
           return
         }
         console.error('refresh token exchange failed', tokenRes)
-        reject(tokenRes)
+        reject(new Error(extractErrorMessage(tokenRes, '刷新令牌失败')))
       },
       fail: (error) => {
         console.error('refresh token request failed', error)
-        reject(error)
+        reject(new Error(extractErrorMessage(error, '刷新令牌请求失败')))
       },
     })
   })
@@ -127,7 +137,7 @@ function loginWithPkce({ username, password }) {
         const code = authorizeRes.data && authorizeRes.data.code
         if (!code) {
           console.error('authorize failed', authorizeRes)
-          reject(authorizeRes)
+          reject(new Error(extractErrorMessage(authorizeRes, '移动授权失败')))
           return
         }
         wx.request({
@@ -149,20 +159,20 @@ function loginWithPkce({ username, password }) {
               return
             }
             console.error('token exchange failed', tokenRes)
-            reject(tokenRes)
+            reject(new Error(extractErrorMessage(tokenRes, '令牌交换失败')))
           },
           fail: (error) => {
             console.error('token request failed', error)
-            reject(error)
+            reject(new Error(extractErrorMessage(error, '令牌请求失败')))
           },
         })
       },
       fail: (error) => {
         console.error('authorize request failed', error)
-        reject(error)
+        reject(new Error(extractErrorMessage(error, '移动授权请求失败')))
       },
     })
   })
 }
 
-module.exports = { getStorage, setStorage, requestWithAuth, loginWithPkce, refreshAccessToken }
+module.exports = { getStorage, setStorage, requestWithAuth, loginWithPkce, refreshAccessToken, extractErrorMessage }

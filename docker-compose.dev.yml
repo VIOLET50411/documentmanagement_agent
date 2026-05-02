@@ -45,6 +45,7 @@ services:
       PUSH_FCM_SERVICE_ACCOUNT_FILE: /run/secrets/docmind/firebase-service-account.json
       DOCMIND_SHARED_DATASETS_DIR: /workspace/datasets
       DOCMIND_REPORTS_DIR: /workspace/reports
+      APP_PUBLIC_BASE_URL: http://localhost:18000
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
@@ -119,6 +120,7 @@ services:
       PUSH_FCM_SERVICE_ACCOUNT_FILE: /run/secrets/docmind/firebase-service-account.json
       DOCMIND_SHARED_DATASETS_DIR: /workspace/datasets
       DOCMIND_REPORTS_DIR: /workspace/reports
+      APP_PUBLIC_BASE_URL: http://localhost:18000
     volumes:
       - ./backend:/app
       - ./datasets:/workspace/datasets
@@ -178,6 +180,7 @@ services:
       PUSH_FCM_SERVICE_ACCOUNT_FILE: /run/secrets/docmind/firebase-service-account.json
       DOCMIND_SHARED_DATASETS_DIR: /workspace/datasets
       DOCMIND_REPORTS_DIR: /workspace/reports
+      APP_PUBLIC_BASE_URL: http://localhost:18000
     volumes:
       - ./backend:/app
       - ./datasets:/workspace/datasets

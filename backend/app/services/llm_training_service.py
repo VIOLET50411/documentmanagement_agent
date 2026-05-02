@@ -25,6 +25,15 @@ class LLMTrainingService:
     PREVIOUS_ACTIVE_MODEL_KEY_PREFIX = "llm:previous_active_model:"
     OLLAMA_ADAPTER_SUPPORTED_PREFIXES = ("llama2", "llama3", "llama3.1", "llama3.2", "mistral", "gemma")
     TERMINAL_JOB_STATUSES = {"completed", "failed", "killed"}
+    FAILURE_PATTERNS = (
+        ("training_runtime_stale", "runtime_stale", True, "检查 Celery worker、Redis 心跳与训练执行器超时配置"),
+        ("training_plan_only_result", "plan_only_result", False, "当前训练执行器仅返回计划结果，需要切换到真实训练运行时"),
+        ("publish_command_failed", "publish_command_failed", True, "检查发布命令、Ollama 挂载路径与模型目录"),
+        ("artifact_dir_missing", "artifact_missing", False, "检查训练产物目录是否生成并已挂载"),
+        ("adapter_manifest_missing", "artifact_manifest_missing", False, "检查训练产物是否完整导出 adapter_manifest.json"),
+        ("unsupported_ollama_adapter_base_model", "unsupported_base_model", False, "切换到受支持的基座模型或启用 merged model 导出"),
+        ("all_health_checks_failed", "serving_verification_failed", True, "检查推理服务健康探针、网络连通性与模型注册状态"),
+    )
 
     def __init__(self, db: AsyncSession, redis_client=None, reports_dir: str | Path | None = None):
         self.db = db
@@ -329,6 +338,120 @@ class LLMTrainingService:
             "executor_runtime": executor_runtime,
         }
 
+    async def summarize_deployment(self, tenant_id: str, *, limit: int = 20) -> dict[str, Any]:
+        jobs = await self.list_jobs(tenant_id, limit=max(limit, 1))
+        models = await self.list_models(tenant_id, limit=max(limit, 1))
+        active = await self.get_active_model(tenant_id)
+        previous_active = await self.get_previous_active_model(tenant_id)
+        verification_by_model_id: dict[str, dict[str, Any]] = {}
+
+        publish_counts = {"published": 0, "publish_ready": 0, "failed": 0, "unknown": 0}
+        verify_counts = {"verified": 0, "failed": 0, "unknown": 0}
+        failure_category_counts: dict[str, int] = {}
+        recent_failures: list[dict[str, Any]] = []
+        latest_job = jobs[0] if jobs else None
+        latest_model = models[0] if models else None
+
+        for job in jobs:
+            result_payload = self._load_json(getattr(job, "result_json", None))
+            verification = result_payload.get("deployment_verification") if isinstance(result_payload.get("deployment_verification"), dict) else None
+            activated_model_id = str(getattr(job, "activated_model_id", "") or "").strip()
+            if activated_model_id and verification:
+                verification_by_model_id[activated_model_id] = verification
+
+        for model in models:
+            metrics = self._load_json(model.metrics_json)
+            publish_result = metrics.get("publish_result") if isinstance(metrics.get("publish_result"), dict) else {}
+            verify_result = metrics.get("verify_result") if isinstance(metrics.get("verify_result"), dict) else {}
+            if not verify_result:
+                fallback_verify = verification_by_model_id.get(str(model.id))
+                verify_result = fallback_verify if isinstance(fallback_verify, dict) else {}
+            if bool(publish_result.get("published")) or str(model.status or "") in {"published", "active"}:
+                publish_counts["published"] += 1
+            elif bool(publish_result.get("publish_ready")):
+                publish_counts["publish_ready"] += 1
+            elif publish_result:
+                publish_counts["failed"] += 1
+            else:
+                publish_counts["unknown"] += 1
+
+            if verify_result.get("ok") is True:
+                verify_counts["verified"] += 1
+            elif verify_result:
+                verify_counts["failed"] += 1
+            else:
+                verify_counts["unknown"] += 1
+
+            if publish_result.get("published") is False or verify_result.get("ok") is False:
+                failure_category = self.classify_failure(
+                    str(publish_result.get("reason") or verify_result.get("reason") or verify_result.get("message") or "")
+                )
+                failure_category_counts[failure_category["category"]] = failure_category_counts.get(failure_category["category"], 0) + 1
+                recent_failures.append(
+                    {
+                        "model_id": model.id,
+                        "model_name": model.model_name,
+                        "status": model.status,
+                        "publish_reason": publish_result.get("reason"),
+                        "verify_reason": verify_result.get("reason") or verify_result.get("message"),
+                        "failure_category": failure_category["category"],
+                        "recoverable": failure_category["recoverable"],
+                        "recommended_action": failure_category["recommended_action"],
+                        "updated_at": model.updated_at.isoformat() if model.updated_at else None,
+                    }
+                )
+
+        return {
+            "tenant_id": tenant_id,
+            "active_model": active,
+            "previous_active_model": previous_active,
+            "latest_job": _serialize_training_job_brief(latest_job) if latest_job else None,
+            "latest_model": _serialize_registry_model_brief(latest_model) if latest_model else None,
+            "publish_counts": publish_counts,
+            "verify_counts": verify_counts,
+            "failure_category_counts": failure_category_counts,
+            "can_rollback": bool(previous_active and previous_active.get("model_id")),
+            "recent_failures": recent_failures[:10],
+            "auto_activate_enabled": bool(settings.llm_training_auto_activate),
+            "publish_enabled": bool(settings.llm_training_publish_enabled),
+            "deploy_verify_enabled": bool(settings.llm_training_deploy_verify_enabled),
+            "deploy_fail_rollback": bool(settings.llm_training_deploy_fail_rollback),
+        }
+
+    def classify_failure(self, error_message: str | None) -> dict[str, Any]:
+        normalized = str(error_message or "").strip()
+        for marker, category, recoverable, recommended_action in self.FAILURE_PATTERNS:
+            if marker and marker in normalized:
+                return {
+                    "category": category,
+                    "recoverable": recoverable,
+                    "recommended_action": recommended_action,
+                }
+        if normalized.startswith("training_runtime_"):
+            return {
+                "category": "runtime_failure",
+                "recoverable": True,
+                "recommended_action": "检查训练运行时、任务队列与依赖服务状态",
+            }
+        return {
+            "category": "unknown_failure",
+            "recoverable": False,
+            "recommended_action": "查看训练任务日志并人工排查失败原因",
+        }
+
+    def build_failure_result(self, error_message: str | None, result: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload = dict(result or {})
+        normalized_error = str(error_message or payload.get("error") or "").strip()
+        classification = self.classify_failure(normalized_error)
+        payload.update(
+            {
+                "ok": False,
+                "error": normalized_error,
+                "failure_classification": classification,
+            }
+        )
+        return payload
+
     async def verify_model_serving(self, *, tenant_id: str, model_id: str) -> dict[str, Any]:
         model = await self.get_model(tenant_id, model_id)
         if model is None:
@@ -353,10 +476,14 @@ class LLMTrainingService:
                     response = await client.get(url)
                     attempts.append({"url": url, "status_code": response.status_code})
                     if response.status_code < 400:
-                        return {"ok": True, "url": url, "status_code": response.status_code, "attempts": attempts}
+                        result = {"ok": True, "url": url, "status_code": response.status_code, "attempts": attempts, "reason": "verified"}
+                        await self._record_verify_outcome(model, result)
+                        return result
                 except httpx.HTTPError as exc:
                     attempts.append({"url": url, "error": str(exc)})
-        return {"ok": False, "url": None, "status_code": None, "attempts": attempts}
+        result = {"ok": False, "url": None, "status_code": None, "attempts": attempts, "reason": "all_health_checks_failed"}
+        await self._record_verify_outcome(model, result)
+        return result
 
     async def update_job_stage(self, job_id: str, *, status: str, stage: str, result: dict[str, Any] | None = None, error: str | None = None) -> None:
         job = await self.db.get(LLMTrainingJob, job_id)
@@ -365,8 +492,11 @@ class LLMTrainingService:
         job.status = status
         job.stage = stage
         job.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        if result is not None:
-            job.result_json = json.dumps(result, ensure_ascii=False)
+        normalized_result = dict(result) if isinstance(result, dict) else None
+        if status == "failed":
+            normalized_result = self.build_failure_result(error, normalized_result)
+        if normalized_result is not None:
+            job.result_json = json.dumps(normalized_result, ensure_ascii=False)
         if error is not None:
             job.error_message = error[:4000]
         if status in {"completed", "failed", "killed"}:
@@ -422,7 +552,12 @@ class LLMTrainingService:
                 if runtime_error:
                     job.error_message = runtime_error[:4000]
                 if isinstance(runtime_result, dict):
-                    job.result_json = json.dumps(runtime_result, ensure_ascii=False)
+                    normalized_result = (
+                        self.build_failure_result(runtime_error, runtime_result)
+                        if runtime_status == "failed"
+                        else runtime_result
+                    )
+                    job.result_json = json.dumps(normalized_result, ensure_ascii=False)
                 if changed:
                     job.updated_at = now
                     job.completed_at = now
@@ -467,6 +602,7 @@ class LLMTrainingService:
         job.status = "failed"
         job.stage = "failed"
         job.error_message = "training_plan_only_result"
+        job.result_json = json.dumps(self.build_failure_result("training_plan_only_result", payload), ensure_ascii=False)
         job.updated_at = now
         job.completed_at = now
         await self.db.flush()
@@ -718,6 +854,15 @@ class LLMTrainingService:
         metrics["publish_command"] = command
         metrics["published_at"] = model.updated_at.isoformat()
         metrics["publish_mode"] = publish_mode
+        metrics["publish_result"] = {
+            "ok": True,
+            "publish_ready": True,
+            "published": True,
+            "reason": "published",
+            "message": "训练产物已发布到服务端模型注册表",
+            "serving_model_name": target_model_name,
+            "publish_mode": publish_mode,
+        }
         model.metrics_json = json.dumps(metrics, ensure_ascii=False)
         await self.db.flush()
         return {
@@ -739,6 +884,17 @@ class LLMTrainingService:
         model.metrics_json = json.dumps(metrics, ensure_ascii=False)
         if payload.get("message"):
             model.notes = str(payload.get("message"))[:2000]
+        await self.db.flush()
+        return payload
+
+    async def _record_verify_outcome(self, model: LLMModelRegistry, payload: dict[str, Any]) -> dict[str, Any]:
+        model.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        metrics = self._load_json(getattr(model, "metrics_json", None))
+        payload = {**payload, "verified_at": model.updated_at.isoformat()}
+        metrics["verify_result"] = payload
+        model.metrics_json = json.dumps(metrics, ensure_ascii=False)
+        if payload.get("ok") is True and getattr(model, "status", None) == "published":
+            model.status = "verified"
         await self.db.flush()
         return payload
 

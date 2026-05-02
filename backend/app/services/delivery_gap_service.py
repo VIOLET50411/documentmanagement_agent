@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.db.llm_training import LLMModelRegistry, LLMTrainingJob
 from app.services.llm_training_service import LLMTrainingService
+from app.services.mobile_oauth_service import MobileOAuthService
+from app.services.push_notification_service import PushNotificationService
 from app.services.security_policy_service import SecurityPolicyService
 from app.training.executor import describe_training_runtime
 
@@ -20,8 +22,9 @@ from app.training.executor import describe_training_runtime
 class DeliveryGapService:
     """Generate a structured progress and gap report for admins."""
 
-    def __init__(self, db: AsyncSession | None = None):
+    def __init__(self, db: AsyncSession | None = None, redis_client=None):
         self.db = db
+        self.redis = redis_client
 
     async def build_report(self, tenant_id: str | None = None) -> dict[str, Any]:
         policy_eval = SecurityPolicyService().evaluate()
@@ -76,6 +79,34 @@ class DeliveryGapService:
         else:
             pending.append("training_publishable_base_model_alignment")
 
+        mobile_auth_status = MobileOAuthService(self.db).status(settings.effective_public_base_url)
+        if mobile_auth_status["ready"]:
+            completed.append("mobile_oauth_runtime_ready")
+        else:
+            pending.append("mobile_oauth_runtime_ready")
+
+        miniapp_status = mobile_auth_status.get("miniapp") or {}
+        if miniapp_status.get("ready"):
+            completed.append("miniapp_oauth_bootstrap_ready")
+        else:
+            pending.append("miniapp_oauth_bootstrap_ready")
+
+        push_status = await PushNotificationService(self.db, self.redis).get_health_summary(tenant_id=effective_tenant)
+        if push_status["ready"]:
+            completed.append("push_notification_runtime_ready")
+        else:
+            pending.append("push_notification_runtime_ready")
+
+        push_providers = push_status.get("providers") if isinstance(push_status.get("providers"), dict) else {}
+        if bool(push_providers.get("wechat", {}).get("ready")):
+            completed.append("wechat_push_provider_ready")
+        else:
+            pending.append("wechat_push_provider_ready")
+        if bool(push_providers.get("apns", {}).get("ready")):
+            completed.append("apns_push_provider_ready")
+        else:
+            pending.append("apns_push_provider_ready")
+
         completed.append("advanced_dlp_and_watermark_forensics")
 
         return {
@@ -94,12 +125,16 @@ class DeliveryGapService:
                 ragas_status["note"],
                 self._build_training_runtime_note(training_runtime),
                 publish_status["note"],
+                self._build_mobile_runtime_note(mobile_auth_status),
+                self._build_push_runtime_note(push_status),
                 f"当前安全策略档位: {policy_eval.get('profile')}",
             ],
             "security_policy": policy_eval,
             "ragas_status": ragas_status,
             "training_runtime_status": training_runtime,
             "training_publish_status": publish_status,
+            "mobile_auth_status": mobile_auth_status,
+            "push_runtime_status": push_status,
         }
 
     def _build_training_runtime_note(self, runtime: dict[str, Any]) -> str:
@@ -113,6 +148,29 @@ class DeliveryGapService:
         if missing:
             return f"{reason}，缺少依赖: {', '.join(str(item) for item in missing)}。"
         return f"{reason}。"
+
+    def _build_mobile_runtime_note(self, status: dict[str, Any]) -> str:
+        if status.get("ready"):
+            miniapp = status.get("miniapp") if isinstance(status.get("miniapp"), dict) else {}
+            if miniapp.get("ready"):
+                return "移动 OAuth 与小程序 bootstrap 均已就绪。"
+            return "移动 OAuth 已就绪，但小程序 bootstrap 仍需补齐客户端或回调配置。"
+        issues = status.get("issues") if isinstance(status.get("issues"), list) else []
+        return f"移动 OAuth 尚未完全就绪，问题: {', '.join(str(item) for item in issues) or 'unknown'}。"
+
+    def _build_push_runtime_note(self, status: dict[str, Any]) -> str:
+        providers = status.get("providers") if isinstance(status.get("providers"), dict) else {}
+        missing = [
+            provider
+            for provider in ("apns", "wechat")
+            if not bool(providers.get(provider, {}).get("ready"))
+        ]
+        if status.get("ready") and not missing:
+            return "推送运行态与多端 provider 均已就绪。"
+        if status.get("ready"):
+            return f"推送主链路已就绪，但以下 provider 仍待补齐: {', '.join(missing)}。"
+        issues = status.get("issues") if isinstance(status.get("issues"), list) else []
+        return f"推送运行态未完全就绪，问题: {', '.join(str(item) for item in issues) or 'unknown'}。"
 
     def _evaluate_ragas_status(self, tenant_id: str) -> dict[str, Any]:
         report_path = Path(settings.docmind_reports_dir) / f"evaluation_{tenant_id}.json"

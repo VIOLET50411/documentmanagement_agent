@@ -1,6 +1,8 @@
 ﻿from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -132,6 +134,150 @@ async def test_push_health_summary_marks_multi_ready_when_subprovider_configured
     assert payload['issues'] == []
     assert payload['active_providers'] == ['fcm']
     assert payload['active_provider_readiness']['fcm']['ready'] is True
+    assert payload['providers']['apns']['missing_env_vars'] == ['PUSH_APNS_TOPIC', 'PUSH_APNS_AUTH_TOKEN']
+    assert payload['providers']['wechat']['missing_env_vars'] == ['PUSH_WECHAT_ACCESS_TOKEN', 'PUSH_WECHAT_TEMPLATE_ID']
+
+
+@pytest.mark.asyncio
+async def test_push_health_summary_reports_platform_gap_when_required_provider_missing(monkeypatch):
+    service = PushNotificationService(db=object(), redis_client=object())
+    monkeypatch.setattr(settings, 'push_notifications_enabled', True)
+    monkeypatch.setattr(settings, 'push_notification_provider', 'multi')
+    monkeypatch.setattr(settings, 'push_notification_fail_closed', False)
+    monkeypatch.setattr(settings, 'push_fcm_server_key', '')
+    monkeypatch.setattr(settings, 'push_fcm_access_token', 'access-token')
+    monkeypatch.setattr(settings, 'push_fcm_project_id', 'docmind-7bbdd')
+    monkeypatch.setattr(settings, 'push_fcm_service_account_file', '')
+    monkeypatch.setattr(settings, 'push_apns_topic', '')
+    monkeypatch.setattr(settings, 'push_apns_auth_token', '')
+    monkeypatch.setattr(settings, 'push_wechat_access_token', '')
+    monkeypatch.setattr(settings, 'push_wechat_template_id', '')
+
+    async def fake_list_tenant_devices(*, tenant_id: str):
+        assert tenant_id == 'tenant-1'
+        now = datetime.now(timezone.utc)
+        return [
+            SimpleNamespace(platform='android', is_active=True, created_at=now, updated_at=now, last_seen_at=now),
+            SimpleNamespace(platform='ios', is_active=True, created_at=now, updated_at=now, last_seen_at=now),
+        ]
+
+    service._list_tenant_devices = fake_list_tenant_devices  # type: ignore[method-assign]
+
+    payload = await service.get_health_summary(tenant_id='tenant-1')
+
+    assert payload['provider_coverage']['android']['deliverable'] is True
+    assert payload['provider_coverage']['ios']['deliverable'] is False
+    assert payload['delivery_gaps'] == [
+        {
+            'platform': 'ios',
+            'device_count': 1,
+            'required_provider': 'apns',
+            'configured_provider': 'multi',
+            'issue': 'apns_required_for_ios',
+            'severity': 'warning',
+            'recommendation': '检测到 1 台 ios 设备，请补齐 apns 推送配置。',
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_push_health_summary_includes_miniapp_debug_and_recent_events(monkeypatch):
+    class FakeRedis:
+        def __init__(self):
+            self.rows = {
+                'push:events:tenant-1:user-1': [
+                    json.dumps(
+                        {
+                            'tenant_id': 'tenant-1',
+                            'user_id': 'user-1',
+                            'title': 'DocMind 小程序调试通知',
+                            'status': 'test',
+                            'timestamp': '2026-05-02T10:00:00+00:00',
+                            'delivery': {'provider': 'log', 'providers': {'log': 1}},
+                        },
+                        ensure_ascii=False,
+                    )
+                ]
+            }
+
+        async def scan(self, cursor=0, match=None, count=100):
+            keys = [key for key in self.rows if match is None or key.startswith(match.rstrip('*'))]
+            return 0, keys
+
+        async def lrange(self, key, start, end):
+            rows = self.rows.get(key, [])
+            stop = None if end == -1 else end + 1
+            return rows[start:stop]
+
+    service = PushNotificationService(db=object(), redis_client=FakeRedis())
+    monkeypatch.setattr(settings, 'push_notifications_enabled', True)
+    monkeypatch.setattr(settings, 'push_notification_provider', 'log')
+    monkeypatch.setattr(settings, 'push_notification_fail_closed', False)
+
+    async def fake_list_tenant_devices(*, tenant_id: str):
+        assert tenant_id == 'tenant-1'
+        now = datetime.now(timezone.utc)
+        return [
+            SimpleNamespace(
+                platform='miniapp-debug',
+                is_active=True,
+                device_name='微信开发者工具',
+                app_version='0.1.0',
+                created_at=now,
+                updated_at=now,
+                last_seen_at=now,
+            ),
+            SimpleNamespace(
+                platform='android',
+                is_active=True,
+                device_name='Pixel',
+                app_version='1.0.0',
+                created_at=now,
+                updated_at=now,
+                last_seen_at=now,
+            ),
+        ]
+
+    service._list_tenant_devices = fake_list_tenant_devices  # type: ignore[method-assign]
+
+    payload = await service.get_health_summary(tenant_id='tenant-1')
+
+    assert payload['device_summary']['miniapp_debug']['total'] == 1
+    assert payload['device_summary']['miniapp_debug']['active'] == 1
+    assert payload['recent_event_stats']['count'] == 1
+    assert payload['recent_event_stats']['status_counts'] == {'test': 1}
+    assert payload['recent_events_sample'][0]['title'] == 'DocMind 小程序调试通知'
+
+
+@pytest.mark.asyncio
+async def test_push_health_summary_reports_single_provider_mismatch(monkeypatch):
+    service = PushNotificationService(db=object(), redis_client=object())
+    monkeypatch.setattr(settings, 'push_notifications_enabled', True)
+    monkeypatch.setattr(settings, 'push_notification_provider', 'fcm')
+    monkeypatch.setattr(settings, 'push_notification_fail_closed', True)
+    monkeypatch.setattr(settings, 'push_fcm_server_key', '')
+    monkeypatch.setattr(settings, 'push_fcm_access_token', 'access-token')
+    monkeypatch.setattr(settings, 'push_fcm_project_id', 'docmind-7bbdd')
+    monkeypatch.setattr(settings, 'push_fcm_service_account_file', '')
+    monkeypatch.setattr(settings, 'push_apns_topic', 'com.docmind.app')
+    monkeypatch.setattr(settings, 'push_apns_auth_token', 'apns-token')
+    monkeypatch.setattr(settings, 'push_wechat_access_token', '')
+    monkeypatch.setattr(settings, 'push_wechat_template_id', '')
+
+    async def fake_list_tenant_devices(*, tenant_id: str):
+        assert tenant_id == 'tenant-1'
+        now = datetime.now(timezone.utc)
+        return [
+            SimpleNamespace(platform='ios', is_active=True, created_at=now, updated_at=now, last_seen_at=now),
+        ]
+
+    service._list_tenant_devices = fake_list_tenant_devices  # type: ignore[method-assign]
+
+    payload = await service.get_health_summary(tenant_id='tenant-1')
+
+    assert 'fcm_cannot_deliver_ios' in payload['issues']
+    assert payload['delivery_gaps'][0]['severity'] == 'error'
+    assert payload['delivery_gaps'][0]['recommendation'] == '当前 provider=fcm 无法覆盖 ios 设备，请切换到 apns 或 multi 模式。'
 
 
 @pytest.mark.asyncio
@@ -262,8 +408,6 @@ async def test_fcm_invalid_token_deactivates_device(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_push_device_summary_marks_current_token_status():
-    from types import SimpleNamespace
-
     service = PushNotificationService(redis_client=object())
 
     async def fake_list_devices(*, tenant_id: str, user_id: str):

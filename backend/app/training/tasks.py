@@ -16,6 +16,7 @@ from celery_app import celery
 from app.config import settings
 from app.models.db.llm_training import LLMTrainingJob
 from app.services.llm_training_service import LLMTrainingService
+from app.services.security_audit_service import SecurityAuditService
 from app.training.executor import TrainingExecutionRequest, build_training_executor
 
 
@@ -70,8 +71,19 @@ async def _run_training_job_async(*, training_job_id: str, runtime_task_id: str)
             job = await db.get(LLMTrainingJob, training_job_id)
             if job is None:
                 raise ValueError("训练任务不存在")
+            audit = SecurityAuditService(redis_client, db)
 
             await _persist_job_stage(service, db, training_job_id, status="running", stage="validating")
+            await _audit_training_event(
+                audit,
+                tenant_id=job.tenant_id,
+                user_id=job.created_by,
+                trace_id=runtime_task_id,
+                event_type="llm_training_started",
+                message=f"训练任务开始执行: {job.dataset_name}",
+                result="ok",
+                metadata={"job_id": job.id, "dataset_name": job.dataset_name, "provider": job.provider},
+            )
             await _upsert_runtime_task(
                 runtime_task_id=runtime_task_id,
                 tenant_id=job.tenant_id,
@@ -161,6 +173,16 @@ async def _run_training_job_async(*, training_job_id: str, runtime_task_id: str)
                 },
                 notes=validated_result.get("notes") or "训练产物已注册，可继续接入真实推理服务部署。",
             )
+            await _audit_training_event(
+                audit,
+                tenant_id=job.tenant_id,
+                user_id=job.created_by,
+                trace_id=runtime_task_id,
+                event_type="llm_model_registered",
+                message=f"训练产物已注册: {model.model_name}",
+                result="ok",
+                metadata={"job_id": job.id, "model_id": model.id, "artifact_dir": validated_result["artifact_dir"]},
+            )
             await db.commit()
 
             deployment_verification = None
@@ -173,6 +195,17 @@ async def _run_training_job_async(*, training_job_id: str, runtime_task_id: str)
             }
             if job.activate_on_success and settings.llm_training_auto_activate:
                 publish_result = await service.publish_model_artifact(tenant_id=job.tenant_id, model_id=model.id)
+                await _audit_training_event(
+                    audit,
+                    tenant_id=job.tenant_id,
+                    user_id=job.created_by,
+                    trace_id=runtime_task_id,
+                    event_type="llm_model_publish",
+                    message=str(publish_result.get("message") or "训练产物发布结果已记录"),
+                    result="ok" if publish_result.get("published") else "warning",
+                    severity="medium" if publish_result.get("published") else "high",
+                    metadata={"job_id": job.id, "model_id": model.id, "publish_result": publish_result},
+                )
             publish_ready = bool(publish_result.get("publish_ready"))
             auto_activated = False
             if job.activate_on_success and settings.llm_training_auto_activate and publish_ready:
@@ -187,11 +220,43 @@ async def _run_training_job_async(*, training_job_id: str, runtime_task_id: str)
                 )
                 await service.activate_model(tenant_id=job.tenant_id, model_id=model.id, actor_id=job.created_by)
                 auto_activated = True
+                await _audit_training_event(
+                    audit,
+                    tenant_id=job.tenant_id,
+                    user_id=job.created_by,
+                    trace_id=runtime_task_id,
+                    event_type="llm_model_activated",
+                    message=f"模型已激活: {model.model_name}",
+                    result="ok",
+                    metadata={"job_id": job.id, "model_id": model.id},
+                )
                 if settings.llm_training_deploy_verify_enabled:
                     deployment_verification = await service.verify_model_serving(tenant_id=job.tenant_id, model_id=model.id)
+                    await _audit_training_event(
+                        audit,
+                        tenant_id=job.tenant_id,
+                        user_id=job.created_by,
+                        trace_id=runtime_task_id,
+                        event_type="llm_model_verify",
+                        message="训练模型部署校验完成" if deployment_verification.get("ok") else "训练模型部署校验失败",
+                        result="ok" if deployment_verification.get("ok") else "error",
+                        severity="low" if deployment_verification.get("ok") else "high",
+                        metadata={"job_id": job.id, "model_id": model.id, "verify_result": deployment_verification},
+                    )
                     if not deployment_verification.get("ok"):
                         if settings.llm_training_deploy_fail_rollback:
                             await service.rollback_active_model(tenant_id=job.tenant_id, actor_id=job.created_by)
+                            await _audit_training_event(
+                                audit,
+                                tenant_id=job.tenant_id,
+                                user_id=job.created_by,
+                                trace_id=runtime_task_id,
+                                event_type="llm_model_rollback",
+                                message="部署校验失败，已自动回滚上一版模型",
+                                result="warning",
+                                severity="high",
+                                metadata={"job_id": job.id, "model_id": model.id, "verify_result": deployment_verification},
+                            )
                         raise RuntimeError(f"训练模型部署校验失败: {json.dumps(deployment_verification, ensure_ascii=False)}")
 
             result = {
@@ -217,6 +282,16 @@ async def _run_training_job_async(*, training_job_id: str, runtime_task_id: str)
                 stage="completed",
                 payload=result,
                 terminal=True,
+            )
+            await _audit_training_event(
+                audit,
+                tenant_id=job.tenant_id,
+                user_id=job.created_by,
+                trace_id=runtime_task_id,
+                event_type="llm_training_completed",
+                message=f"训练任务完成: {job.dataset_name}",
+                result="ok",
+                metadata={"job_id": job.id, "model_id": model.id, "publish_ready": publish_ready, "auto_activated": auto_activated},
             )
             await db.commit()
             return result
@@ -307,6 +382,7 @@ async def _mark_job_failure_async(
     reports_dir: Path | None = None,
 ) -> dict:
     tenant_id = "unknown"
+    failure_classification = None
     if db_factory is None:
         engine = create_async_engine(
             settings.postgres_dsn,
@@ -335,7 +411,26 @@ async def _mark_job_failure_async(
             if job is not None:
                 tenant_id = job.tenant_id
                 try:
-                    await service.update_job_stage(training_job_id, status=terminal_status, stage="failed", error=error)
+                    failure_result = service.build_failure_result(error)
+                    failure_classification = failure_result.get("failure_classification")
+                    await service.update_job_stage(
+                        training_job_id,
+                        status=terminal_status,
+                        stage="failed",
+                        result=failure_result,
+                        error=error,
+                    )
+                    await _audit_training_event(
+                        SecurityAuditService(local_redis, db),
+                        tenant_id=job.tenant_id,
+                        user_id=job.created_by,
+                        trace_id=runtime_task_id,
+                        event_type="llm_training_failed",
+                        message=f"训练任务失败: {error[:200]}",
+                        result="error",
+                        severity="high",
+                        metadata={"job_id": job.id, "error": error[:1000], "failure_classification": failure_result.get("failure_classification")},
+                    )
                     await db.commit()
                 except Exception:  # noqa: BLE001
                     await db.rollback()
@@ -348,7 +443,7 @@ async def _mark_job_failure_async(
             training_job_id=training_job_id,
             status=terminal_status,
             stage="failed",
-            payload={"ok": False, "error": error},
+            payload={"ok": False, "error": error, "failure_classification": failure_classification},
             error=error,
             terminal=True,
         )
@@ -411,3 +506,31 @@ async def _upsert_runtime_task(
             return
     finally:
         await client.aclose()
+
+
+async def _audit_training_event(
+    audit: SecurityAuditService,
+    *,
+    tenant_id: str,
+    user_id: str | None,
+    trace_id: str,
+    event_type: str,
+    message: str,
+    result: str,
+    metadata: dict | None = None,
+    severity: str = "low",
+) -> None:
+    try:
+        await audit.log_event(
+            tenant_id,
+            event_type,
+            severity,
+            message,
+            user_id=user_id,
+            target="llm_training",
+            result=result,
+            trace_id=trace_id,
+            metadata=metadata or {},
+        )
+    except Exception:
+        return
