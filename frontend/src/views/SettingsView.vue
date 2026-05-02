@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="settings-page">
     <header class="settings-header">
       <div>
@@ -567,47 +567,59 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
-import { adminApi } from '@/api/admin'
-import { notificationsApi, type PushDevicePayload, type PushDeviceSummary } from '@/api/notifications'
-import { isNativeApp, platformName } from '@/mobile/capacitor'
-import { getStoredPushRegistration, heartbeatStoredPushDevice, registerPushDevice } from '@/mobile/push'
 import { useAuthStore } from '@/stores/auth'
+import { useNotificationsStore } from '@/stores/notifications'
+import { useSettingsStore } from '@/stores/settings'
 import { useThemeStore } from '@/stores/theme'
-
-type PushDeviceRecord = PushDevicePayload & {
-  id: string
-  tenant_id: string
-  user_id: string
-  is_active: boolean
-  created_at?: string
-  updated_at?: string
-  last_seen_at?: string
-}
-
-type PushEventRecord = {
-  document_id?: string
-  title?: string
-  body?: string
-  status?: string
-  timestamp?: string
-  devices?: Array<Record<string, unknown>>
-}
-
-type StoredPushRegistration = {
-  token: string
-  platform: string
-  deviceName?: string
-  appVersion?: string
-}
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+const notificationsStore = useNotificationsStore()
+const settingsStore = useSettingsStore()
 const themeStore = useThemeStore()
 const user = computed(() => authStore.user)
 const isAdmin = computed(() => user.value?.role === 'ADMIN')
+
+const {
+  activeSection,
+  responseStyle,
+  responseLanguage,
+  notificationsEnabled,
+  statusHintsEnabled,
+  loadingAdminDiagnostics,
+  llmDomainConfig,
+  runtimeMetrics,
+  retrievalIntegrity,
+  securityPolicy,
+  mobileAuthStatus,
+  pushProviderStatus,
+  backendStatus,
+} = storeToRefs(settingsStore)
+
+const {
+  isNativeRuntime,
+  nativePlatformLabel,
+  devices,
+  events,
+  deviceSummary,
+  loadingDevices,
+  loadingEvents,
+  loadingSummary,
+  registering,
+  unregisteringToken,
+  registeringNativePush,
+  heartbeatingNativePush,
+  deviceMessage,
+  nativePushMessage,
+  storedPushRegistration,
+  deviceForm,
+  currentTokenStatusLabel,
+  currentTokenStatusDetail,
+} = storeToRefs(notificationsStore)
 
 const sections = [
   { key: 'general', label: '通用', description: '外观、资料与提示' },
@@ -619,85 +631,25 @@ const sections = [
   { key: 'mobile', label: '移动端', description: 'OAuth、推送与接入 readiness' },
   { key: 'devices', label: '设备', description: '推送登记与状态' },
   { key: 'events', label: '通知', description: '最近推送事件' },
-]
-
-const activeSection = ref('general')
-const responseStyle = ref('direct')
-const responseLanguage = ref('zh-CN')
-const notificationsEnabled = ref(true)
-const statusHintsEnabled = ref(true)
-const registeringNativePush = ref(false)
-const heartbeatingNativePush = ref(false)
-const nativePushMessage = ref('')
-
-const isNativeRuntime = isNativeApp()
-const nativePlatform = platformName()
-const nativePlatformLabel = nativePlatform === 'android' ? 'Android' : nativePlatform === 'ios' ? 'iOS' : nativePlatform
-
-const deviceForm = reactive<PushDevicePayload>({
-  platform: nativePlatform === 'android' || nativePlatform === 'ios' ? nativePlatform : 'android',
-  device_token: '',
-  device_name: '',
-  app_version: '1.0.0',
-})
-
-const devices = ref<PushDeviceRecord[]>([])
-const events = ref<PushEventRecord[]>([])
-const deviceSummary = ref<PushDeviceSummary | null>(null)
-const loadingDevices = ref(false)
-const loadingEvents = ref(false)
-const loadingSummary = ref(false)
-const registering = ref(false)
-const unregisteringToken = ref('')
-const deviceMessage = ref('')
-const storedPushRegistration = ref<StoredPushRegistration | null>(getStoredPushRegistration())
-const loadingAdminDiagnostics = ref(false)
-const llmDomainConfig = ref<Record<string, any> | null>(null)
-const runtimeMetrics = ref<Record<string, any> | null>(null)
-const retrievalIntegrity = ref<Record<string, any> | null>(null)
-const securityPolicy = ref<Record<string, any> | null>(null)
-const mobileAuthStatus = ref<Record<string, any> | null>(null)
-const pushProviderStatus = ref<Record<string, any> | null>(null)
-const backendStatus = ref<Record<string, any> | null>(null)
-
-const currentTokenStatusLabel = computed(() => {
-  const status = deviceSummary.value?.current_token_status || 'not_provided'
-  const labelMap: Record<string, string> = {
-    matched_active: '已匹配并启用',
-    matched_inactive: '已匹配但已停用',
-    not_found: '本地存在但后端未匹配',
-    not_provided: '未提供当前 token',
-  }
-  return labelMap[status] || status
-})
-
-const currentTokenStatusDetail = computed(() => {
-  const summary = deviceSummary.value
-  if (!summary) return '设备状态汇总尚未加载。'
-  if (summary.current_token_status === 'matched_active' && summary.current_device) {
-    return `最近活跃：${formatDate(summary.current_device.last_seen_at || summary.current_device.updated_at)}`
-  }
-  if (summary.current_token_status === 'matched_inactive') {
-    return '当前本地 token 已在后端登记，但状态为停用，建议重新绑定或发送心跳。'
-  }
-  if (summary.current_token_status === 'not_found') {
-    return '本地 token 尚未在后端登记，建议重新注册当前设备。'
-  }
-  return '当前设备还没有本地保存的 token。'
-})
+] as const
 
 watch(
   () => route.query.section,
   (section) => {
     if (typeof section === 'string' && sections.some((item) => item.key === section)) {
-      activeSection.value = section
+      settingsStore.setSection(section as (typeof sections)[number]['key'])
     }
   },
   { immediate: true }
 )
 
+watch(responseStyle, (value) => settingsStore.setResponseStyle(value))
+watch(responseLanguage, (value) => settingsStore.setResponseLanguage(value))
+watch(notificationsEnabled, (value) => settingsStore.setNotificationsEnabled(value))
+watch(statusHintsEnabled, (value) => settingsStore.setStatusHintsEnabled(value))
+
 function setSection(section: string) {
-  activeSection.value = section
+  settingsStore.setSection(section as (typeof sections)[number]['key'])
   router.replace({ query: { ...route.query, section } })
 }
 
@@ -723,166 +675,34 @@ function formatPercent(value?: number | null) {
   return `${(Number(value) * 100).toFixed(1)}%`
 }
 
-function maskToken(token?: string) {
-  if (!token) return '-'
-  if (token.length <= 12) return token
-  return `${token.slice(0, 6)}...${token.slice(-6)}`
-}
+const maskToken = notificationsStore.maskToken
 
-async function loadDevices() {
-  loadingDevices.value = true
-  try {
-    devices.value = await notificationsApi.listDevices()
-    storedPushRegistration.value = getStoredPushRegistration()
-  } finally {
-    loadingDevices.value = false
-  }
-}
-
-async function loadDeviceSummary() {
-  loadingSummary.value = true
-  try {
-    deviceSummary.value = await notificationsApi.summarizeDevices(storedPushRegistration.value?.token)
-  } finally {
-    loadingSummary.value = false
-  }
+async function loadPushData() {
+  await notificationsStore.loadPushData()
 }
 
 async function loadEvents() {
-  loadingEvents.value = true
-  try {
-    const response = await notificationsApi.listEvents(20)
-    events.value = response?.items || []
-  } finally {
-    loadingEvents.value = false
-  }
-}
-
-async function loadPushData() {
-  storedPushRegistration.value = getStoredPushRegistration()
-  await Promise.all([loadDevices(), loadDeviceSummary(), loadEvents()])
+  await notificationsStore.loadEvents()
 }
 
 async function loadAdminDiagnostics() {
-  if (!isAdmin.value) return
-  loadingAdminDiagnostics.value = true
-  try {
-    const [
-      llmDomainResponse,
-      runtimeMetricsResponse,
-      retrievalIntegrityResponse,
-      securityPolicyResponse,
-      mobileAuthResponse,
-      pushProviderResponse,
-      backendStatusResponse,
-    ] = await Promise.all([
-      adminApi.getLLMDomainConfig(),
-      adminApi.getRuntimeMetrics(120),
-      adminApi.getRetrievalIntegrity(12),
-      adminApi.getSecurityPolicy(),
-      adminApi.getMobileAuthStatus(),
-      adminApi.getPushNotificationStatus(),
-      adminApi.getBackendStatus(),
-    ])
-    llmDomainConfig.value = llmDomainResponse
-    runtimeMetrics.value = runtimeMetricsResponse
-    retrievalIntegrity.value = retrievalIntegrityResponse
-    securityPolicy.value = securityPolicyResponse
-    mobileAuthStatus.value = mobileAuthResponse
-    pushProviderStatus.value = pushProviderResponse
-    backendStatus.value = backendStatusResponse
-  } finally {
-    loadingAdminDiagnostics.value = false
-  }
+  await settingsStore.loadAdminDiagnostics(isAdmin.value)
 }
 
 async function registerCurrentDevicePush() {
-  if (!isNativeRuntime) {
-    nativePushMessage.value = '当前运行环境不是原生 App，无法自动申请系统推送 token。'
-    return
-  }
-  registeringNativePush.value = true
-  nativePushMessage.value = ''
-  try {
-    const result = await registerPushDevice({
-      platform: nativePlatform,
-      deviceName: user.value?.username ? `${user.value.username} 的${nativePlatformLabel}设备` : `${nativePlatformLabel} 设备`,
-      appVersion: deviceForm.app_version || '1.0.0',
-    })
-    storedPushRegistration.value = getStoredPushRegistration()
-    if (result && typeof result === 'object' && 'token' in result && typeof result.token === 'string') {
-      deviceForm.platform = nativePlatform
-      deviceForm.device_token = result.token
-      nativePushMessage.value = `当前设备已自动注册，token 已同步到后端：${maskToken(result.token)}`
-      await loadPushData()
-      return
-    }
-    nativePushMessage.value = '推送权限未授予，未能获取设备 token。'
-  } catch (error: any) {
-    nativePushMessage.value = error?.message || error?.response?.data?.detail || '自动注册当前设备失败，请稍后重试。'
-  } finally {
-    registeringNativePush.value = false
-  }
+  await notificationsStore.registerCurrentDevicePush(user.value?.username)
 }
 
 async function heartbeatCurrentDevicePush() {
-  if (!storedPushRegistration.value) {
-    nativePushMessage.value = '当前没有本地保存的设备 token，无法发送心跳。'
-    return
-  }
-  heartbeatingNativePush.value = true
-  nativePushMessage.value = ''
-  try {
-    await heartbeatStoredPushDevice()
-    nativePushMessage.value = '设备心跳已发送，后端活跃时间已刷新。'
-    await loadPushData()
-  } catch (error: any) {
-    nativePushMessage.value = error?.message || error?.response?.data?.detail || '设备心跳发送失败，请稍后重试。'
-  } finally {
-    heartbeatingNativePush.value = false
-  }
+  await notificationsStore.heartbeatCurrentDevicePush()
 }
 
 async function registerDevice() {
-  if (!deviceForm.device_token.trim()) {
-    deviceMessage.value = '请先填写设备 token。'
-    return
-  }
-  registering.value = true
-  deviceMessage.value = ''
-  try {
-    await notificationsApi.registerDevice({
-      platform: deviceForm.platform,
-      device_token: deviceForm.device_token.trim(),
-      device_name: deviceForm.device_name?.trim() || undefined,
-      app_version: deviceForm.app_version?.trim() || undefined,
-    })
-    deviceMessage.value = '设备登记成功。'
-    deviceForm.device_token = ''
-    deviceForm.device_name = ''
-    await loadPushData()
-  } catch (error: any) {
-    deviceMessage.value = error?.response?.data?.detail || '设备登记失败，请重试。'
-  } finally {
-    registering.value = false
-  }
+  await notificationsStore.registerDevice()
 }
 
-async function unregisterDevice(device: PushDeviceRecord) {
-  unregisteringToken.value = device.device_token
-  deviceMessage.value = ''
-  try {
-    await notificationsApi.unregisterDevice({
-      platform: device.platform,
-      device_token: device.device_token,
-    })
-    deviceMessage.value = '设备已注销。'
-    await loadPushData()
-  } catch (error: any) {
-    deviceMessage.value = error?.response?.data?.detail || '设备注销失败，请重试。'
-  } finally {
-    unregisteringToken.value = ''
-  }
+async function unregisterDevice(device: any) {
+  await notificationsStore.unregisterDevice(device)
 }
 
 onMounted(async () => {

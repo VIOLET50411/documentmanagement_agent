@@ -4,14 +4,14 @@
       <div class="section-header">
         <div>
           <h2>运行检查台</h2>
-          <p class="inspect-copy">把工具治理、检查点恢复和轨迹回放放到同一处，便于排查请求链路、降级点和失败原因。</p>
+          <p class="inspect-copy">把工具决策、检查点恢复和轨迹回放集中在一个视图里，便于排查请求链路、降级点和失败原因。</p>
         </div>
         <div class="action-group">
           <button class="refresh-btn" @click="runtimeStore.loadToolDecisionSummary()" :disabled="runtimeStore.loadingToolSummary">
-            {{ runtimeStore.loadingToolSummary ? "加载中..." : "刷新工具统计" }}
+            {{ runtimeStore.loadingToolSummary ? "加载中…" : "刷新工具统计" }}
           </button>
           <button class="refresh-btn" @click="runtimeStore.loadCheckpointSummary()" :disabled="runtimeStore.loadingCheckpointSummary">
-            {{ runtimeStore.loadingCheckpointSummary ? "加载中..." : "刷新检查点" }}
+            {{ runtimeStore.loadingCheckpointSummary ? "加载中…" : "刷新检查点" }}
           </button>
         </div>
       </div>
@@ -35,11 +35,15 @@
         </div>
       </div>
 
+      <div v-if="runtimeStore.error" class="inspect-error">
+        {{ runtimeStore.error }}
+      </div>
+
       <div class="inspect-grid">
         <section class="inspect-panel">
           <div class="panel-mini-head">
             <h3>按工具统计</h3>
-            <p>按工具观察 allow / ask / deny 分布。</p>
+            <p>按工具查看 allow / ask / deny 的分布情况。</p>
           </div>
           <table v-if="runtimeStore.toolMatrixRows.length" class="data-table">
             <thead>
@@ -65,15 +69,15 @@
         <section class="inspect-panel">
           <div class="panel-mini-head">
             <h3>检查点恢复摘要</h3>
-            <p>查看最近可恢复的 session 节点与意图。</p>
+            <p>查看最近可恢复的会话节点、意图和改写查询。</p>
           </div>
-          <div v-if="runtimeStore.checkpointSummary?.length" class="checkpoint-list">
+          <div v-if="runtimeStore.checkpointSummary.length" class="checkpoint-list">
             <article v-for="row in runtimeStore.checkpointSummary" :key="row.session_id" class="checkpoint-card">
               <div class="checkpoint-head">
                 <strong>{{ row.session_id }}</strong>
                 <span class="badge badge-primary">{{ row.resumable ? "可恢复" : "待补齐" }}</span>
               </div>
-              <p class="checkpoint-meta">节点：{{ row.latest_node_name }} · 迭代 {{ row.latest_iteration }}</p>
+              <p class="checkpoint-meta">节点：{{ row.latest_node_name || "-" }} · 迭代 {{ row.latest_iteration ?? 0 }}</p>
               <p class="checkpoint-meta">意图：{{ row.intent || "-" }}</p>
               <p class="checkpoint-meta">改写查询：{{ row.rewritten_query || "-" }}</p>
               <p class="checkpoint-meta">时间：{{ formatDate(row.latest_at) }}</p>
@@ -86,27 +90,18 @@
       <section class="trace-panel">
         <div class="panel-mini-head">
           <h3>轨迹回放</h3>
-          <p>输入 `trace_id` 回放一次运行事件流。</p>
+          <p>输入 `trace_id` 后回放单次运行的完整事件流。</p>
         </div>
 
         <div class="trace-toolbar">
-          <input
-            v-model="runtimeStore.replayTraceId"
-            class="input"
-            type="text"
-            placeholder="请输入 trace_id"
-          />
+          <input v-model="runtimeStore.replayTraceId" class="input" type="text" placeholder="请输入 trace_id" />
           <button class="btn btn-primary" @click="runtimeStore.loadReplay()" :disabled="runtimeStore.loadingReplay">
-            {{ runtimeStore.loadingReplay ? "回放中..." : "回放轨迹" }}
+            {{ runtimeStore.loadingReplay ? "回放中…" : "回放轨迹" }}
           </button>
         </div>
 
-        <div v-if="runtimeStore.replayEvents?.length" class="trace-list">
-          <article
-            v-for="(event, index) in runtimeStore.replayEvents"
-            :key="`${event.event_id || event.sequence_num || index}`"
-            class="trace-row"
-          >
+        <div v-if="runtimeStore.replayEvents.length" class="trace-list">
+          <article v-for="(event, index) in runtimeStore.replayEvents" :key="`${event.event_id || event.sequence_num || index}`" class="trace-row">
             <div class="trace-seq">{{ event.sequence_num ?? index + 1 }}</div>
             <div class="trace-main">
               <div class="trace-head">
@@ -173,6 +168,15 @@ function traceStatusLabel(status?: string) {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-4);
   margin-top: var(--space-6);
+}
+
+.inspect-error {
+  margin-top: var(--space-4);
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(198, 40, 40, 0.18);
+  background: rgba(198, 40, 40, 0.08);
+  color: #b3261e;
 }
 
 .inspect-panel,

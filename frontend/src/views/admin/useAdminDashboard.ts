@@ -1,9 +1,11 @@
 ﻿import { computed, reactive } from "vue"
 import { adminApi } from "@/api/admin"
+import { useRuntimeStore } from "@/stores/runtime"
 
 type GenericMap = Record<string, any>
 
 export function useAdminDashboard() {
+  const runtimeStore = useRuntimeStore()
   const dashboard = reactive({
     activeTab: "overview",
     loading: false,
@@ -39,23 +41,9 @@ export function useAdminDashboard() {
     retrievalMetrics: {} as GenericMap,
     retrievalIntegrity: null as GenericMap | null,
     readiness: null as GenericMap | null,
-    runtimeToolDecisionSummary: null as GenericMap | null,
-    runtimeCheckpointSummary: [] as GenericMap[],
-    runtimeReplayTraceId: "",
-    runtimeReplay: [] as GenericMap[],
-    loadingRuntimeReplay: false,
     publicCorpusLatest: null as GenericMap | null,
     loadingPublicCorpusLatest: false,
     exportingPublicCorpus: false,
-    loadingRuntimeToolSummary: false,
-    loadingRuntimeCheckpointSummary: false,
-    runtimeToolFilters: {
-      since_hours: 24,
-      decision: "",
-      source: "",
-      tool_name: "",
-      reason: "",
-    },
     publicCorpusForm: {
       dataset_name: "swu_public_docs",
       tenant_id: "public_cold_start",
@@ -77,6 +65,7 @@ export function useAdminDashboard() {
       { key: "users", label: "用户管理" },
       { key: "pipeline", label: "处理管线" },
       { key: "backends", label: "检索后端" },
+      { key: "inspect", label: "运行检查" },
       { key: "security", label: "安全审计" },
       { key: "evaluation", label: "评估报告" },
     ],
@@ -118,10 +107,6 @@ export function useAdminDashboard() {
     }
     return rows
   })
-
-  const runtimeToolMatrixRows = computed(() => dashboard.runtimeToolDecisionSummary?.matrix_by_tool || [])
-  const runtimeReasonMatrixRows = computed(() => dashboard.runtimeToolDecisionSummary?.matrix_by_reason || [])
-  const runtimeTrendRows = computed(() => dashboard.runtimeToolDecisionSummary?.trend_by_hour || [])
 
   function backendLabel(item: GenericMap | null | undefined, key: string) {
     if (!item) return "未知"
@@ -175,8 +160,6 @@ export function useAdminDashboard() {
         retrievalMetricsRes,
         readinessRes,
         retrievalIntegrityRes,
-        runtimeToolDecisionSummaryRes,
-        runtimeCheckpointSummaryRes,
         publicCorpusLatestRes,
       ] = await Promise.all([
         adminApi.getAnalytics(),
@@ -201,8 +184,6 @@ export function useAdminDashboard() {
         adminApi.getRetrievalMetrics(),
         adminApi.getPlatformReadiness(),
         adminApi.getRetrievalIntegrity(12),
-        adminApi.getRuntimeToolDecisionSummary(dashboard.runtimeToolFilters),
-        adminApi.getRuntimeCheckpointSummary(50),
         adminApi.getLatestPublicCorpusExport(dashboard.publicCorpusForm.dataset_name, dashboard.publicCorpusForm.tenant_id),
       ])
 
@@ -223,8 +204,6 @@ export function useAdminDashboard() {
       dashboard.retrievalMetrics = retrievalMetricsRes || {}
       dashboard.readiness = readinessRes || null
       dashboard.retrievalIntegrity = retrievalIntegrityRes || null
-      dashboard.runtimeToolDecisionSummary = runtimeToolDecisionSummaryRes || null
-      dashboard.runtimeCheckpointSummary = runtimeCheckpointSummaryRes?.items || []
       dashboard.publicCorpusLatest = publicCorpusLatestRes || null
     } catch (err: any) {
       dashboard.error = err?.response?.data?.detail || "加载管理台数据失败。"
@@ -309,31 +288,6 @@ export function useAdminDashboard() {
     }
   }
 
-  async function loadRuntimeToolDecisionSummary() {
-    dashboard.loadingRuntimeToolSummary = true
-    dashboard.error = ""
-    try {
-      dashboard.runtimeToolDecisionSummary = await adminApi.getRuntimeToolDecisionSummary(dashboard.runtimeToolFilters)
-    } catch (err: any) {
-      dashboard.error = err?.response?.data?.detail || "加载工具决策统计失败。"
-    } finally {
-      dashboard.loadingRuntimeToolSummary = false
-    }
-  }
-
-  async function loadRuntimeCheckpointSummary() {
-    dashboard.loadingRuntimeCheckpointSummary = true
-    dashboard.error = ""
-    try {
-      const response = await adminApi.getRuntimeCheckpointSummary(50)
-      dashboard.runtimeCheckpointSummary = response?.items || []
-    } catch (err: any) {
-      dashboard.error = err?.response?.data?.detail || "加载运行时检查点摘要失败。"
-    } finally {
-      dashboard.loadingRuntimeCheckpointSummary = false
-    }
-  }
-
   async function loadPublicCorpusLatest() {
     dashboard.loadingPublicCorpusLatest = true
     dashboard.error = ""
@@ -390,7 +344,7 @@ export function useAdminDashboard() {
 
   function downloadRuntimeToolSummary() {
     try {
-      const blob = new Blob([JSON.stringify(dashboard.runtimeToolDecisionSummary || {}, null, 2)], {
+      const blob = new Blob([JSON.stringify(runtimeStore.toolDecisionSummary || {}, null, 2)], {
         type: "application/json;charset=utf-8",
       })
       const url = URL.createObjectURL(blob)
@@ -542,9 +496,6 @@ export function useAdminDashboard() {
     pipelineCards,
     backendCards,
     retrievalMetricsRows,
-    runtimeToolMatrixRows,
-    runtimeReasonMatrixRows,
-    runtimeTrendRows,
     formatDate,
     formatPercent,
     invitationStatusLabel,
@@ -555,9 +506,6 @@ export function useAdminDashboard() {
     retryPipelineJob,
     retryFailedJobs,
     retryBySignature,
-    loadRuntimeToolDecisionSummary,
-    loadRuntimeCheckpointSummary,
-    loadRuntimeReplay,
     loadPublicCorpusLatest,
     exportPublicCorpusAsync,
     downloadRuntimeToolSummary,

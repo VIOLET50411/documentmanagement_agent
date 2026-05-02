@@ -141,11 +141,11 @@
     <div class="card section-card">
       <div class="section-header">
         <h2>Runtime 检查点恢复摘要</h2>
-        <button class="refresh-btn" @click="loadRuntimeCheckpointSummary" :disabled="dashboard.loadingRuntimeCheckpointSummary">
-          {{ dashboard.loadingRuntimeCheckpointSummary ? "加载中..." : "刷新检查点" }}
+        <button class="refresh-btn" @click="runtimeStore.loadCheckpointSummary()" :disabled="runtimeStore.loadingCheckpointSummary">
+          {{ runtimeStore.loadingCheckpointSummary ? "加载中..." : "刷新检查点" }}
         </button>
       </div>
-      <table v-if="dashboard.runtimeCheckpointSummary?.length" class="data-table">
+      <table v-if="runtimeStore.checkpointSummary.length" class="data-table">
         <thead>
           <tr>
             <th>会话</th>
@@ -159,7 +159,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="row in dashboard.runtimeCheckpointSummary" :key="row.session_id">
+          <tr v-for="row in runtimeStore.checkpointSummary" :key="row.session_id">
             <td>{{ row.session_id }}</td>
             <td>{{ row.latest_node_name }}</td>
             <td>{{ row.latest_iteration }}</td>
@@ -175,24 +175,24 @@
     </div>
 
     <div class="card section-card">
-      <h2>Runtime 工具治理统计（近 {{ dashboard.runtimeToolDecisionSummary?.window_hours ?? 24 }} 小时）</h2>
+      <h2>Runtime 工具治理统计（近 {{ runtimeStore.toolDecisionSummary?.window_hours ?? 24 }} 小时）</h2>
       <div class="filters-grid">
-        <select v-model="dashboard.runtimeToolFilters.decision" class="input">
+        <select v-model="runtimeStore.toolFilters.decision" class="input">
           <option value="">全部决策</option>
           <option value="allow">allow</option>
           <option value="ask">ask</option>
           <option value="deny">deny</option>
         </select>
-        <select v-model="dashboard.runtimeToolFilters.source" class="input">
+        <select v-model="runtimeStore.toolFilters.source" class="input">
           <option value="">全部来源</option>
           <option value="rbac">rbac</option>
           <option value="security_audit">security_audit</option>
           <option value="tool_spec">tool_spec</option>
           <option value="registry">registry</option>
         </select>
-        <input v-model="dashboard.runtimeToolFilters.tool_name" class="input" type="text" placeholder="按工具名筛选（模糊）" />
-        <button class="refresh-btn" @click="loadRuntimeToolDecisionSummary" :disabled="dashboard.loadingRuntimeToolSummary">
-          {{ dashboard.loadingRuntimeToolSummary ? "加载中..." : "应用筛选" }}
+        <input v-model="runtimeStore.toolFilters.tool_name" class="input" type="text" placeholder="按工具名筛选（模糊）" />
+        <button class="refresh-btn" @click="runtimeStore.loadToolDecisionSummary()" :disabled="runtimeStore.loadingToolSummary">
+          {{ runtimeStore.loadingToolSummary ? "加载中..." : "应用筛选" }}
         </button>
       </div>
       <div class="action-group">
@@ -200,26 +200,26 @@
       </div>
       <div class="stats-grid pipeline-grid">
         <div class="stat-card card compact">
-          <span class="stat-value small">{{ dashboard.runtimeToolDecisionSummary?.total ?? 0 }}</span>
+          <span class="stat-value small">{{ runtimeStore.toolDecisionSummary?.total ?? 0 }}</span>
           <span class="stat-label">总决策数</span>
         </div>
         <div class="stat-card card compact">
-          <span class="stat-value small">{{ dashboard.runtimeToolDecisionSummary?.decision_counts?.allow ?? 0 }}</span>
+          <span class="stat-value small">{{ runtimeStore.toolDecisionSummary?.decision_counts?.allow ?? 0 }}</span>
           <span class="stat-label">allow</span>
         </div>
         <div class="stat-card card compact">
-          <span class="stat-value small">{{ dashboard.runtimeToolDecisionSummary?.decision_counts?.ask ?? 0 }}</span>
+          <span class="stat-value small">{{ runtimeStore.toolDecisionSummary?.decision_counts?.ask ?? 0 }}</span>
           <span class="stat-label">ask</span>
         </div>
         <div class="stat-card card compact">
-          <span class="stat-value small">{{ dashboard.runtimeToolDecisionSummary?.decision_counts?.deny ?? 0 }}</span>
+          <span class="stat-value small">{{ runtimeStore.toolDecisionSummary?.decision_counts?.deny ?? 0 }}</span>
           <span class="stat-label">deny</span>
         </div>
       </div>
-      <table v-if="runtimeToolMatrixRows.length" class="data-table">
+      <table v-if="runtimeStore.toolMatrixRows.length" class="data-table">
         <thead><tr><th>工具</th><th>allow</th><th>ask</th><th>deny</th></tr></thead>
         <tbody>
-          <tr v-for="row in runtimeToolMatrixRows" :key="row.tool_name">
+          <tr v-for="row in runtimeStore.toolMatrixRows" :key="row.tool_name">
             <td>{{ row.tool_name }}</td>
             <td>{{ row.allow || 0 }}</td>
             <td>{{ row.ask || 0 }}</td>
@@ -230,10 +230,10 @@
       <p v-else class="empty-text">暂无工具决策聚合数据。</p>
 
       <h2 class="sub-section-title">按原因聚合</h2>
-      <table v-if="runtimeReasonMatrixRows.length" class="data-table">
+      <table v-if="runtimeStore.reasonMatrixRows.length" class="data-table">
         <thead><tr><th>原因</th><th>allow</th><th>ask</th><th>deny</th></tr></thead>
         <tbody>
-          <tr v-for="row in runtimeReasonMatrixRows" :key="row.reason">
+          <tr v-for="row in runtimeStore.reasonMatrixRows" :key="row.reason">
             <td>{{ row.reason }}</td>
             <td>{{ row.allow || 0 }}</td>
             <td>{{ row.ask || 0 }}</td>
@@ -244,10 +244,10 @@
       <p v-else class="empty-text">暂无按原因聚合数据。</p>
 
       <h2 class="sub-section-title">小时趋势</h2>
-      <table v-if="runtimeTrendRows.length" class="data-table">
+      <table v-if="runtimeStore.trendRows.length" class="data-table">
         <thead><tr><th>小时</th><th>allow</th><th>ask</th><th>deny</th><th>unknown</th></tr></thead>
         <tbody>
-          <tr v-for="row in runtimeTrendRows" :key="row.hour">
+          <tr v-for="row in runtimeStore.trendRows" :key="row.hour">
             <td>{{ formatDate(row.hour) }}</td>
             <td>{{ row.allow || 0 }}</td>
             <td>{{ row.ask || 0 }}</td>
@@ -262,19 +262,28 @@
 </template>
 
 <script setup lang="ts">
+import { onMounted } from "vue"
+import { useRuntimeStore } from "@/stores/runtime"
+
+const runtimeStore = useRuntimeStore()
+
 defineProps<{
   dashboard: Record<string, any>
   backendCards: Array<{ label: string; value: string | number }>
   retrievalMetricsRows: Array<Record<string, any>>
-  runtimeToolMatrixRows: Array<Record<string, any>>
-  runtimeReasonMatrixRows: Array<Record<string, any>>
-  runtimeTrendRows: Array<Record<string, any>>
   formatDate: (value?: string | null) => string
   formatPercent: (value?: number | null) => string
-  loadRuntimeToolDecisionSummary: () => Promise<void>
-  loadRuntimeCheckpointSummary: () => Promise<void>
   loadPublicCorpusLatest: () => Promise<void>
   exportPublicCorpusAsync: () => Promise<void>
   downloadRuntimeToolSummary: () => void
 }>()
+
+onMounted(async () => {
+  if (!runtimeStore.toolDecisionSummary) {
+    await runtimeStore.loadToolDecisionSummary()
+  }
+  if (!runtimeStore.checkpointSummary.length) {
+    await runtimeStore.loadCheckpointSummary()
+  }
+})
 </script>

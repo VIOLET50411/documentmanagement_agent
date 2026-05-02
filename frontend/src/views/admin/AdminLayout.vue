@@ -50,13 +50,8 @@
       :dashboard="dashboard"
       :backend-cards="backendCards"
       :retrieval-metrics-rows="retrievalMetricsRows"
-      :runtime-tool-matrix-rows="runtimeToolMatrixRows"
-      :runtime-reason-matrix-rows="runtimeReasonMatrixRows"
-      :runtime-trend-rows="runtimeTrendRows"
       :format-date="formatDate"
       :format-percent="formatPercent"
-      :load-runtime-tool-decision-summary="loadRuntimeToolDecisionSummary"
-      :load-runtime-checkpoint-summary="loadRuntimeCheckpointSummary"
       :load-public-corpus-latest="loadPublicCorpusLatest"
       :export-public-corpus-async="exportPublicCorpusAsync"
       :download-runtime-tool-summary="downloadRuntimeToolSummary"
@@ -99,9 +94,6 @@ const {
   pipelineCards,
   backendCards,
   retrievalMetricsRows,
-  runtimeToolMatrixRows,
-  runtimeReasonMatrixRows,
-  runtimeTrendRows,
   formatDate,
   formatPercent,
   invitationStatusLabel,
@@ -112,9 +104,6 @@ const {
   retryPipelineJob,
   retryFailedJobs,
   retryBySignature,
-  loadRuntimeToolDecisionSummary,
-  loadRuntimeCheckpointSummary,
-  loadRuntimeReplay,
   loadPublicCorpusLatest,
   exportPublicCorpusAsync,
   downloadRuntimeToolSummary,
