@@ -8,10 +8,10 @@
         </div>
         <div class="action-group">
           <button class="refresh-btn" @click="runtimeStore.loadToolDecisionSummary()" :disabled="runtimeStore.loadingToolSummary">
-            {{ runtimeStore.loadingToolSummary ? "加载中…" : "刷新工具统计" }}
+            {{ runtimeStore.loadingToolSummary ? '加载中...' : '刷新工具统计' }}
           </button>
           <button class="refresh-btn" @click="runtimeStore.loadCheckpointSummary()" :disabled="runtimeStore.loadingCheckpointSummary">
-            {{ runtimeStore.loadingCheckpointSummary ? "加载中…" : "刷新检查点" }}
+            {{ runtimeStore.loadingCheckpointSummary ? '加载中...' : '刷新检查点' }}
           </button>
         </div>
       </div>
@@ -75,11 +75,11 @@
             <article v-for="row in runtimeStore.checkpointSummary" :key="row.session_id" class="checkpoint-card">
               <div class="checkpoint-head">
                 <strong>{{ row.session_id }}</strong>
-                <span class="badge badge-primary">{{ row.resumable ? "可恢复" : "待补齐" }}</span>
+                <span class="badge badge-primary">{{ row.resumable ? '可恢复' : '待补齐' }}</span>
               </div>
-              <p class="checkpoint-meta">节点：{{ row.latest_node_name || "-" }} · 迭代 {{ row.latest_iteration ?? 0 }}</p>
-              <p class="checkpoint-meta">意图：{{ row.intent || "-" }}</p>
-              <p class="checkpoint-meta">改写查询：{{ row.rewritten_query || "-" }}</p>
+              <p class="checkpoint-meta">节点：{{ row.latest_node_name || '-' }} | 迭代 {{ row.latest_iteration ?? 0 }}</p>
+              <p class="checkpoint-meta">意图：{{ row.intent || '-' }}</p>
+              <p class="checkpoint-meta">改写查询：{{ row.rewritten_query || '-' }}</p>
               <p class="checkpoint-meta">时间：{{ formatDate(row.latest_at) }}</p>
             </article>
           </div>
@@ -96,7 +96,7 @@
         <div class="trace-toolbar">
           <input v-model="runtimeStore.replayTraceId" class="input" type="text" placeholder="请输入 trace_id" />
           <button class="btn btn-primary" @click="runtimeStore.loadReplay()" :disabled="runtimeStore.loadingReplay">
-            {{ runtimeStore.loadingReplay ? "回放中…" : "回放轨迹" }}
+            {{ runtimeStore.loadingReplay ? '回放中...' : '回放轨迹' }}
           </button>
         </div>
 
@@ -106,14 +106,14 @@
             <div class="trace-main">
               <div class="trace-head">
                 <strong>{{ traceStatusLabel(event.status || event.type) }}</strong>
-                <span class="badge badge-secondary">{{ event.source || "runtime" }}</span>
+                <span class="badge badge-secondary">{{ event.source || 'runtime' }}</span>
               </div>
               <p class="trace-meta">
-                <span>event_id：{{ event.event_id || "-" }}</span>
+                <span>event_id：{{ event.event_id || '-' }}</span>
                 <span>trace：{{ event.trace_id || runtimeStore.replayTraceId }}</span>
                 <span v-if="event.degraded">已降级</span>
               </p>
-              <p class="trace-message">{{ event.message || event.msg || event.answer || event.content || "无附加内容" }}</p>
+              <p class="trace-message">{{ event.message || event.msg || event.answer || event.content || '无附加内容' }}</p>
             </div>
             <div class="trace-time">{{ formatDate(event.timestamp || event.created_at) }}</div>
           </article>

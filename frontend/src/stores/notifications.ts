@@ -141,7 +141,7 @@ export const useNotificationsStore = defineStore("notifications", () => {
     try {
       const result = await registerPushDevice({
         platform: nativePlatform.value,
-        deviceName: username ? `${username} 的${nativePlatformLabel.value}设备` : `${nativePlatformLabel.value} 设备`,
+        deviceName: username ? `${username} 的 ${nativePlatformLabel.value} 设备` : `${nativePlatformLabel.value} 设备`,
         appVersion: deviceForm.app_version || "1.0.0",
       })
       storedPushRegistration.value = getStoredPushRegistration()
