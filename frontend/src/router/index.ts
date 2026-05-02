@@ -15,6 +15,7 @@ const routes: RouteRecordRaw[] = [
     children: [
       { path: "", redirect: "/chat" },
       { path: "chat", name: "Chat", component: () => import("@/views/ChatView.vue"), meta: { title: "智能问答" } },
+      { path: "tasks", name: "Tasks", component: () => import("@/views/TasksView.vue"), meta: { title: "任务中心", role: "ADMIN" } },
       { path: "documents", name: "Documents", component: () => import("@/views/DocumentsView.vue"), meta: { title: "文档中心" } },
       { path: "search", name: "Search", component: () => import("@/views/SearchView.vue"), meta: { title: "知识检索" } },
       { path: "admin", name: "Admin", component: () => import("@/views/AdminView.vue"), meta: { title: "平台管理", role: "ADMIN" } },

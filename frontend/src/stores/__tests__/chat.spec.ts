@@ -61,4 +61,27 @@ describe("chat store", () => {
     expect(store.isStreaming).toBe(true)
     expect(store.streamStatusMsg).toBe("正在生成")
   })
+
+  it("records runtime events for non-streaming phases and deduplicates consecutive events", async () => {
+    const { useChatStore } = await import("../chat")
+    const store = useChatStore()
+
+    store.setStreamState("thinking", "正在理解问题")
+    store.setStreamState("thinking", "正在理解问题")
+    store.setStreamState("searching", "正在检索知识库")
+
+    expect(store.runtimeEvents).toHaveLength(2)
+    expect(store.runtimeEvents[0].status).toBe("thinking")
+    expect(store.runtimeEvents[1].status).toBe("searching")
+  })
+
+  it("clears runtime events when a new user message starts", async () => {
+    const { useChatStore } = await import("../chat")
+    const store = useChatStore()
+
+    store.setStreamState("thinking", "正在理解问题")
+    store.addMessage({ role: "user", content: "新的问题", citations: [] })
+
+    expect(store.runtimeEvents).toEqual([])
+  })
 })

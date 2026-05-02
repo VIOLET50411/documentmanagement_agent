@@ -177,6 +177,7 @@ const accountMenuOpen = ref(false)
 const navItems: NavItem[] = [
   { key: 'new', label: '新建对话', description: '开始一轮新的问答', icon: '+', action: 'new' },
   { key: 'chat', label: '会话记录', description: '查看与切换历史对话', icon: '◉', route: '/chat' },
+  { key: 'tasks', label: '任务中心', description: '查看运行、入库与训练任务', icon: '◌', route: '/tasks', adminOnly: true },
   { key: 'search', label: '知识检索', description: '搜索索引、图谱与证据', icon: '⌕', route: '/search' },
   { key: 'documents', label: '文档中心', description: '上传、解析与处理文档', icon: '▣', route: '/documents' },
   { key: 'settings', label: '个人设置', description: '账号、主题与设备偏好', icon: '⚙', route: '/settings' },
@@ -196,6 +197,7 @@ const pageTitle = computed(() => {
 const pageKicker = computed(() => {
   const map: Record<string, string> = {
     Chat: '智能问答',
+    Tasks: '任务编排',
     Documents: '文档处理',
     Search: '证据检索',
     Settings: '个人偏好',

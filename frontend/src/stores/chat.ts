@@ -18,10 +18,18 @@ export interface ChatMessage {
   timestamp: string
 }
 
+export interface ChatRuntimeEvent {
+  id: string
+  status: string
+  message: string
+  timestamp: string
+}
+
 export const useChatStore = defineStore("chat", () => {
   const sessions: Ref<ChatSession[]> = ref([])
   const activeSessionId = ref<string | null>(null)
   const messages: Ref<ChatMessage[]> = ref([])
+  const runtimeEvents: Ref<ChatRuntimeEvent[]> = ref([])
   const isStreaming = ref(false)
   const streamStatus = ref("")
   const streamStatusMsg = ref("")
@@ -52,12 +60,14 @@ export const useChatStore = defineStore("chat", () => {
     sessions.value.unshift(session)
     activeSessionId.value = id
     messages.value = []
+    runtimeEvents.value = []
     return session
   }
 
   async function setActiveSession(sessionId: string) {
     activeSessionId.value = sessionId
     messages.value = []
+    runtimeEvents.value = []
     try {
       const res = await chatApi.getHistory(sessionId)
       messages.value = (res.messages || []).map((msg) => ({
@@ -78,6 +88,7 @@ export const useChatStore = defineStore("chat", () => {
     if (activeSessionId.value === sessionId) {
       activeSessionId.value = sessions.value[0]?.id || null
       messages.value = []
+      runtimeEvents.value = []
     }
   }
 
@@ -90,6 +101,7 @@ export const useChatStore = defineStore("chat", () => {
       timestamp: message.timestamp || new Date().toISOString(),
     })
     if (message.role === "user") {
+      runtimeEvents.value = []
       touchActiveSession(message.content)
     } else {
       touchActiveSession()
@@ -121,6 +133,38 @@ export const useChatStore = defineStore("chat", () => {
     streamStatus.value = status
     streamStatusMsg.value = message
     isStreaming.value = !["done", "error", ""].includes(status)
+    if (["thinking", "searching", "reading", "tool_call", "error"].includes(status)) {
+      appendRuntimeEvent(status, message || defaultRuntimeMessage(status))
+    }
+  }
+
+  function appendRuntimeEvent(status: string, message: string) {
+    const normalized = message.trim()
+    const last = runtimeEvents.value[runtimeEvents.value.length - 1]
+    if (last && last.status === status && last.message === normalized) {
+      return
+    }
+    runtimeEvents.value.push({
+      id: `${status}-${Date.now()}-${runtimeEvents.value.length}`,
+      status,
+      message: normalized,
+      timestamp: new Date().toISOString(),
+    })
+  }
+
+  function clearRuntimeEvents() {
+    runtimeEvents.value = []
+  }
+
+  function defaultRuntimeMessage(status: string) {
+    const labels: Record<string, string> = {
+      thinking: "正在理解问题",
+      searching: "正在检索知识库",
+      reading: "正在读取证据内容",
+      tool_call: "正在执行工具调用",
+      error: "本轮回答失败",
+    }
+    return labels[status] || "正在处理"
   }
 
   function ensureSessionById(sessionId: string | null | undefined) {
@@ -138,6 +182,7 @@ export const useChatStore = defineStore("chat", () => {
     sessions,
     activeSessionId,
     messages,
+    runtimeEvents,
     isStreaming,
     streamStatus,
     streamStatusMsg,
@@ -150,6 +195,7 @@ export const useChatStore = defineStore("chat", () => {
     replaceLastAssistantMessage,
     setLastAssistantMeta,
     setStreamState,
+    clearRuntimeEvents,
     ensureSessionById,
   }
 })

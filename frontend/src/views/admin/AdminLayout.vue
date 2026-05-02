@@ -61,6 +61,15 @@
       :export-public-corpus-async="exportPublicCorpusAsync"
       :download-runtime-tool-summary="downloadRuntimeToolSummary"
     />
+    <RuntimeInspect
+      v-else-if="dashboard.activeTab === 'inspect'"
+      :dashboard="dashboard"
+      :runtime-tool-matrix-rows="runtimeToolMatrixRows"
+      :load-runtime-tool-decision-summary="loadRuntimeToolDecisionSummary"
+      :load-runtime-checkpoint-summary="loadRuntimeCheckpointSummary"
+      :load-runtime-replay="loadRuntimeReplay"
+      :format-date="formatDate"
+    />
     <SecurityAudit
       v-else-if="dashboard.activeTab === 'security'"
       :dashboard="dashboard"
@@ -83,6 +92,7 @@ import { onMounted } from "vue"
 import AdminOverviewPanel from "./AdminOverviewPanel.vue"
 import IngestionDashboard from "./IngestionDashboard.vue"
 import RuntimeEvaluation from "./RuntimeEvaluation.vue"
+import RuntimeInspect from "./RuntimeInspect.vue"
 import SecurityAudit from "./SecurityAudit.vue"
 import SystemMonitor from "./SystemMonitor.vue"
 import UserManagement from "./UserManagement.vue"
@@ -109,6 +119,7 @@ const {
   retryBySignature,
   loadRuntimeToolDecisionSummary,
   loadRuntimeCheckpointSummary,
+  loadRuntimeReplay,
   loadPublicCorpusLatest,
   exportPublicCorpusAsync,
   downloadRuntimeToolSummary,

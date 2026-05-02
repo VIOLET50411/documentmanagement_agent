@@ -45,33 +45,14 @@
         <p class="section-copy">上传制度、预算、采购、审批等文档后，DocMind 会优先基于证据回答，并给出可追溯引用。</p>
       </div>
 
-      <div class="hero-composer card-shell">
-        <textarea
-          ref="inputRef"
-          v-model="inputMessage"
-          class="hero-input"
-          placeholder="请输入问题，例如：总结差旅报销制度的审批链路，并标注引用位置"
-          rows="1"
-          :disabled="chatStore.isStreaming"
-          @keydown.enter.exact.prevent="handleSend"
-          @input="autoResize"
-        ></textarea>
-
-        <div class="composer-bottom">
-          <div class="composer-tools">
-            <button class="composer-plus" @click="focusInput">+</button>
-            <label class="model-selector">
-              <span class="sr-only">选择模型</span>
-              <select v-model="selectedModel" class="model-select">
-                <option value="docmind-smart">标准问答</option>
-                <option value="docmind-retrieval">检索增强</option>
-                <option value="docmind-brief">精简速答</option>
-              </select>
-            </label>
-          </div>
-          <button class="btn btn-primary" :disabled="chatStore.isStreaming || !inputMessage.trim()" @click="handleSend">发送</button>
-        </div>
-      </div>
+      <ChatComposer
+        class="hero-composer card-shell"
+        v-model="inputMessage"
+        v-model:selected-model="selectedModel"
+        placeholder="请输入问题，例如：总结差旅报销制度的审批链路，并标注引用位置"
+        :disabled="chatStore.isStreaming"
+        @submit="handleSend"
+      />
 
       <div class="quick-grid">
         <button v-for="prompt in quickPrompts" :key="prompt.label" class="quick-card" @click="sendQuickPrompt(prompt.text)">
@@ -94,66 +75,30 @@
 
     <section v-else class="conversation-state">
       <div class="conversation-stream card-shell" ref="messagesRef">
-        <div v-for="msg in chatStore.messages" :key="msg.id" class="message-row" :class="msg.role === 'user' ? 'user-row' : 'assistant-row'">
-          <div v-if="msg.role === 'user'" class="message-bubble user-bubble">
-            <p>{{ msg.content }}</p>
-          </div>
-
-          <template v-else>
-            <div class="assistant-head">
-              <div class="assistant-badge">DocMind</div>
-              <span class="assistant-subtitle">基于当前知识库与检索结果生成</span>
-            </div>
-            <div v-if="msg.content" class="assistant-copy markdown-body" v-html="renderMarkdown(msg.content)"></div>
-
-            <div v-if="msg.citations?.length" class="citation-row">
-              <span v-for="cite in msg.citations" :key="`${cite.doc_id}-${cite.page_number}-${cite.section_title}`" class="citation-pill">
-                {{ cite.doc_title }} / P{{ cite.page_number ?? '-' }}
-              </span>
-            </div>
-
-            <div class="assistant-actions">
-              <button class="action-button" title="复制" @click="copyMessage(msg.content)">复制</button>
-              <button class="action-button" title="有帮助" @click="submitFeedback(msg.id, 1)">有帮助</button>
-              <button class="action-button" title="待改进" @click="submitFeedback(msg.id, -1)">待改进</button>
-              <button class="action-button" title="重试" @click="retryLastPrompt">重试</button>
-            </div>
-          </template>
-        </div>
-
-        <div v-if="chatStore.isStreaming && chatStore.streamStatus !== 'streaming'" class="status-line">
-          <span class="status-chip">{{ chatStore.streamStatusMsg || '正在准备回答，请稍候…' }}</span>
-        </div>
+        <MessageList
+          :messages="chatStore.messages"
+          :runtime-events="chatStore.runtimeEvents"
+          :is-streaming="chatStore.isStreaming"
+          :stream-status="chatStore.streamStatus"
+          :stream-status-msg="chatStore.streamStatusMsg"
+          @copy="copyMessage"
+          @feedback="submitFeedback"
+          @retry="retryLastPrompt"
+        />
       </div>
 
-      <div class="floating-composer">
-        <div class="hero-composer compact card-shell">
-          <textarea
-            ref="replyInputRef"
-            v-model="inputMessage"
-            class="hero-input"
-            placeholder="继续追问、补充条件或要求引用更精确的段落"
-            rows="1"
-            :disabled="chatStore.isStreaming"
-            @keydown.enter.exact.prevent="handleSend"
-            @input="autoResizeReply"
-          ></textarea>
+      <SessionTaskBar />
 
-          <div class="composer-bottom">
-            <div class="composer-tools">
-              <button class="composer-plus" @click="focusReplyInput">+</button>
-              <label class="model-selector">
-                <span class="sr-only">选择模型</span>
-                <select v-model="selectedModel" class="model-select">
-                  <option value="docmind-smart">标准问答</option>
-                  <option value="docmind-retrieval">检索增强</option>
-                  <option value="docmind-brief">精简速答</option>
-                </select>
-              </label>
-            </div>
-            <button class="btn btn-primary" :disabled="chatStore.isStreaming || !inputMessage.trim()" @click="handleSend">发送</button>
-          </div>
-        </div>
+      <div class="floating-composer">
+        <ChatComposer
+          class="hero-composer compact card-shell"
+          v-model="inputMessage"
+          v-model:selected-model="selectedModel"
+          placeholder="继续追问、补充条件或要求引用更精确的段落"
+          :disabled="chatStore.isStreaming"
+          compact
+          @submit="handleSend"
+        />
 
         <p class="footer-note">回答会优先附带引用。若证据不足，系统会明确提示置信度和原因。</p>
       </div>
@@ -163,17 +108,17 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { marked } from 'marked'
 import { useChatStore } from '@/stores/chat'
 import { useSSE } from '@/composables/useSSE'
 import { useAutoScroll } from '@/composables/useAutoScroll'
 import { chatApi } from '@/api/chat'
+import MessageList from '@/components/chat/MessageList.vue'
+import ChatComposer from '@/components/chat/ChatComposer.vue'
+import SessionTaskBar from '@/components/chat/SessionTaskBar.vue'
 
 const chatStore = useChatStore()
 const { sendMessage } = useSSE()
 const messagesRef = ref<HTMLElement | null>(null)
-const inputRef = ref<HTMLTextAreaElement | null>(null)
-const replyInputRef = ref<HTMLTextAreaElement | null>(null)
 const inputMessage = ref('')
 const sessionSearch = ref('')
 const selectedModel = ref('docmind-smart')
@@ -215,10 +160,6 @@ function handleSend() {
   if (!msg || chatStore.isStreaming) return
   sendMessage(msg, chatStore.activeSessionId)
   inputMessage.value = ''
-  nextTick(() => {
-    autoResize()
-    autoResizeReply()
-  })
 }
 
 function sendQuickPrompt(prompt: string) {
@@ -232,33 +173,6 @@ function startFreshChat() {
 
 async function openSession(sessionId: string) {
   await chatStore.setActiveSession(sessionId)
-}
-
-function renderMarkdown(text: string) {
-  if (!text) return ''
-  return marked.parse(text, { breaks: true }) as string
-}
-
-function resizeElement(el: HTMLTextAreaElement | null) {
-  if (!el) return
-  el.style.height = 'auto'
-  el.style.height = `${Math.min(el.scrollHeight, 200)}px`
-}
-
-function autoResize() {
-  resizeElement(inputRef.value)
-}
-
-function autoResizeReply() {
-  resizeElement(replyInputRef.value)
-}
-
-function focusInput() {
-  inputRef.value?.focus()
-}
-
-function focusReplyInput() {
-  replyInputRef.value?.focus()
 }
 
 async function submitFeedback(messageId: string, rating: number) {
@@ -334,10 +248,7 @@ function formatRelativeTime(value: string) {
 
 .history-header,
 .history-toolbar,
-.composer-bottom,
-.onboarding-header,
-.assistant-head,
-.assistant-actions {
+.onboarding-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -450,49 +361,6 @@ function formatRelativeTime(value: string) {
   max-width: 760px;
 }
 
-.hero-composer {
-  padding: 20px;
-}
-
-.hero-input {
-  width: 100%;
-  resize: none;
-  border: 0;
-  outline: 0;
-  min-height: 88px;
-  background: transparent;
-  color: var(--text-primary);
-  font-size: 1.05rem;
-  line-height: 1.7;
-}
-
-.hero-input::placeholder {
-  color: var(--text-tertiary);
-}
-
-.composer-tools {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.composer-plus {
-  width: 42px;
-  height: 42px;
-  border-radius: 14px;
-  border: 1px solid var(--border-color);
-  background: rgba(255, 255, 255, 0.36);
-}
-
-.model-select {
-  min-width: 160px;
-  border: 1px solid var(--border-color);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.36);
-  padding: 10px 14px;
-  color: var(--text-primary);
-}
-
 .quick-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -559,88 +427,6 @@ function formatRelativeTime(value: string) {
   padding: 28px 28px 22px;
 }
 
-.message-row + .message-row {
-  margin-top: 30px;
-}
-
-.message-bubble,
-.assistant-copy {
-  font-size: 1rem;
-  line-height: 1.78;
-}
-
-.user-row {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.user-bubble {
-  max-width: min(720px, 88%);
-  padding: 16px 20px;
-  border-radius: 24px;
-  background: rgba(36, 31, 23, 0.95);
-  color: #fffaf3;
-}
-
-.theme-dark .user-bubble {
-  background: rgba(245, 238, 227, 0.96);
-  color: #17130f;
-}
-
-.assistant-head {
-  justify-content: flex-start;
-  margin-bottom: 12px;
-}
-
-.assistant-badge {
-  padding: 7px 12px;
-  border-radius: 999px;
-  background: var(--color-primary-soft);
-  color: var(--color-primary-hover);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.assistant-subtitle {
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.citation-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 14px;
-}
-
-.citation-pill,
-.status-chip {
-  display: inline-flex;
-  align-items: center;
-  padding: 8px 12px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.4);
-  border: 1px solid var(--border-color-subtle);
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.assistant-actions {
-  justify-content: flex-start;
-  flex-wrap: wrap;
-  margin-top: 14px;
-}
-
-.action-button {
-  padding: 8px 12px;
-  border-radius: 999px;
-  color: var(--text-secondary);
-}
-
-.status-line {
-  margin-top: 20px;
-}
-
 .floating-composer {
   position: sticky;
   bottom: 0;
@@ -651,40 +437,11 @@ function formatRelativeTime(value: string) {
   background: linear-gradient(180deg, transparent, var(--bg-app) 22%);
 }
 
-.compact {
-  padding: 16px 18px;
-}
-
-.compact .hero-input {
-  min-height: 58px;
-}
-
 .footer-note {
   margin-top: 10px;
   text-align: center;
   color: var(--text-tertiary);
   font-size: 13px;
-}
-
-:deep(.markdown-body) {
-  color: var(--text-primary);
-}
-
-:deep(.markdown-body p + p) {
-  margin-top: 12px;
-}
-
-:deep(.markdown-body ul),
-:deep(.markdown-body ol) {
-  padding-left: 20px;
-  margin-top: 10px;
-}
-
-:deep(.markdown-body code) {
-  font-family: var(--font-mono);
-  padding: 2px 6px;
-  border-radius: 8px;
-  background: var(--bg-code);
 }
 
 @media (max-width: 900px) {
@@ -701,8 +458,7 @@ function formatRelativeTime(value: string) {
 
 @media (max-width: 640px) {
   .history-header,
-  .history-toolbar,
-  .composer-bottom {
+  .history-toolbar {
     align-items: stretch;
     flex-direction: column;
   }

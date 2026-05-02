@@ -65,6 +65,22 @@ export const adminApi = {
     return apiGet("/admin/system/backends")
   },
 
+  getLLMDomainConfig() {
+    return apiGet("/admin/llm/domain-config")
+  },
+
+  getSecurityPolicy() {
+    return apiGet("/admin/system/security-policy")
+  },
+
+  getMobileAuthStatus() {
+    return apiGet("/admin/system/mobile-auth")
+  },
+
+  getPushNotificationStatus() {
+    return apiGet("/admin/system/push-notifications")
+  },
+
   getRetrievalMetrics() {
     return apiGet("/admin/system/retrieval-metrics")
   },
@@ -106,6 +122,18 @@ export const adminApi = {
     return apiGet("/admin/runtime/checkpoints/summary", { params: { limit } })
   },
 
+  replayRuntimeTrace(traceId: string) {
+    return apiPost("/admin/runtime/replay", null, { params: { trace_id: traceId } })
+  },
+
+  getRuntimeTasks(limit = 20, offset = 0) {
+    return apiGet("/admin/runtime/tasks", { params: { limit, offset } })
+  },
+
+  getRuntimeMetrics(limit = 200) {
+    return apiGet("/admin/runtime/metrics", { params: { limit } })
+  },
+
   getLatestPublicCorpusExport(datasetName = "swu_public_docs", tenantId = "public_cold_start") {
     return apiGet("/admin/llm/public-corpus/latest", { params: { dataset_name: datasetName, tenant_id: tenantId } })
   },
@@ -118,5 +146,13 @@ export const adminApi = {
 
   getPublicCorpusExportTask(taskId: string, tenantId = "public_cold_start") {
     return apiGet(`/admin/llm/public-corpus/tasks/${taskId}`, { params: { tenant_id: tenantId } })
+  },
+
+  getLLMTrainingJobs(limit = 20, tenantId?: string) {
+    return apiGet("/admin/llm/training/jobs", { params: { limit, tenant_id: tenantId } })
+  },
+
+  getLLMTrainingSummary(limit = 100, tenantId?: string) {
+    return apiGet("/admin/llm/training/summary", { params: { limit, tenant_id: tenantId } })
   },
 }
