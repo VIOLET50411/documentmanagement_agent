@@ -139,10 +139,10 @@ services:
     container_name: docmind-ragas-sidecar
     environment:
       RAGAS_PREFER_REAL: "true"
-      RAGAS_LLM_BASE_URL: http://ollama:11434/v1
-      RAGAS_LLM_MODEL: qwen2.5:1.5b
-      RAGAS_EMBEDDING_BASE_URL: http://ollama:11434/v1
-      RAGAS_EMBEDDING_MODEL: nomic-embed-text
+      RAGAS_LLM_BASE_URL: ${RAGAS_LLM_BASE_URL:-http://ollama:11434/v1}
+      RAGAS_LLM_MODEL: ${RAGAS_LLM_MODEL:-qwen2.5:1.5b}
+      RAGAS_EMBEDDING_BASE_URL: ${RAGAS_EMBEDDING_BASE_URL:-http://ollama:11434/v1}
+      RAGAS_EMBEDDING_MODEL: ${RAGAS_EMBEDDING_MODEL:-nomic-embed-text}
       RAGAS_API_KEY: dummy
       RAGAS_TIMEOUT_SECONDS: "${RAGAS_TIMEOUT_SECONDS:-420}"
       RAGAS_MAX_WORKERS: "${RAGAS_MAX_WORKERS:-1}"

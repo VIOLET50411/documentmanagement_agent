@@ -1,123 +1,142 @@
-<template>
+﻿<template>
   <div class="app-layout">
     <aside class="sidebar" :class="{ expanded: isSidebarOpen }">
-      <div class="sidebar-top">
-        <button
-          class="sidebar-toggle"
-          :class="{ active: isSidebarOpen }"
-          aria-label="切换侧边栏"
-          @click="toggleSidebar"
-        >
-          <span class="toggle-grid"></span>
-        </button>
-        <button v-if="isSidebarOpen" class="brand-button" @click="$router.push('/chat')">DocMind</button>
-      </div>
-
-      <nav class="sidebar-nav">
-        <button
-          v-for="item in visibleNavItems"
-          :key="item.key"
-          class="nav-item"
-          :class="{ current: isCurrent(item) }"
-          :title="item.label"
-          @click="handleNav(item)"
-        >
-          <span class="nav-icon">{{ item.icon }}</span>
-          <span class="nav-text">{{ item.label }}</span>
-        </button>
-      </nav>
-
-      <transition name="sidebar-fade">
-        <section v-if="isSidebarOpen" class="sidebar-section">
-          <p class="section-title">最近会话</p>
+      <div class="sidebar-inner">
+        <div class="sidebar-top">
           <button
-            v-for="session in recentSessions"
-            :key="session.id"
-            class="recent-item"
-            :class="{ active: route.name === 'Chat' && chatStore.activeSessionId === session.id }"
-            @click="openRecentSession(session.id)"
+            class="sidebar-toggle"
+            :class="{ active: isSidebarOpen }"
+            aria-label="切换侧边栏"
+            @click="toggleSidebar"
           >
-            {{ session.title }}
+            <span></span>
+            <span></span>
           </button>
-          <p v-if="recentSessions.length === 0" class="empty-copy">还没有历史会话</p>
+          <button v-if="isSidebarOpen" class="brand-button" @click="$router.push('/chat')">
+            <span class="brand-mark">D</span>
+            <span class="brand-copy">
+              <strong>DocMind</strong>
+              <small>企业文档智能工作台</small>
+            </span>
+          </button>
+        </div>
+
+        <nav class="sidebar-nav">
+          <button
+            v-for="item in visibleNavItems"
+            :key="item.key"
+            class="nav-item"
+            :class="{ current: isCurrent(item) }"
+            :title="item.label"
+            @click="handleNav(item)"
+          >
+            <span class="nav-icon">{{ item.icon }}</span>
+            <span class="nav-copy">
+              <strong>{{ item.label }}</strong>
+              <small>{{ item.description }}</small>
+            </span>
+          </button>
+        </nav>
+
+        <section v-if="isSidebarOpen" class="sidebar-section">
+          <div class="section-head">
+            <p>最近会话</p>
+            <button class="section-link" @click="startNewChat">新建</button>
+          </div>
+          <div class="recent-list">
+            <button
+              v-for="session in recentSessions"
+              :key="session.id"
+              class="recent-item"
+              :class="{ active: route.name === 'Chat' && chatStore.activeSessionId === session.id }"
+              @click="openRecentSession(session.id)"
+            >
+              <strong>{{ session.title }}</strong>
+              <span>{{ formatTime(session.updatedAt) }}</span>
+            </button>
+            <p v-if="recentSessions.length === 0" class="empty-copy">还没有历史会话</p>
+          </div>
         </section>
-      </transition>
 
-      <div class="sidebar-spacer"></div>
+        <div class="sidebar-spacer"></div>
 
-      <div class="sidebar-bottom">
-        <div class="account-shell">
-          <button class="account-trigger" :class="{ active: accountMenuOpen }" @click.stop="toggleAccountMenu">
-            <div class="account-avatar">{{ initials }}</div>
-            <div v-if="isSidebarOpen" class="account-meta">
-              <strong>{{ user?.username || '演示用户' }}</strong>
-              <span>{{ roleLabel(user?.role) }}</span>
-            </div>
-            <span v-if="isSidebarOpen" class="account-caret">▴</span>
-          </button>
+        <div class="sidebar-bottom">
+          <div class="account-shell">
+            <button class="account-trigger" :class="{ active: accountMenuOpen }" @click.stop="toggleAccountMenu">
+              <div class="account-avatar">{{ initials }}</div>
+              <div v-if="isSidebarOpen" class="account-meta">
+                <strong>{{ user?.username || '演示用户' }}</strong>
+                <span>{{ roleLabel(user?.role) }}</span>
+              </div>
+              <span v-if="isSidebarOpen" class="account-caret">⌄</span>
+            </button>
 
-          <transition name="menu-pop">
-            <div v-if="accountMenuOpen" class="account-menu" @click.stop>
-              <div class="menu-profile">
-                <div class="menu-avatar">{{ initials }}</div>
-                <div class="menu-profile-copy">
-                  <strong>{{ user?.username || '演示用户' }}</strong>
-                  <span>{{ user?.email || '未设置邮箱' }}</span>
+            <transition name="menu-pop">
+              <div v-if="accountMenuOpen" class="account-menu" @click.stop>
+                <div class="menu-profile">
+                  <div class="menu-avatar">{{ initials }}</div>
+                  <div class="menu-profile-copy">
+                    <strong>{{ user?.username || '演示用户' }}</strong>
+                    <span>{{ user?.email || '未设置邮箱' }}</span>
+                  </div>
+                </div>
+
+                <div class="menu-group">
+                  <button class="menu-item" @click="openSettings('general')">
+                    <span>通用设置</span>
+                    <small>外观、资料与基础偏好</small>
+                  </button>
+                  <button class="menu-item" @click="openSettings('preferences')">
+                    <span>回答偏好</span>
+                    <small>语言、风格与默认要求</small>
+                  </button>
+                  <button class="menu-item" @click="openSettings('devices')">
+                    <span>推送设备</span>
+                    <small>移动端、网页端与小程序</small>
+                  </button>
+                </div>
+
+                <div class="menu-group menu-inline-group">
+                  <button class="menu-item menu-inline" @click="themeStore.setTheme('light')">
+                    <span>浅色模式</span>
+                    <small v-if="!themeStore.isDark">当前使用</small>
+                  </button>
+                  <button class="menu-item menu-inline" @click="themeStore.setTheme('dark')">
+                    <span>深色模式</span>
+                    <small v-if="themeStore.isDark">当前使用</small>
+                  </button>
+                </div>
+
+                <div class="menu-group">
+                  <button v-if="user?.role === 'ADMIN'" class="menu-item" @click="$router.push('/admin')">
+                    <span>平台管理</span>
+                    <small>运行指标、任务与审计</small>
+                  </button>
+                  <button class="menu-item danger" @click="authStore.logout">
+                    <span>退出登录</span>
+                    <small>结束当前会话</small>
+                  </button>
                 </div>
               </div>
-
-              <div class="menu-group">
-                <button class="menu-item" @click="openSettings('general')">
-                  <span>设置</span>
-                  <small>通用与外观</small>
-                </button>
-                <button class="menu-item" @click="openSettings('preferences')">
-                  <span>回答偏好</span>
-                  <small>输出风格与语言</small>
-                </button>
-                <button class="menu-item" @click="openSettings('devices')">
-                  <span>推送设备</span>
-                  <small>移动端与 Web 推送</small>
-                </button>
-              </div>
-
-              <div class="menu-group menu-theme">
-                <button class="menu-item menu-item-inline" @click="themeStore.setTheme('light')">
-                  <span>浅色模式</span>
-                  <small v-if="!themeStore.isDark">当前使用</small>
-                </button>
-                <button class="menu-item menu-item-inline" @click="themeStore.setTheme('dark')">
-                  <span>深色模式</span>
-                  <small v-if="themeStore.isDark">当前使用</small>
-                </button>
-              </div>
-
-              <div class="menu-group">
-                <button v-if="user?.role === 'ADMIN'" class="menu-item" @click="$router.push('/admin')">
-                  <span>平台管理</span>
-                  <small>运行状态与审计面板</small>
-                </button>
-                <button class="menu-item danger" @click="authStore.logout">
-                  <span>退出登录</span>
-                  <small>结束当前会话</small>
-                </button>
-              </div>
-            </div>
-          </transition>
+            </transition>
+          </div>
         </div>
       </div>
     </aside>
 
     <main class="content-shell" @click="accountMenuOpen = false">
-      <div class="top-utility">
-        <div class="top-title" v-if="showConversationHeader">
-          <button class="title-button">{{ conversationTitle }}</button>
+      <header class="topbar">
+        <div class="topbar-copy">
+          <p class="topbar-kicker">{{ pageKicker }}</p>
+          <h1>{{ pageTitle }}</h1>
         </div>
-        <div class="top-actions">
-          <button v-if="showConversationHeader" class="share-button">分享</button>
-          <button class="ghostmark" aria-label="消息中心">◎</button>
+        <div class="topbar-actions">
+          <button v-if="route.name === 'Chat'" class="btn btn-ghost" @click="startNewChat">新建对话</button>
+          <button class="theme-chip" @click="themeStore.toggle()">
+            {{ themeStore.isDark ? '深色' : '浅色' }}
+          </button>
         </div>
-      </div>
+      </header>
 
       <section class="content-body">
         <router-view />
@@ -136,6 +155,7 @@ import { useThemeStore } from '@/stores/theme'
 type NavItem = {
   key: string
   label: string
+  description: string
   icon: string
   route?: string
   action?: 'new'
@@ -151,21 +171,38 @@ const chatStore = useChatStore()
 const user = computed(() => authStore.user)
 const initials = computed(() => (user.value?.username || 'D').slice(0, 1).toUpperCase())
 const recentSessions = computed(() => chatStore.sessions.slice(0, 8))
-const showConversationHeader = computed(() => route.name === 'Chat' && chatStore.messages.length > 0)
-const conversationTitle = computed(() => chatStore.activeSession?.title || '新对话')
 const isSidebarOpen = ref(true)
 const accountMenuOpen = ref(false)
 
 const navItems: NavItem[] = [
-  { key: 'new', label: '新建对话', icon: '+', action: 'new' },
-  { key: 'search', label: '知识检索', icon: '⌕', route: '/search' },
-  { key: 'chat', label: '对话记录', icon: '◌', route: '/chat' },
-  { key: 'documents', label: '文档中心', icon: '▣', route: '/documents' },
-  { key: 'admin', label: '平台管理', icon: '⚙', route: '/admin', adminOnly: true },
-  { key: 'settings', label: '个人设置', icon: '◐', route: '/settings' },
+  { key: 'new', label: '新建对话', description: '开始一轮新的问答', icon: '+', action: 'new' },
+  { key: 'chat', label: '会话记录', description: '查看与切换历史对话', icon: '◉', route: '/chat' },
+  { key: 'search', label: '知识检索', description: '搜索索引、图谱与证据', icon: '⌕', route: '/search' },
+  { key: 'documents', label: '文档中心', description: '上传、解析与处理文档', icon: '▣', route: '/documents' },
+  { key: 'settings', label: '个人设置', description: '账号、主题与设备偏好', icon: '⚙', route: '/settings' },
+  { key: 'admin', label: '平台管理', description: '运行态、审计与任务看板', icon: '▤', route: '/admin', adminOnly: true },
 ]
 
 const visibleNavItems = computed(() => navItems.filter((item) => !item.adminOnly || user.value?.role === 'ADMIN'))
+
+const pageTitle = computed(() => {
+  if (route.name === 'Chat' && chatStore.messages.length > 0) {
+    return chatStore.activeSession?.title || '当前对话'
+  }
+  const current = visibleNavItems.value.find((item) => item.route === route.path)
+  return current?.label || 'DocMind'
+})
+
+const pageKicker = computed(() => {
+  const map: Record<string, string> = {
+    Chat: '智能问答',
+    Documents: '文档处理',
+    Search: '证据检索',
+    Settings: '个人偏好',
+    Admin: '平台运营',
+  }
+  return map[String(route.name || '')] || 'DocMind'
+})
 
 watch(
   () => ({ name: route.name, messageCount: chatStore.messages.length }),
@@ -237,6 +274,20 @@ function roleLabel(role?: string) {
   return map[role || ''] || role || '未登录'
 }
 
+function formatTime(value: string) {
+  const target = new Date(value)
+  if (Number.isNaN(target.getTime())) return value
+  const diff = Date.now() - target.getTime()
+  const minute = 60 * 1000
+  const hour = 60 * minute
+  const day = 24 * hour
+  if (diff < minute) return '刚刚更新'
+  if (diff < hour) return `${Math.floor(diff / minute)} 分钟前`
+  if (diff < day) return `${Math.floor(diff / hour)} 小时前`
+  if (diff < 30 * day) return `${Math.floor(diff / day)} 天前`
+  return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, '0')}-${String(target.getDate()).padStart(2, '0')}`
+}
+
 function handleGlobalClick() {
   accountMenuOpen.value = false
 }
@@ -252,282 +303,281 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .app-layout {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr;
   min-height: 100vh;
-  background: transparent;
 }
 
 .sidebar {
-  width: 74px;
-  display: flex;
-  flex-direction: column;
-  border-right: 1px solid var(--border-color-subtle);
+  width: var(--sidebar-collapsed-width);
+  min-width: var(--sidebar-collapsed-width);
+  border-right: 1px solid var(--border-color);
   background: color-mix(in srgb, var(--bg-sidebar) 92%, transparent);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  overflow: visible;
-  transition:
-    width 260ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    background-color var(--transition-base),
-    border-color var(--transition-base);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  transition: width var(--transition-slow), min-width var(--transition-slow), background-color var(--transition-base);
+  overflow: hidden;
 }
 
 .sidebar.expanded {
-  width: 308px;
+  width: var(--sidebar-width);
+  min-width: var(--sidebar-width);
 }
 
-.sidebar-top {
+.sidebar-inner {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 18px 14px;
+  gap: 18px;
+}
+
+.sidebar-top,
+.sidebar-bottom {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 14px 16px;
-  min-height: 72px;
+  gap: 12px;
 }
 
 .sidebar-toggle {
-  width: 40px;
-  height: 40px;
-  min-width: 40px;
-  border: none;
-  border-radius: 14px;
-  background: transparent;
-  color: var(--text-primary);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: background-color var(--transition-fast), transform var(--transition-fast);
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.36);
+  display: grid;
+  place-items: center;
+  gap: 4px;
+  transition: transform var(--transition-fast), border-color var(--transition-fast), background-color var(--transition-fast);
 }
 
-.sidebar-toggle:hover,
-.sidebar-toggle.active {
-  background: var(--bg-surface-hover);
-}
-
-.sidebar-toggle:hover {
-  transform: translateY(-1px);
-}
-
-.toggle-grid {
+.sidebar-toggle span {
+  display: block;
   width: 16px;
-  height: 12px;
-  border: 1.5px solid currentColor;
-  border-radius: 2px;
-  position: relative;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--text-primary);
+  transition: transform var(--transition-fast), opacity var(--transition-fast);
 }
 
-.toggle-grid::before {
-  content: "";
-  position: absolute;
-  inset: 0 auto 0 50%;
-  width: 1.5px;
-  background: currentColor;
-  transform: translateX(-50%);
-}
+.sidebar-toggle.active span:first-child { transform: translateY(3px) rotate(45deg); }
+.sidebar-toggle.active span:last-child { transform: translateY(-3px) rotate(-45deg); }
 
 .brand-button {
-  border: none;
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 0;
   background: transparent;
-  padding: 0;
+  text-align: left;
+}
+
+.brand-mark,
+.account-avatar,
+.menu-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, rgba(36, 31, 23, 0.96), rgba(87, 71, 48, 0.84));
+  color: #fff8ef;
+  font-weight: 700;
+}
+
+.brand-copy,
+.account-meta,
+.menu-profile-copy,
+.nav-copy {
+  min-width: 0;
+}
+
+.brand-copy strong,
+.account-meta strong,
+.menu-profile-copy strong,
+.nav-copy strong {
+  display: block;
+  font-family: "Manrope", "PingFang SC", "Microsoft YaHei UI", sans-serif;
+  font-weight: 700;
   color: var(--text-primary);
-  font-family: var(--font-serif);
-  font-size: 2rem;
-  font-weight: 600;
-  letter-spacing: -0.04em;
-  cursor: pointer;
+}
+
+.brand-copy small,
+.account-meta span,
+.menu-profile-copy span,
+.nav-copy small {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .sidebar-nav,
-.sidebar-section,
-.sidebar-bottom {
-  padding: 0 12px;
-}
-
-.sidebar-nav {
+.recent-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
 }
 
 .nav-item,
 .recent-item,
 .account-trigger,
 .menu-item,
-.title-button,
-.share-button,
-.ghostmark {
-  transition:
-    background-color var(--transition-fast),
-    color var(--transition-fast),
-    border-color var(--transition-fast),
-    transform var(--transition-fast);
+.section-link,
+.theme-chip {
+  border: 0;
+  background: transparent;
 }
 
 .nav-item {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 14px;
-  height: 46px;
-  padding: 0 8px;
-  border: none;
-  border-radius: 14px;
-  background: transparent;
-  color: var(--text-primary);
-  text-align: left;
-  cursor: pointer;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 18px;
+  color: var(--text-secondary);
+  transition: background-color var(--transition-base), color var(--transition-fast), transform var(--transition-fast);
+  overflow: hidden;
 }
 
 .nav-item:hover,
-.nav-item.current {
+.recent-item:hover,
+.account-trigger:hover,
+.menu-item:hover,
+.theme-chip:hover,
+.section-link:hover {
   background: var(--bg-surface-hover);
-}
-
-.nav-icon {
-  width: 38px;
-  min-width: 38px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1rem;
-  color: var(--text-secondary);
-}
-
-.nav-item.current .nav-icon,
-.nav-item.current .nav-text {
   color: var(--text-primary);
 }
 
-.nav-text,
-.account-meta {
-  white-space: nowrap;
-  opacity: 0;
-  transform: translateX(-8px);
-  transition: opacity 160ms ease, transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+.nav-item.current {
+  background: var(--bg-surface-strong);
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--border-color-subtle), 0 12px 28px rgba(36, 31, 23, 0.06);
 }
 
-.sidebar.expanded .nav-text,
-.sidebar.expanded .account-meta {
-  opacity: 1;
-  transform: translateX(0);
+.nav-icon {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.56);
+  font-size: 15px;
+  color: inherit;
+}
+
+.sidebar:not(.expanded) .nav-copy,
+.sidebar:not(.expanded) .brand-button,
+.sidebar:not(.expanded) .sidebar-section,
+.sidebar:not(.expanded) .account-meta,
+.sidebar:not(.expanded) .account-caret {
+  opacity: 0;
+  width: 0;
+  pointer-events: none;
 }
 
 .sidebar-section {
-  margin-top: 18px;
+  padding: 12px;
+  border: 1px solid var(--border-color-subtle);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.34);
+  transition: opacity var(--transition-base), transform var(--transition-base);
 }
 
-.section-title {
-  margin: 0 8px 12px;
-  color: var(--text-tertiary);
-  font-size: 0.9rem;
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.section-head p {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.section-link {
+  font-size: 12px;
+  color: var(--text-link);
+  padding: 4px 8px;
+  border-radius: 999px;
 }
 
 .recent-item {
   width: 100%;
-  border: none;
-  background: transparent;
-  padding: 10px 10px;
-  border-radius: 14px;
-  color: var(--text-secondary);
-  font-size: 0.95rem;
+  padding: 10px 12px;
   text-align: left;
-  cursor: pointer;
+  border-radius: 16px;
+  transition: background-color var(--transition-fast), transform var(--transition-fast);
 }
 
-.recent-item:hover,
-.recent-item.active {
-  background: var(--bg-surface-hover);
+.recent-item strong,
+.recent-item span {
+  display: block;
+}
+
+.recent-item strong {
+  font-size: 13px;
   color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
+.recent-item span,
 .empty-copy {
-  margin: 0 8px;
+  margin-top: 4px;
+  font-size: 12px;
   color: var(--text-tertiary);
-  font-size: 0.9rem;
 }
 
-.sidebar-spacer {
-  flex: 1;
+.recent-item.active {
+  background: var(--bg-surface-strong);
 }
 
-.sidebar-bottom {
-  padding-bottom: 12px;
-}
+.sidebar-spacer { flex: 1; }
 
-.account-shell {
-  position: relative;
-}
+.account-shell { position: relative; width: 100%; }
 
 .account-trigger {
   width: 100%;
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 9px 8px;
-  border: none;
-  border-radius: 16px;
-  background: transparent;
-  cursor: pointer;
+  padding: 8px;
+  border-radius: 20px;
+  transition: background-color var(--transition-base), box-shadow var(--transition-base);
 }
 
-.account-trigger:hover,
 .account-trigger.active {
-  background: var(--bg-surface-hover);
+  background: var(--bg-surface-strong);
+  box-shadow: inset 0 0 0 1px var(--border-color-subtle);
 }
 
-.account-avatar,
-.menu-avatar {
-  width: 38px;
-  height: 38px;
-  min-width: 38px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--text-primary), #6f665c);
-  color: var(--bg-surface-strong);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-}
-
-.menu-avatar {
-  width: 42px;
-  height: 42px;
-  min-width: 42px;
-}
-
-.account-meta {
-  flex: 1;
-  min-width: 0;
-  text-align: left;
-}
-
-.account-meta strong,
-.menu-profile-copy strong {
-  display: block;
-  font-size: 0.94rem;
-  color: var(--text-primary);
-}
-
-.account-meta span,
-.menu-profile-copy span,
 .account-caret {
-  color: var(--text-secondary);
-  font-size: 0.84rem;
+  margin-left: auto;
+  color: var(--text-tertiary);
 }
 
 .account-menu {
   position: absolute;
   left: 0;
   bottom: calc(100% + 12px);
-  width: 290px;
+  width: min(320px, calc(100vw - 32px));
+  padding: 12px;
   border: 1px solid var(--border-color);
   border-radius: 24px;
-  background: color-mix(in srgb, var(--bg-surface-strong) 96%, transparent);
-  box-shadow: var(--shadow-lg);
-  padding: 10px;
-  z-index: 40;
-  backdrop-filter: blur(22px);
-  -webkit-backdrop-filter: blur(22px);
+  background: var(--bg-surface-strong);
+  box-shadow: var(--shadow-md);
+  z-index: 50;
 }
 
 .menu-profile {
@@ -537,153 +587,147 @@ onBeforeUnmount(() => {
   padding: 8px 8px 14px;
 }
 
-.menu-profile-copy span {
-  display: block;
-  margin-top: 4px;
-  word-break: break-all;
+.menu-group {
+  display: grid;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-color-subtle);
 }
 
-.menu-group + .menu-group {
-  border-top: 1px solid var(--border-color-subtle);
-  margin-top: 8px;
-  padding-top: 8px;
+.menu-inline-group {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .menu-item {
   width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  border: none;
-  background: transparent;
+  display: block;
+  padding: 12px 14px;
   text-align: left;
-  padding: 12px 12px;
-  border-radius: 16px;
-  color: var(--text-primary);
-  font-size: 0.98rem;
-  cursor: pointer;
+  border-radius: 18px;
+  transition: background-color var(--transition-fast);
 }
 
-.menu-item:hover {
-  background: var(--bg-surface-hover);
+.menu-item span,
+.menu-item small {
+  display: block;
+}
+
+.menu-item span {
+  color: var(--text-primary);
+  font-weight: 600;
 }
 
 .menu-item small {
+  margin-top: 4px;
+  font-size: 12px;
   color: var(--text-secondary);
-  font-size: 0.8rem;
 }
 
-.menu-theme {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
+.menu-item.danger span { color: var(--color-danger); }
+.menu-item-inline { text-align: center; }
 
-.menu-item-inline {
-  min-height: 72px;
-  justify-content: center;
-}
-
-.menu-item.danger span {
-  color: var(--color-danger);
-}
-
-.content-shell {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.top-utility {
-  min-height: 64px;
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 24px 0 22px;
+  gap: 16px;
+  padding: 22px 28px 18px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-app) 88%, transparent), transparent);
+  backdrop-filter: blur(12px);
 }
 
-.title-button {
-  border: none;
-  background: transparent;
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  cursor: default;
+.topbar-kicker {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
 }
 
-.top-actions {
-  margin-left: auto;
+.topbar h1 {
+  margin-top: 6px;
+  font-size: clamp(1.1rem, 1vw + 0.95rem, 1.55rem);
+  line-height: 1.2;
+}
+
+.topbar-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
-.share-button {
-  border: 1px solid var(--border-color);
-  background: color-mix(in srgb, var(--bg-surface-strong) 90%, transparent);
-  border-radius: 14px;
-  padding: 10px 16px;
-  font-weight: 600;
-  cursor: pointer;
-  color: var(--text-primary);
-}
-
-.share-button:hover,
-.ghostmark:hover {
-  background: var(--bg-surface-hover);
-}
-
-.ghostmark {
-  width: 34px;
-  height: 34px;
-  border: none;
-  border-radius: 50%;
-  background: transparent;
-  cursor: pointer;
+.theme-chip {
+  padding: 10px 14px;
+  border-radius: 999px;
   color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.content-shell {
+  min-width: 0;
+  min-height: 100vh;
 }
 
 .content-body {
-  flex: 1;
-  min-height: 0;
-}
-
-.sidebar-fade-enter-active,
-.sidebar-fade-leave-active {
-  transition: opacity 180ms ease, transform 220ms ease;
-}
-
-.sidebar-fade-enter-from,
-.sidebar-fade-leave-to {
-  opacity: 0;
-  transform: translateY(8px);
+  padding: 0 24px 24px;
 }
 
 .menu-pop-enter-active,
 .menu-pop-leave-active {
-  transition: opacity 180ms ease, transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
-  transform-origin: left bottom;
+  transition: opacity var(--transition-base), transform var(--transition-base);
 }
 
 .menu-pop-enter-from,
 .menu-pop-leave-to {
   opacity: 0;
-  transform: translateY(10px) scale(0.97);
+  transform: translateY(10px);
 }
 
-@media (max-width: 980px) {
+@media (max-width: 1024px) {
+  .app-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    z-index: 40;
+  }
+
+  .content-shell {
+    padding-left: var(--sidebar-collapsed-width);
+  }
+
+  .sidebar.expanded + .content-shell {
+    padding-left: var(--sidebar-width);
+  }
+}
+
+@media (max-width: 768px) {
+  .content-shell,
+  .sidebar.expanded + .content-shell {
+    padding-left: 0;
+  }
+
+  .sidebar {
+    transform: translateX(calc(-100% + var(--sidebar-collapsed-width)));
+  }
+
   .sidebar.expanded {
-    width: 282px;
+    transform: translateX(0);
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.18);
   }
 
-  .account-menu {
-    width: 270px;
+  .topbar {
+    padding: 18px 18px 14px 88px;
   }
 
-  .top-utility {
-    padding-right: 16px;
+  .content-body {
+    padding: 0 14px 18px;
   }
 }
 </style>

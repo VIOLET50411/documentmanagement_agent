@@ -1,4 +1,4 @@
-import { defineStore } from "pinia"
+﻿import { defineStore } from "pinia"
 import { computed, ref, type Ref } from "vue"
 import { authApi, type RegisterPayload, type VerificationCodePayload } from "@/api/auth"
 import type { UserPayload } from "@/api/schemas"

@@ -156,6 +156,20 @@ def test_classify_failure_identifies_recoverable_publish_error():
     assert "Ollama" in classification["recommended_action"]
 
 
+def test_resolve_export_summary_uses_clean_error_messages(tmp_path):
+    service = LLMTrainingService(FakeDB(), redis_client=None, reports_dir=tmp_path)
+
+    with pytest.raises(ValueError) as missing_root:
+        service._resolve_export_summary(source_tenant_id="tenant-a", dataset_name="dataset-a", export_dir=None)
+    assert "未找到租户训练导出目录" in str(missing_root.value)
+
+    export_dir = tmp_path / "broken-export"
+    export_dir.mkdir(parents=True, exist_ok=True)
+    with pytest.raises(ValueError) as missing_manifest:
+        service._resolve_export_summary(source_tenant_id="tenant-a", dataset_name="dataset-a", export_dir=str(export_dir))
+    assert "训练导出目录不存在 manifest" in str(missing_manifest.value)
+
+
 @pytest.mark.asyncio
 async def test_update_job_stage_persists_failure_result_when_only_error_provided():
     service = LLMTrainingService(FakeDB(), redis_client=None)

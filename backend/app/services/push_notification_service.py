@@ -223,8 +223,13 @@ class PushNotificationService:
                 "missing_env_vars": [] if settings.push_notification_webhook_url else ["PUSH_NOTIFICATION_WEBHOOK_URL"],
             },
             "fcm": {
+                "implemented": True,
                 "configured": self._fcm_configured(),
                 "ready": self._fcm_configured(),
+                "code_ready": True,
+                "transport": "https",
+                "delivery_mode": "v1" if self._uses_fcm_v1() else "legacy" if settings.push_fcm_server_key else "unconfigured",
+                "supports_platforms": sorted(self.FCM_PLATFORMS),
                 "mode": "v1" if self._uses_fcm_v1() else "legacy" if settings.push_fcm_server_key else "unconfigured",
                 "service_account_file_configured": bool(fcm_service_account_file),
                 "project_id": self._resolve_fcm_project_id(fcm_service_account_file) or settings.push_fcm_project_id or None,
@@ -232,22 +237,36 @@ class PushNotificationService:
                 "missing_env_vars": self._missing_push_env_vars("fcm", fcm_service_account_file),
             },
             "apns": {
+                "implemented": True,
                 "configured": self._apns_configured(),
                 "ready": self._apns_configured(),
+                "code_ready": True,
+                "transport": "https+http2",
+                "delivery_mode": "token",
+                "supports_platforms": sorted(self.APNS_PLATFORMS),
+                "endpoint": settings.push_apns_endpoint,
                 "topic_configured": bool(settings.push_apns_topic),
                 "auth_token_configured": bool(settings.push_apns_auth_token),
                 "required_env_vars": self._required_push_env_vars("apns"),
                 "missing_env_vars": self._missing_push_env_vars("apns"),
             },
             "wechat": {
+                "implemented": True,
                 "configured": self._wechat_configured(),
                 "ready": self._wechat_configured(),
+                "code_ready": True,
+                "transport": "https",
+                "delivery_mode": "subscribe_message",
+                "supports_platforms": sorted(self.WECHAT_PLATFORMS),
+                "endpoint": "https://api.weixin.qq.com/cgi-bin/message/subscribe/send",
                 "template_id_configured": bool(settings.push_wechat_template_id),
                 "access_token_configured": bool(settings.push_wechat_access_token),
                 "required_env_vars": self._required_push_env_vars("wechat"),
                 "missing_env_vars": self._missing_push_env_vars("wechat"),
             },
         }
+        for provider_name, meta in providers.items():
+            meta["next_step"] = self._build_provider_next_step(provider_name, meta)
         active_provider_keys = [name for name, meta in providers.items() if name != "log" and meta.get("configured")]
         active_provider_readiness = {
             name: {
@@ -316,6 +335,7 @@ class PushNotificationService:
             "recent_event_stats": recent_event_stats,
             "recent_events_sample": recent_events_sample,
             "redis_available": self.redis is not None,
+            "provider_diagnostics": self._build_provider_diagnostics(providers),
         }
 
     def send_document_status_sync(
@@ -1125,6 +1145,54 @@ class PushNotificationService:
 
     def _wechat_configured(self) -> bool:
         return bool(settings.push_wechat_access_token and settings.push_wechat_template_id)
+
+    def _build_provider_next_step(self, provider: str, meta: dict[str, Any]) -> str:
+        if provider == "log":
+            return "当前为日志模式，仅用于本地联调。"
+        if bool(meta.get("ready")):
+            return "运行凭据已到位，可直接联调真实推送。"
+        missing_env_vars = meta.get("missing_env_vars") if isinstance(meta.get("missing_env_vars"), list) else []
+        if provider == "fcm":
+            if missing_env_vars:
+                return "补齐 Firebase 凭据后即可切到真实 FCM 推送。"
+            return "检查 FCM project_id、access token 或 service account 文件是否有效。"
+        if provider == "apns":
+            if missing_env_vars:
+                return "补齐 Apple Push topic 与 auth token 后即可联调 iOS 真机推送。"
+            return "检查 APNs topic、auth token 与设备 token 是否匹配。"
+        if provider == "wechat":
+            if missing_env_vars:
+                return "补齐小程序 access token 与订阅消息模板 ID 后即可联调微信通知。"
+            return "检查小程序订阅消息模板、access token 与用户 openid 是否有效。"
+        if provider == "webhook":
+            return "补齐 webhook 地址后即可联调外部推送网关。"
+        return "检查 provider 配置与运行凭据。"
+
+    def _build_provider_diagnostics(self, providers: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        diagnostics: dict[str, dict[str, Any]] = {}
+        for provider_name, meta in providers.items():
+            diagnostics[provider_name] = {
+                "implemented": bool(meta.get("implemented", provider_name in {"log", "webhook"})),
+                "configured": bool(meta.get("configured")),
+                "ready": bool(meta.get("ready")),
+                "code_ready": bool(meta.get("code_ready", meta.get("implemented", True))),
+                "missing_env_vars": list(meta.get("missing_env_vars") or []),
+                "required_env_vars": list(meta.get("required_env_vars") or []),
+                "transport": meta.get("transport"),
+                "delivery_mode": meta.get("delivery_mode"),
+                "supports_platforms": list(meta.get("supports_platforms") or []),
+                "next_step": meta.get("next_step"),
+            }
+            if provider_name == "fcm":
+                diagnostics[provider_name]["project_id"] = meta.get("project_id")
+                diagnostics[provider_name]["service_account_file_configured"] = bool(meta.get("service_account_file_configured"))
+            if provider_name == "apns":
+                diagnostics[provider_name]["endpoint"] = meta.get("endpoint")
+                diagnostics[provider_name]["topic_configured"] = bool(meta.get("topic_configured"))
+            if provider_name == "wechat":
+                diagnostics[provider_name]["endpoint"] = meta.get("endpoint")
+                diagnostics[provider_name]["template_id_configured"] = bool(meta.get("template_id_configured"))
+        return diagnostics
 
     def _normalize_platform(self, platform: str | None) -> str:
         return str(platform or "unknown").strip().lower()

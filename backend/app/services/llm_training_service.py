@@ -936,7 +936,7 @@ class LLMTrainingService:
         if export_dir:
             manifest_path = Path(export_dir) / "manifest.json"
             if not manifest_path.exists():
-                raise ValueError(f"\u8bad\u7ec3\u5bfc\u51fa\u76ee\u5f55\u4e0d\u5b58\u5728 manifest: {export_dir}")
+                raise ValueError(f"训练导出目录不存在 manifest: {export_dir}")
             payload = json.loads(manifest_path.read_text(encoding="utf-8"))
             payload["exists"] = True
             payload["manifest_path"] = str(manifest_path)
@@ -945,13 +945,13 @@ class LLMTrainingService:
 
         root = self.reports_dir / "domain_tuning" / source_tenant_id
         if not root.exists():
-            raise ValueError(f"\u672a\u627e\u5230\u79df\u6237\u8bad\u7ec3\u5bfc\u51fa\u76ee\u5f55: {source_tenant_id}")
+            raise ValueError(f"未找到租户训练导出目录: {source_tenant_id}")
 
         manifests = sorted(root.glob(f"{dataset_name}_*/manifest.json"), key=lambda item: (item.stat().st_mtime, item.parent.name), reverse=True)
         if not manifests:
             manifests = sorted(root.glob("*/manifest.json"), key=lambda item: (item.stat().st_mtime, item.parent.name), reverse=True)
         if not manifests:
-            raise ValueError(f"\u672a\u627e\u5230\u53ef\u8bad\u7ec3\u5bfc\u51fa\u7ed3\u679c: tenant={source_tenant_id}, dataset={dataset_name}")
+            raise ValueError(f"未找到可训练导出结果: tenant={source_tenant_id}, dataset={dataset_name}")
 
         manifest_path = manifests[0]
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))

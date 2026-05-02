@@ -33,6 +33,9 @@ class ParentChildSplitter:
                 "page_number": parent.get("page_number"),
                 "token_count": self._token_count(parent_text),
                 "is_parent": True,
+                "parser": parent.get("parser"),
+                "source_type": parent.get("source_type"),
+                "element_types": parent.get("element_types", []),
             }
             chunks.append(parent_chunk)
 
@@ -49,6 +52,8 @@ class ParentChildSplitter:
                         "token_count": self._token_count(child_text),
                         "is_parent": False,
                         "child_order": child_index,
+                        "parser": parent.get("parser"),
+                        "source_type": parent.get("source_type"),
                     }
                 )
         return chunks
@@ -57,19 +62,70 @@ class ParentChildSplitter:
         parents = []
         buffer = []
         page_number = None
+        section_title = None
+        parser = None
+        source_type = None
+        element_types: list[str] = []
         for element in elements:
             text = (element.get("text") or "").strip()
             if not text:
                 continue
-            if self._token_count(" ".join(buffer + [text])) > self.parent_max_tokens and buffer:
-                parents.append({"content": "\n".join(buffer), "page_number": page_number, "type": "text"})
-                buffer = [text]
-            else:
-                buffer.append(text)
-            page_number = element.get("metadata", {}).get("page_number", page_number)
+            metadata = element.get("metadata", {}) or {}
+            current_page = metadata.get("page_number", page_number)
+            current_section = metadata.get("section_title") or section_title
+            current_type = str(element.get("type") or "text")
+            current_parser = metadata.get("parser", parser)
+            current_source_type = metadata.get("source_type", source_type)
+            starts_new_section = current_type == "heading" and buffer
+            crosses_page = current_page != page_number and buffer
+            exceeds_budget = self._token_count(" ".join(buffer + [text])) > self.parent_max_tokens and buffer
+
+            if starts_new_section or crosses_page or exceeds_budget:
+                parents.append(
+                    {
+                        "content": "\n".join(buffer),
+                        "page_number": page_number,
+                        "section_title": section_title,
+                        "type": self._collapse_type(element_types),
+                        "parser": parser,
+                        "source_type": source_type,
+                        "element_types": list(dict.fromkeys(element_types)),
+                    }
+                )
+                buffer = []
+                element_types = []
+
+            if current_type == "heading" and not current_section:
+                current_section = text[:80]
+
+            buffer.append(text)
+            element_types.append(current_type)
+            page_number = current_page
+            section_title = current_section
+            parser = current_parser
+            source_type = current_source_type
         if buffer:
-            parents.append({"content": "\n".join(buffer), "page_number": page_number, "type": "text"})
+            parents.append(
+                {
+                    "content": "\n".join(buffer),
+                    "page_number": page_number,
+                    "section_title": section_title,
+                    "type": self._collapse_type(element_types),
+                    "parser": parser,
+                    "source_type": source_type,
+                    "element_types": list(dict.fromkeys(element_types)),
+                }
+            )
         return parents
+
+    def _collapse_type(self, element_types: list[str]) -> str:
+        if any(item == "table" for item in element_types):
+            return "table"
+        if any(item == "heading" for item in element_types):
+            return "heading"
+        if any(item == "ocr_page" for item in element_types):
+            return "ocr_page"
+        return "text"
 
     def _split_text(self, text: str, max_tokens: int) -> list[str]:
         if self._token_count(text) <= max_tokens:

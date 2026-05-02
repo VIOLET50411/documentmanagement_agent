@@ -45,15 +45,15 @@ def _resolve_script_command_template(command_template: str | None = None) -> tup
         return configured, "configured"
 
     if not settings.llm_training_executor_builtin_runner_enabled:
-        raise ValueError("未配置本地训练执行器命令，且未启用内置训练脚本。")
+        raise ValueError("????????????????????????")
 
     runner_path = _builtin_training_runner_path()
     if not runner_path.exists():
-        raise ValueError(f"未找到内置训练脚本: {runner_path}")
+        raise ValueError(f"?????????: {runner_path}")
 
     python_executable = str(sys.executable or "").strip()
     if not python_executable:
-        raise ValueError("当前 Python 解释器不可用，无法执行内置训练脚本。")
+        raise ValueError("?? Python ??????????????????")
 
     command = f"{shlex.quote(python_executable)} {shlex.quote(str(runner_path))} --request-json {{request_json_path}}"
     if settings.llm_training_executor_allow_plan_fallback:
@@ -93,7 +93,7 @@ def describe_training_runtime(provider: str | None = None) -> dict[str, Any]:
             {
                 "resolved_provider": "mock",
                 "ready": True,
-                "note": "当前配置仍可退回 mock 训练执行器，但不会产出真实 LoRA/SFT 结果。",
+                "note": "???????? mock ????????????? LoRA/SFT ???",
             }
         )
         return payload
@@ -143,17 +143,17 @@ class TrainingExecutor:
         mode = str(executor_metadata.get("mode") or "").strip().lower()
 
         if not artifact_dir:
-            raise ValueError("训练执行结果缺少 artifact_dir")
+            raise ValueError("???????? artifact_dir")
         if not serving_base_url:
-            raise ValueError("训练执行结果缺少 serving_base_url")
+            raise ValueError("???????? serving_base_url")
         if not serving_model_name:
-            raise ValueError("训练执行结果缺少 serving_model_name")
+            raise ValueError("???????? serving_model_name")
         if mode == "plan_only" or not executed:
-            raise ValueError("训练执行器仅输出训练计划，未生成可注册产物。")
+            raise ValueError("??????????????????????")
         if not adapter_dir:
-            raise ValueError("训练执行结果缺少 adapter_dir")
+            raise ValueError("???????? adapter_dir")
         if not Path(adapter_dir).exists():
-            raise ValueError(f"训练执行结果中的 adapter_dir 不存在: {adapter_dir}")
+            raise ValueError(f"???????? adapter_dir ???: {adapter_dir}")
 
         return {
             "artifact_dir": artifact_dir,
@@ -198,7 +198,7 @@ class MockTrainingExecutor(TrainingExecutor):
                     f"- train_records: {request.train_records}",
                     f"- val_records: {request.val_records}",
                     "",
-                    "该产物为 DocMind 当前阶段的占位训练产物，可在后续接入真实 LoRA/SFT 训练器后替换。",
+                    "???? DocMind ???????????????????? LoRA/SFT ???????",
                 ]
             ),
             encoding="utf-8",
@@ -211,7 +211,7 @@ class MockTrainingExecutor(TrainingExecutor):
             "serving_base_url": settings.llm_enterprise_api_base_url or settings.llm_api_base_url,
             "serving_model_name": settings.llm_enterprise_model_name or settings.llm_model_name,
             "executor_metadata": {"executor": "mock", "mode": "executed"},
-            "notes": "当前由 mock 训练执行器输出，可替换为真实训练服务。",
+            "notes": "??? mock ???????????????????",
         }
 
 
@@ -270,7 +270,7 @@ class ScriptTrainingExecutor(TrainingExecutor):
         stdout_text = stdout_raw.decode("utf-8", errors="replace").strip()
         stderr_text = stderr_raw.decode("utf-8", errors="replace").strip()
         if process.returncode != 0:
-            message = stderr_text or stdout_text or f"训练脚本退出码 {process.returncode}"
+            message = stderr_text or stdout_text or f"??????? {process.returncode}"
             raise RuntimeError(message[-4000:])
 
         result_payload = self._load_result_payload(artifact_dir, stdout_text)
@@ -306,14 +306,14 @@ class ScriptTrainingExecutor(TrainingExecutor):
                 continue
             if isinstance(payload, dict):
                 return payload
-        raise ValueError("训练脚本未生成可解析的结果 JSON")
+        raise ValueError("????????????? JSON")
 
 
 class RemoteTrainingExecutor(TrainingExecutor):
     async def execute(self, request: TrainingExecutionRequest) -> dict[str, Any]:
         base_url = (settings.llm_training_executor_api_base_url or "").rstrip("/")
         if not base_url:
-            raise ValueError("未配置训练执行器 API 地址")
+            raise ValueError("???????? API ??")
 
         payload = {
             "job_id": request.job_id,
@@ -344,7 +344,7 @@ class RemoteTrainingExecutor(TrainingExecutor):
             job_id = str((data or {}).get("job_id") or "").strip()
             status_url = str((data or {}).get("status_url") or "").strip()
             if not job_id and not status_url:
-                raise ValueError("训练执行器未返回可轮询的 job_id 或 status_url")
+                raise ValueError("???????????? job_id ? status_url")
             result = await self._poll_until_completed(client, headers=headers, base_url=base_url, job_id=job_id, status_url=status_url)
             result["executor_metadata"] = {
                 **(result.get("executor_metadata") or {}),
@@ -375,9 +375,9 @@ class RemoteTrainingExecutor(TrainingExecutor):
                 return self._extract_terminal_result(payload)
             status = str((payload or {}).get("status") or "").strip().lower()
             if status in {"failed", "error", "cancelled", "canceled", "killed"}:
-                error_message = str((payload or {}).get("error") or (payload or {}).get("message") or "训练执行器任务失败")
+                error_message = str((payload or {}).get("error") or (payload or {}).get("message") or "????????")
                 raise RuntimeError(error_message)
-        raise TimeoutError(f"训练执行器在 {timeout_seconds}s 内未完成任务")
+        raise TimeoutError(f"???????? {timeout_seconds}s????????")
 
     def _is_terminal_payload(self, payload: Any) -> bool:
         if not isinstance(payload, dict):
@@ -390,7 +390,7 @@ class RemoteTrainingExecutor(TrainingExecutor):
     def _extract_terminal_result(self, payload: dict[str, Any]) -> dict[str, Any]:
         result_payload = payload.get("result") if isinstance(payload.get("result"), dict) else payload
         if not isinstance(result_payload, dict):
-            raise ValueError("训练执行器返回格式非法")
+            raise ValueError("??????????????")
         return result_payload
 
 

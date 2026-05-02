@@ -80,6 +80,29 @@ def test_ocr_parser_normalizes_image_result_with_page_summary(tmp_path: Path, mo
     assert rows[2]["metadata"]["line_count"] == 2
 
 
+def test_ocr_parser_marks_pdf_source_type_in_page_summary(tmp_path: Path, monkeypatch):
+    parser = OCRParser()
+    pdf_path = tmp_path / "scan.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4 mock")
+
+    class DummyEngine:
+        def ocr(self, path, cls=True):
+            return [
+                [
+                    [[0, 0], [10, 0], [10, 10], [0, 10]],
+                    ("扫描文本", 0.91),
+                ]
+            ]
+
+    monkeypatch.setattr(parser, "_get_engine", lambda: DummyEngine())
+    monkeypatch.setattr(parser, "_ocr_path", lambda engine, path: [engine.ocr(str(path), cls=True)])
+
+    rows = parser.parse(str(pdf_path))
+
+    assert rows[-1]["type"] == "ocr_page"
+    assert rows[-1]["metadata"]["source_type"] == "pdf"
+
+
 def test_pdf_parser_falls_back_to_pypdf_when_unstructured_backend_errors(tmp_path: Path, monkeypatch):
     parser = PDFParser()
 

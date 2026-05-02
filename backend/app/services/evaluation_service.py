@@ -209,10 +209,20 @@ class EvaluationService:
                 }
             )
         summary = dataset_summary if isinstance(dataset_summary, dict) else {}
+        dataset_size = int(summary.get("dataset_size", 0) or 0)
         unique_doc_count = int(summary.get("unique_doc_count", 0) or 0)
         difficulty_counts = summary.get("difficulty_counts") if isinstance(summary.get("difficulty_counts"), dict) else {}
         difficulty_bucket_count = sum(1 for value in difficulty_counts.values() if int(value or 0) > 0)
         if summary:
+            if dataset_size < settings.ci_gate_min_eval_dataset_size:
+                failures.append(
+                    {
+                        "metric": "dataset_size",
+                        "actual": dataset_size,
+                        "threshold": settings.ci_gate_min_eval_dataset_size,
+                        "delta": dataset_size - settings.ci_gate_min_eval_dataset_size,
+                    }
+                )
             if unique_doc_count < settings.ci_gate_min_eval_unique_docs:
                 failures.append(
                     {
@@ -295,9 +305,9 @@ class EvaluationService:
                 "chunks": [
                     {
                         "content": (
-                            "采购申请应当明确采购事项、供应商范围和预算来源。"
-                            "单笔采购金额超过五万元的事项，应当组织不少于三家供应商比价。"
-                            "采购结果须留存评审记录和合同文本。"
+                            "采购申请需写明采购事项、供应商范围和预算来源。"
+                            "单笔采购金额超过五万元时，需组织不少于三家供应商比价。"
+                            "采购结果需留存评审记录和合同文本。"
                         )
                     }
                 ],
@@ -308,9 +318,9 @@ class EvaluationService:
                 "chunks": [
                     {
                         "content": (
-                            "制度文件发布前应当完成合规审查。"
-                            "法务人员重点核对授权依据、审批链路和外部监管要求。"
-                            "存在高风险条款时，应当退回起草部门修订后再次提交。"
+                            "制度文件发布前必须完成合规审查。"
+                            "法务人员重点核对授权依据、审批链路和监管要求。"
+                            "若存在高风险条款，应退回起草部门修订后再提交。"
                         )
                     }
                 ],
@@ -321,9 +331,9 @@ class EvaluationService:
                 "chunks": [
                     {
                         "content": (
-                            "报销申请应当在业务发生后十个工作日内提交。"
+                            "报销申请应在业务发生后十个工作日内提交。"
                             "申请人需上传发票、行程单和付款凭证。"
-                            "财务复核发现票据不完整时，应当一次性退回并说明原因。"
+                            "若票据不完整，财务应一次性退回并说明原因。"
                         )
                     }
                 ],

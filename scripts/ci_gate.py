@@ -25,6 +25,9 @@ def _enforce_evaluation_gate(eval_payload: dict, eval_metrics: dict, eval_meta: 
     if gate and not bool(gate.get("passed")):
         raise RuntimeError(f"evaluation quality gate failed: {json.dumps(gate, ensure_ascii=False)}")
     dataset_summary = gate.get("dataset_summary") if isinstance(gate.get("dataset_summary"), dict) else {}
+    dataset_size = int(eval_payload.get("dataset_size", dataset_summary.get("dataset_size", 0)) or 0)
+    if dataset_size < settings.ci_gate_min_eval_dataset_size:
+        raise RuntimeError(f"evaluation dataset_size too low: {dataset_size}")
     if dataset_summary:
         unique_doc_count = int(dataset_summary.get("unique_doc_count", 0) or 0)
         difficulty_counts = dataset_summary.get("difficulty_counts") if isinstance(dataset_summary.get("difficulty_counts"), dict) else {}
@@ -198,13 +201,11 @@ async def main() -> None:
             raise RuntimeError(f"runtime deny_rate too high: {json.dumps(runtime_summary, ensure_ascii=False)}")
         _enforce_evaluation_gate(eval_payload, eval_metrics, eval_meta)
         thresholds = _resolve_metric_thresholds(eval_meta)
+        dataset_size = int(eval_payload.get("dataset_size", 0) or 0)
         faithfulness = float(eval_metrics.get("faithfulness", 0.0) or 0.0)
         answer_relevancy = float(eval_metrics.get("answer_relevancy", 0.0) or 0.0)
         context_precision = float(eval_metrics.get("context_precision", 0.0) or 0.0)
         context_recall = float(eval_metrics.get("context_recall", 0.0) or 0.0)
-        dataset_size = int(eval_payload.get("dataset_size", 0) or 0)
-        if dataset_size < settings.ci_gate_min_eval_dataset_size:
-            raise RuntimeError(f"evaluation dataset_size too low: {dataset_size}")
         if faithfulness < thresholds["faithfulness"]:
             raise RuntimeError(f"faithfulness below gate: {faithfulness}")
         if answer_relevancy < thresholds["answer_relevancy"]:

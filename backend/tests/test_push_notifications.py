@@ -134,6 +134,10 @@ async def test_push_health_summary_marks_multi_ready_when_subprovider_configured
     assert payload['issues'] == []
     assert payload['active_providers'] == ['fcm']
     assert payload['active_provider_readiness']['fcm']['ready'] is True
+    assert payload['provider_diagnostics']['fcm']['code_ready'] is True
+    assert payload['provider_diagnostics']['fcm']['next_step'] == '运行凭据已到位，可直接联调真实推送。'
+    assert payload['provider_diagnostics']['apns']['next_step'] == '补齐 Apple Push topic 与 auth token 后即可联调 iOS 真机推送。'
+    assert payload['provider_diagnostics']['wechat']['next_step'] == '补齐小程序 access token 与订阅消息模板 ID 后即可联调微信通知。'
     assert payload['providers']['apns']['missing_env_vars'] == ['PUSH_APNS_TOPIC', 'PUSH_APNS_AUTH_TOKEN']
     assert payload['providers']['wechat']['missing_env_vars'] == ['PUSH_WECHAT_ACCESS_TOKEN', 'PUSH_WECHAT_TEMPLATE_ID']
 
@@ -403,6 +407,129 @@ async def test_fcm_invalid_token_deactivates_device(monkeypatch):
         'provider': 'fcm',
         'reason': 'invalid_device_token',
         'tokens': ['token-invalid-1'],
+    }
+
+
+@pytest.mark.asyncio
+async def test_apns_invalid_token_deactivates_device(monkeypatch):
+    service = PushNotificationService(redis_client=object())
+    payload = {
+        'tenant_id': 'tenant-1',
+        'user_id': 'user-1',
+        'title': '测试消息',
+        'body': '无效 APNs token',
+        'status': 'test',
+    }
+    devices = [{'platform': 'ios', 'device_token': 'apns-invalid-1'}]
+    deactivated = {}
+
+    monkeypatch.setattr(settings, 'push_apns_topic', 'com.docmind.app')
+    monkeypatch.setattr(settings, 'push_apns_auth_token', 'apns-token')
+    monkeypatch.setattr(settings, 'push_auto_deactivate_invalid_tokens', True)
+
+    async def fake_deactivate(self, runtime_payload, invalid_devices, *, provider, reason):
+        deactivated['provider'] = provider
+        deactivated['reason'] = reason
+        deactivated['tokens'] = [item['device_token'] for item in invalid_devices]
+
+    monkeypatch.setattr(PushNotificationService, '_deactivate_devices_async', fake_deactivate)
+
+    class FakeErrorResponse:
+        status_code = 410
+        text = json.dumps({'reason': 'BadDeviceToken'})
+
+        def json(self):
+            return json.loads(self.text)
+
+        def raise_for_status(self):
+            import httpx
+
+            request = httpx.Request('POST', 'https://api.push.apple.com/3/device/apns-invalid-1')
+            raise httpx.HTTPStatusError('410 invalid token', request=request, response=self)
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, endpoint, json=None, headers=None):
+            return FakeErrorResponse()
+
+    monkeypatch.setattr('app.services.push_notification_service.httpx.AsyncClient', FakeAsyncClient)
+
+    result = await service._send_apns_async(payload, devices)
+
+    assert result['sent'] == 0
+    assert result['failed'] == 1
+    assert deactivated == {
+        'provider': 'apns',
+        'reason': 'invalid_device_token',
+        'tokens': ['apns-invalid-1'],
+    }
+
+
+@pytest.mark.asyncio
+async def test_wechat_invalid_openid_deactivates_device(monkeypatch):
+    service = PushNotificationService(redis_client=object())
+    payload = {
+        'tenant_id': 'tenant-1',
+        'user_id': 'user-1',
+        'title': '测试消息',
+        'body': '无效微信 openid',
+        'status': 'test',
+    }
+    devices = [{'platform': 'wechat', 'device_token': 'wechat-invalid-1'}]
+    deactivated = {}
+
+    monkeypatch.setattr(settings, 'push_wechat_access_token', 'wechat-token')
+    monkeypatch.setattr(settings, 'push_wechat_template_id', 'template-1')
+    monkeypatch.setattr(settings, 'push_auto_deactivate_invalid_tokens', True)
+
+    async def fake_deactivate(self, runtime_payload, invalid_devices, *, provider, reason):
+        deactivated['provider'] = provider
+        deactivated['reason'] = reason
+        deactivated['tokens'] = [item['device_token'] for item in invalid_devices]
+
+    monkeypatch.setattr(PushNotificationService, '_deactivate_devices_async', fake_deactivate)
+
+    class FakeResponse:
+        status_code = 200
+        text = json.dumps({'errcode': 40003, 'errmsg': 'invalid openid'})
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return json.loads(self.text)
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, endpoint, json=None, headers=None):
+            return FakeResponse()
+
+    monkeypatch.setattr('app.services.push_notification_service.httpx.AsyncClient', FakeAsyncClient)
+
+    result = await service._send_wechat_async(payload, devices)
+
+    assert result[0]['sent'] == 0
+    assert result[0]['failed'] == 1
+    assert deactivated == {
+        'provider': 'wechat',
+        'reason': 'invalid_device_token',
+        'tokens': ['wechat-invalid-1'],
     }
 
 

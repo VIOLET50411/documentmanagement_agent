@@ -5,6 +5,7 @@ import pytest
 
 from app.config import settings
 from app.dependencies import STARTUP_SCHEMA_COMPATIBILITY_STATEMENTS
+from app.evaluation.golden_dataset import GoldenDatasetGenerator
 from app.services.evaluation_service import EvaluationService
 
 
@@ -44,6 +45,7 @@ def test_build_gate_fails_when_metric_below_threshold():
 
 def test_build_gate_fails_when_dataset_summary_lacks_coverage(monkeypatch):
     service = EvaluationService(None, None, reports_dir=Path("."))
+    monkeypatch.setattr(settings, "ci_gate_min_eval_dataset_size", 3)
     monkeypatch.setattr(settings, "ci_gate_min_eval_unique_docs", 2)
     monkeypatch.setattr(settings, "ci_gate_min_eval_difficulty_buckets", 2)
 
@@ -62,6 +64,25 @@ def test_build_gate_fails_when_dataset_summary_lacks_coverage(monkeypatch):
     failure_metrics = {item["metric"] for item in gate["failures"]}
     assert "unique_doc_count" in failure_metrics
     assert "difficulty_buckets" in failure_metrics
+
+
+def test_build_gate_fails_when_dataset_size_below_threshold(monkeypatch):
+    service = EvaluationService(None, None, reports_dir=Path("."))
+    monkeypatch.setattr(settings, "ci_gate_min_eval_dataset_size", 5)
+
+    gate = service._build_gate(
+        {
+            "faithfulness": settings.ci_gate_min_faithfulness,
+            "answer_relevancy": settings.ci_gate_min_answer_relevancy,
+            "context_precision": settings.ci_gate_min_context_precision,
+            "context_recall": settings.ci_gate_min_context_recall,
+            "_meta": {"real_mode": True, "mode": "ragas_api"},
+        },
+        dataset_summary={"dataset_size": 4, "unique_doc_count": 4, "difficulty_counts": {"basic": 2, "grounded": 2}},
+    )
+
+    assert gate["passed"] is False
+    assert any(item["metric"] == "dataset_size" for item in gate["failures"])
 
 
 def test_build_gate_uses_ragas_ollama_thresholds(monkeypatch):
@@ -212,6 +233,23 @@ def test_build_seed_documents_returns_enterprise_corpus():
     assert len(seeds) == 3
     assert seeds[0]["title"] == "预算管理办法"
     assert "审批" in seeds[1]["chunks"][0]["content"]
+
+
+def test_golden_dataset_grounded_pair_uses_sentence_anchored_answer():
+    generator = GoldenDatasetGenerator()
+
+    pairs = generator._build_sentence_pairs(
+        "差旅审批制度",
+        "员工出差前应当在系统中提交差旅申请。申请内容包括出差事由、地点、时间和预计费用。",
+        {"id": "doc-1"},
+        0,
+    )
+
+    grounded = next(item for item in pairs if item["difficulty"] == "grounded")
+    assert grounded["question"] == "根据差旅审批制度，这一段明确了什么要求？"
+    assert grounded["answer"] == "员工出差前应当在系统中提交差旅申请。"
+    basic = next(item for item in pairs if item["difficulty"] == "basic")
+    assert basic["question"] == "根据差旅审批制度，第1段开头的原文要求是什么？"
 
 
 @pytest.mark.asyncio

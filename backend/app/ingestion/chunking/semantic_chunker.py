@@ -17,11 +17,13 @@ class SemanticChunker:
         self.overlap_ratio = overlap_ratio
         self.similarity_threshold = similarity_threshold
         self.embedder = DocumentEmbedder()
+        self._similarity_cache: dict[str, list[float]] = {}
 
     def chunk(self, text: str) -> list[str]:
         normalized = (text or "").strip()
         if not normalized:
             return []
+        self._similarity_cache.clear()
 
         sentences = self._split_sentences(normalized)
         if not sentences:
@@ -72,15 +74,7 @@ class SemanticChunker:
             if self._estimate_tokens(text) <= self.max_tokens:
                 chunks.append(text)
                 continue
-
-            words = text.split()
-            stride = max(1, int(self.max_tokens * (1 - self.overlap_ratio)))
-            for start in range(0, len(words), stride):
-                segment = " ".join(words[start : start + self.max_tokens]).strip()
-                if segment:
-                    chunks.append(segment)
-                if start + self.max_tokens >= len(words):
-                    break
+            chunks.extend(self._split_oversized_text(text))
         return chunks
 
     def _overlap_tail(self, sentences: list[str]) -> list[str]:
@@ -95,9 +89,43 @@ class SemanticChunker:
         return list(reversed(kept))
 
     def _sentence_similarity(self, left: str, right: str) -> float:
-        left_vector = self.embedder.local_embed_query(left)["dense"]
-        right_vector = self.embedder.local_embed_query(right)["dense"]
+        left_vector = self._embedding_for(left)
+        right_vector = self._embedding_for(right)
         return self._cosine_similarity(left_vector, right_vector)
+
+    def _embedding_for(self, text: str) -> list[float]:
+        cached = self._similarity_cache.get(text)
+        if cached is not None:
+            return cached
+        vector = self.embedder.local_embed_query(text)["dense"]
+        self._similarity_cache[text] = vector
+        return vector
+
+    def _split_oversized_text(self, text: str) -> list[str]:
+        words = text.split()
+        if len(words) > 1:
+            stride = max(1, int(self.max_tokens * (1 - self.overlap_ratio)))
+            segments = []
+            for start in range(0, len(words), stride):
+                segment = " ".join(words[start : start + self.max_tokens]).strip()
+                if segment:
+                    segments.append(segment)
+                if start + self.max_tokens >= len(words):
+                    break
+            return segments
+
+        units = re.findall(r"[\u4e00-\u9fff]|[A-Za-z0-9]+|[^\s]", text)
+        if not units:
+            return [text]
+        stride = max(1, int(self.max_tokens * (1 - self.overlap_ratio)))
+        segments = []
+        for start in range(0, len(units), stride):
+            segment = "".join(units[start : start + self.max_tokens]).strip()
+            if segment:
+                segments.append(segment)
+            if start + self.max_tokens >= len(units):
+                break
+        return segments or [text]
 
     def _cosine_similarity(self, left: list[float], right: list[float]) -> float:
         if not left or not right:

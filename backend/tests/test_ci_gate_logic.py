@@ -17,30 +17,34 @@ def test_ci_gate_rejects_failed_evaluation_gate():
 
 def test_ci_gate_rejects_heuristic_mode_when_real_required(monkeypatch):
     monkeypatch.setattr(settings, "ci_gate_require_real_ragas", True)
+    monkeypatch.setattr(settings, "ci_gate_min_eval_dataset_size", 1)
     with pytest.raises(RuntimeError, match="heuristic mode returned"):
         _enforce_evaluation_gate(
-            {"gate": {"passed": True, "failures": []}},
-            {"faithfulness": 0.9, "_meta": {"real_mode": True, "mode": "fallback"}},
+            {"gate": {"passed": True, "failures": []}, "dataset_size": 1},
+            {"faithfulness": 0.9, "sample_count": 1, "_meta": {"real_mode": True, "mode": "fallback"}},
             {"real_mode": True, "mode": "fallback"},
         )
 
 
 def test_ci_gate_accepts_real_ragas_gate(monkeypatch):
     monkeypatch.setattr(settings, "ci_gate_require_real_ragas", True)
+    monkeypatch.setattr(settings, "ci_gate_min_eval_dataset_size", 2)
     _enforce_evaluation_gate(
         {
             "gate": {
                 "passed": True,
                 "failures": [],
-                "dataset_summary": {"unique_doc_count": 2, "difficulty_counts": {"basic": 1, "grounded": 1}},
-            }
+                "dataset_summary": {"dataset_size": 2, "unique_doc_count": 2, "difficulty_counts": {"basic": 1, "grounded": 1}},
+            },
+            "dataset_size": 2,
         },
-        {"faithfulness": 0.95, "_meta": {"real_mode": True, "mode": "ragas_api"}},
+        {"faithfulness": 0.95, "sample_count": 2, "_meta": {"real_mode": True, "mode": "ragas_api"}},
         {"real_mode": True, "mode": "ragas_api"},
     )
 
 
 def test_ci_gate_rejects_low_dataset_coverage(monkeypatch):
+    monkeypatch.setattr(settings, "ci_gate_min_eval_dataset_size", 3)
     monkeypatch.setattr(settings, "ci_gate_min_eval_unique_docs", 2)
     monkeypatch.setattr(settings, "ci_gate_min_eval_difficulty_buckets", 2)
     with pytest.raises(RuntimeError, match="unique_doc_count too low"):
@@ -49,8 +53,26 @@ def test_ci_gate_rejects_low_dataset_coverage(monkeypatch):
                 "gate": {
                     "passed": True,
                     "failures": [],
-                    "dataset_summary": {"unique_doc_count": 1, "difficulty_counts": {"basic": 3}},
-                }
+                    "dataset_summary": {"dataset_size": 3, "unique_doc_count": 1, "difficulty_counts": {"basic": 3}},
+                },
+                "dataset_size": 3,
+            },
+            {"faithfulness": 0.95, "sample_count": 3, "_meta": {"real_mode": True, "mode": "ragas_api"}},
+            {"real_mode": True, "mode": "ragas_api"},
+        )
+
+
+def test_ci_gate_rejects_low_dataset_size(monkeypatch):
+    monkeypatch.setattr(settings, "ci_gate_min_eval_dataset_size", 5)
+    with pytest.raises(RuntimeError, match="dataset_size too low"):
+        _enforce_evaluation_gate(
+            {
+                "gate": {
+                    "passed": True,
+                    "failures": [],
+                    "dataset_summary": {"dataset_size": 4, "unique_doc_count": 4, "difficulty_counts": {"basic": 2, "grounded": 2}},
+                },
+                "dataset_size": 4,
             },
             {"faithfulness": 0.95, "_meta": {"real_mode": True, "mode": "ragas_api"}},
             {"real_mode": True, "mode": "ragas_api"},

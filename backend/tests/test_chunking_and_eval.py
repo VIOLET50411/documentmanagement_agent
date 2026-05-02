@@ -8,6 +8,7 @@ from app.evaluation.ragas_runner import RagasRunner
 from app.evaluation.report_generator import ReportGenerator
 from app.ingestion.chunking.parent_child_splitter import ParentChildSplitter
 from app.ingestion.chunking.semantic_chunker import SemanticChunker
+from app.ingestion.pipeline import DocumentIngestionPipeline
 from app.ingestion.parsers.excel_parser import ExcelParser
 
 
@@ -43,6 +44,46 @@ def test_parent_child_splitter_prefers_semantic_chunks(monkeypatch):
     chunks = splitter._split_text("第一段 语义块 第二段 语义块", 3)
 
     assert chunks == ["第一段 语义块", "第二段 语义块"]
+
+
+def test_parent_child_splitter_preserves_sections_pages_and_parser():
+    splitter = ParentChildSplitter(parent_max_tokens=128, child_max_tokens=16, overlap=0.1)
+    elements = [
+        {"type": "heading", "text": "第一章 总则", "metadata": {"page_number": 1, "section_title": "第一章 总则", "parser": "pypdf"}},
+        {"type": "paragraph", "text": "出差前需要提交申请。", "metadata": {"page_number": 1, "section_title": "第一章 总则", "parser": "pypdf"}},
+        {"type": "paragraph", "text": "审批完成后方可预订。", "metadata": {"page_number": 2, "section_title": "第一章 总则", "parser": "pypdf"}},
+    ]
+
+    chunks = splitter.split(elements)
+
+    parents = [chunk for chunk in chunks if chunk["is_parent"]]
+    children = [chunk for chunk in chunks if not chunk["is_parent"]]
+
+    assert len(parents) == 2
+    assert parents[0]["section_title"] == "第一章 总则"
+    assert parents[0]["page_number"] == 1
+    assert parents[0]["parser"] == "pypdf"
+    assert "heading" in parents[0]["element_types"]
+    assert children[0]["parent_id"] == parents[0]["id"]
+    assert children[-1]["page_number"] == 2
+
+
+def test_semantic_chunker_splits_long_cjk_text_without_spaces():
+    chunker = SemanticChunker(max_tokens=10, overlap_ratio=0.2)
+
+    chunks = chunker._split_oversized_text("预算审批流程需要先提交申请再由部门负责人审核最后财务复核生成凭证")
+
+    assert len(chunks) >= 2
+    assert all(chunk.strip() for chunk in chunks)
+    assert all(len(chunk) <= 10 for chunk in chunks)
+
+
+def test_pipeline_routes_image_files_to_ocr_parser():
+    pipeline = DocumentIngestionPipeline()
+
+    parser = pipeline._resolve_parser("image/png", "receipt.png")
+
+    assert parser.__class__.__name__ == "OCRParser"
 
 
 @pytest.mark.asyncio

@@ -148,7 +148,7 @@ class GoldenDatasetGenerator:
         if first_sentence:
             pairs.append(
                 {
-                    "question": f"{title}\u7b2c{index + 1}\u6bb5\u9996\u5148\u8bf4\u660e\u4e86\u4ec0\u4e48\uff1f",
+                    "question": f"\u6839\u636e{title}\uff0c\u7b2c{index + 1}\u6bb5\u5f00\u5934\u7684\u539f\u6587\u8981\u6c42\u662f\u4ec0\u4e48\uff1f",
                     "answer": first_sentence[:200],
                     "reference": first_sentence[:200],
                     "contexts": [cleaned],
@@ -157,13 +157,13 @@ class GoldenDatasetGenerator:
                 }
             )
 
-        entities = self._extract_key_entities(cleaned)
-        for entity in entities[:2]:
+        grounded_answer = self._select_grounded_answer(sentences, cleaned)
+        if grounded_answer:
             pairs.append(
                 {
-                    "question": f"{title}\u4e2d\u5173\u4e8e\u201c{entity}\u201d\u63d0\u5230\u4e86\u4ec0\u4e48\uff1f",
-                    "answer": answer,
-                    "reference": answer,
+                    "question": f"\u6839\u636e{title}\uff0c\u8fd9\u4e00\u6bb5\u660e\u786e\u4e86\u4ec0\u4e48\u8981\u6c42\uff1f",
+                    "answer": grounded_answer[:200],
+                    "reference": grounded_answer[:200],
                     "contexts": [cleaned],
                     "context_doc_ids": [document.get("doc_id") or document.get("id")],
                     "difficulty": "grounded",
@@ -199,6 +199,24 @@ class GoldenDatasetGenerator:
             if item not in entities:
                 entities.append(item)
         return entities
+
+    def _select_grounded_answer(self, sentences: list[str], cleaned: str) -> str:
+        preferred_keywords = (
+            "\u5e94\u5f53",
+            "\u9700\u8981",
+            "\u987b",
+            "\u4e0d\u5f97",
+            "\u65b9\u53ef",
+            "\u63d0\u4ea4",
+            "\u5ba1\u6279",
+            "\u6bd4\u4ef7",
+            "\u62a5\u9500",
+        )
+        for sentence in sentences:
+            compact = sentence.strip()
+            if compact and any(keyword in compact for keyword in preferred_keywords):
+                return compact
+        return (sentences[0].strip() if sentences else "") or cleaned[:200]
 
     def _build_row_summary(self, title: str, subject: str, headers: list[str], values: list[str]) -> str:
         details = [f"{self._display_header(header)}\u662f{value}" for header, value in zip(headers, values) if value and value != "---"]

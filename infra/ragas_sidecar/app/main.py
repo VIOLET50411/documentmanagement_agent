@@ -1,6 +1,7 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
+import copy
 import math
 import os
 from typing import Any
@@ -13,12 +14,8 @@ app = FastAPI(title="DocMind Ragas Sidecar", version="0.2.0")
 
 @app.on_event("startup")
 async def startup_event() -> None:
-    try:
-        import nltk
-
-        nltk.download("punkt", quiet=True)
-    except Exception:
-        pass
+    # Do not block container readiness on optional tokenizer downloads.
+    return None
 
 
 class EvaluateRequest(BaseModel):
@@ -108,6 +105,27 @@ def _safe_metric(value: Any) -> float:
     return result
 
 
+def _normalize_per_sample(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for row in records:
+        contexts = row.get("retrieved_contexts")
+        if not isinstance(contexts, list):
+            contexts = []
+        items.append(
+            {
+                "question": str(row.get("user_input") or ""),
+                "answer": str(row.get("response") or ""),
+                "reference": str(row.get("reference") or ""),
+                "contexts": [str(item) for item in contexts[:3]],
+                "faithfulness": _safe_metric(row.get("faithfulness")),
+                "answer_relevancy": _safe_metric(row.get("answer_relevancy")),
+                "context_precision": _safe_metric(row.get("context_precision")),
+                "context_recall": _safe_metric(row.get("context_recall")),
+            }
+        )
+    return items
+
+
 async def _ragas_eval(dataset: list[dict[str, Any]]) -> dict[str, Any]:
     from datasets import Dataset
     from ragas import evaluate
@@ -157,18 +175,33 @@ async def _ragas_eval(dataset: list[dict[str, Any]]) -> dict[str, Any]:
         emb = OpenAIEmbeddings(model=embed_model, base_url=embed_base, api_key=api_key)
         engine = "ragas_openai_compat"
 
+    wrapped_llm = LangchainLLMWrapper(llm)
+    wrapped_embeddings = LangchainEmbeddingsWrapper(emb)
+    metrics = [
+        copy.deepcopy(faithfulness),
+        copy.deepcopy(answer_relevancy),
+        copy.deepcopy(context_precision),
+        copy.deepcopy(context_recall),
+    ]
+    for metric in metrics:
+        if hasattr(metric, "llm"):
+            metric.llm = wrapped_llm
+        if hasattr(metric, "embeddings"):
+            metric.embeddings = wrapped_embeddings
+
     def _run_eval():
         return evaluate(
             ds,
-            metrics=[faithfulness, answer_relevancy, context_precision, context_recall],
-            llm=LangchainLLMWrapper(llm),
-            embeddings=LangchainEmbeddingsWrapper(emb),
+            metrics=metrics,
+            llm=wrapped_llm,
+            embeddings=wrapped_embeddings,
             run_config=RunConfig(timeout=run_timeout, max_workers=max_workers),
             show_progress=False,
         )
 
     result = await asyncio.to_thread(_run_eval)
-    data = result.to_pandas().mean(numeric_only=True).to_dict()
+    data_frame = result.to_pandas()
+    data = data_frame.mean(numeric_only=True).to_dict()
     return {
         "faithfulness": _safe_metric(data.get("faithfulness", 0.0)),
         "answer_relevancy": _safe_metric(data.get("answer_relevancy", 0.0)),
@@ -177,6 +210,7 @@ async def _ragas_eval(dataset: list[dict[str, Any]]) -> dict[str, Any]:
         "sample_count": len(dataset),
         "real_mode": True,
         "engine": engine,
+        "per_sample": _normalize_per_sample(data_frame.to_dict(orient="records")),
     }
 
 
