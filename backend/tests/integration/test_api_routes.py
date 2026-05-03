@@ -988,6 +988,60 @@ async def test_admin_push_notification_status_route(api_client: AsyncClient, mon
 
 
 @pytest.mark.asyncio
+async def test_admin_security_policy_route(api_client: AsyncClient, monkeypatch):
+    current_user = SimpleNamespace(
+        id="user-1",
+        username="admin_demo",
+        email="admin@example.com",
+        role="ADMIN",
+        department="operations",
+        tenant_id="tenant-1",
+        level=9,
+        email_verified=True,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    async def override_current_user():
+        return current_user
+
+    monkeypatch.setattr(
+        "app.services.security_policy_service.SecurityPolicyService.evaluate",
+        lambda self: {
+            "profile": "financial",
+            "enforcement_level": "financial_fail_closed",
+            "compliant": False,
+            "blocking": True,
+            "status": "blocked",
+            "auto_action": "block_high_risk_operations",
+            "failed_controls": [{"id": "guardrails_fail_closed", "message": "missing"}],
+            "blocking_controls": [{"id": "guardrails_fail_closed", "severity": "critical"}],
+            "warning_controls": [],
+            "required_control_ids": ["guardrails_fail_closed"],
+            "missing_control_ids": ["guardrails_fail_closed"],
+            "control_counts": {"ok": 0, "critical": 1, "high": 0, "medium": 0, "low": 0},
+            "recommended_actions": ["开启 Guardrails fail-closed。"],
+            "controls": [],
+            "clamav_health": {"available": True},
+            "guardrails_sidecar": {"configured": True, "fail_closed": False, "alive": True},
+            "pii": {"masking_enabled": True, "presidio_enabled": True},
+        },
+    )
+
+    app.dependency_overrides[get_current_user] = override_current_user
+
+    response = await api_client.get("/api/v1/admin/system/security-policy")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["profile"] == "financial"
+    assert payload["blocking"] is True
+    assert payload["status"] == "blocked"
+    assert payload["auto_action"] == "block_high_risk_operations"
+    assert payload["missing_control_ids"] == ["guardrails_fail_closed"]
+    assert payload["recommended_actions"] == ["开启 Guardrails fail-closed。"]
+
+
+@pytest.mark.asyncio
 async def test_admin_llm_training_summary_route(api_client: AsyncClient, monkeypatch):
     current_user = SimpleNamespace(
         id="user-1",
@@ -1011,6 +1065,7 @@ async def test_admin_llm_training_summary_route(api_client: AsyncClient, monkeyp
     from app.dependencies import get_db
     from app.api.v1 import admin as admin_module
     from app.services.llm_training_service import LLMTrainingService
+    from app.services.security_audit_service import SecurityAuditService
 
     app.dependency_overrides[get_current_user] = override_current_user
     app.dependency_overrides[get_db] = override_db
@@ -1181,6 +1236,78 @@ async def test_admin_llm_training_deployment_alias_route(api_client: AsyncClient
 
 
 @pytest.mark.asyncio
+async def test_admin_llm_retire_nonrecoverable_route(api_client: AsyncClient, monkeypatch):
+    current_user = SimpleNamespace(
+        id="user-1",
+        username="admin_demo",
+        email="admin@example.com",
+        role="ADMIN",
+        department="operations",
+        tenant_id="tenant-1",
+        level=9,
+        email_verified=True,
+        created_at=datetime.now(timezone.utc),
+    )
+    fake_redis = FakeRedis()
+
+    async def override_current_user():
+        return current_user
+
+    async def override_db():
+        yield DummyDB()
+
+    from app.dependencies import get_db
+    from app.api.v1 import admin as admin_module
+    from app.services.llm_training_service import LLMTrainingService
+    from app.services.security_audit_service import SecurityAuditService
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_db] = override_db
+    monkeypatch.setattr(admin_module, "get_redis", lambda: fake_redis)
+
+    async def fake_list_models(self, tenant_id: str, limit: int = 100):
+        assert tenant_id == "tenant-1"
+        assert limit == 20
+        return []
+
+    async def fake_reconcile(self, tenant_id: str, models=None):
+        assert tenant_id == "tenant-1"
+        return False
+
+    async def fake_retire(self, *, tenant_id: str, limit: int = 20, dry_run: bool = True, actor_id: str | None = None):
+        assert tenant_id == "tenant-1"
+        assert limit == 4
+        assert dry_run is False
+        assert actor_id == "user-1"
+        return {
+            "tenant_id": tenant_id,
+            "dry_run": dry_run,
+            "limit": limit,
+            "changed_count": 2,
+            "retired_count": 2,
+            "skipped_count": 1,
+            "retired": [{"model_id": "model-1"}, {"model_id": "model-2"}],
+            "skipped": [{"model_id": "model-3", "reason": "recoverable_failure"}],
+        }
+
+    monkeypatch.setattr(LLMTrainingService, "list_models", fake_list_models)
+    monkeypatch.setattr(LLMTrainingService, "reconcile_model_registry_states", fake_reconcile)
+    monkeypatch.setattr(LLMTrainingService, "retire_nonrecoverable_models", fake_retire)
+    async def fake_log_event(self, *args, **kwargs):
+        return None
+
+    monkeypatch.setattr(SecurityAuditService, "log_event", fake_log_event)
+
+    response = await api_client.post("/api/v1/admin/llm/models/retire-nonrecoverable?limit=4&dry_run=false")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["retired_count"] == 2
+    assert payload["changed_count"] == 2
+    assert payload["dry_run"] is False
+
+
+@pytest.mark.asyncio
 async def test_admin_llm_publish_model_route(api_client: AsyncClient, monkeypatch):
     current_user = SimpleNamespace(
         id="user-1",
@@ -1256,6 +1383,170 @@ async def test_admin_llm_publish_model_route(api_client: AsyncClient, monkeypatc
     assert payload["publish_result"]["published"] is True
     assert payload["verify_result"]["ok"] is True
     assert payload["activated_model"]["status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_runtime_tool_decisions_merged_deduplicates_dual_written_rows(api_client: AsyncClient, monkeypatch):
+    current_user = SimpleNamespace(
+        id="user-1",
+        username="admin_demo",
+        email="admin@example.com",
+        role="ADMIN",
+        department="operations",
+        tenant_id="tenant-1",
+        level=9,
+        email_verified=True,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    async def override_current_user():
+        return current_user
+
+    async def override_db():
+        yield DummyDB()
+
+    from app.dependencies import get_db
+    from app.agent.runtime.permission_gate import PermissionGate
+    from app.services.security_audit_service import SecurityAuditService
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_db] = override_db
+
+    async def fake_list_decisions(self, tenant_id: str, limit: int = 100, offset: int = 0):
+        assert tenant_id == "tenant-1"
+        return [
+            {
+                "decision": "deny",
+                "reason": "tool_disabled",
+                "source": "tool_spec",
+                "tool_name": "web_search",
+                "user_id": "user-1",
+                "tenant_id": tenant_id,
+                "trace_id": "trace-1",
+                "created_at": "2026-05-03T10:11:22",
+            }
+        ]
+
+    async def fake_list_events(self, tenant_id: str, **kwargs):
+        assert tenant_id == "tenant-1"
+        return {
+            "events": [
+                {
+                    "result": "deny",
+                    "message": "tool_disabled",
+                    "tenant_id": tenant_id,
+                    "user_id": "user-1",
+                    "trace_id": "trace-1",
+                    "timestamp": "2026-05-03T10:11:45",
+                    "metadata": {"reason": "tool_disabled", "tool_name": "web_search", "source": "tool_spec"},
+                },
+                {
+                    "result": "allow",
+                    "message": "policy_pass",
+                    "tenant_id": tenant_id,
+                    "user_id": "user-1",
+                    "trace_id": "trace-2",
+                    "timestamp": "2026-05-03T10:12:10",
+                    "metadata": {"reason": "policy_pass", "tool_name": "doc_lookup", "source": "rbac"},
+                },
+            ],
+            "total": 2,
+            "source": "postgres",
+        }
+
+    monkeypatch.setattr(PermissionGate, "list_decisions", fake_list_decisions)
+    monkeypatch.setattr(SecurityAuditService, "list_events", fake_list_events)
+
+    response = await api_client.get("/api/v1/admin/runtime/tool-decisions?source=merged&limit=10")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 2
+    assert payload["items"][0]["tool_name"] in {"web_search", "doc_lookup"}
+    deny_items = [item for item in payload["items"] if item["tool_name"] == "web_search"]
+    assert len(deny_items) == 1
+    assert deny_items[0]["channel"] == "merged"
+
+
+@pytest.mark.asyncio
+async def test_runtime_tool_decisions_summary_deduplicates_dual_written_rows(api_client: AsyncClient, monkeypatch):
+    current_user = SimpleNamespace(
+        id="user-1",
+        username="admin_demo",
+        email="admin@example.com",
+        role="ADMIN",
+        department="operations",
+        tenant_id="tenant-1",
+        level=9,
+        email_verified=True,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    async def override_current_user():
+        return current_user
+
+    async def override_db():
+        yield DummyDB()
+
+    from app.dependencies import get_db
+    from app.agent.runtime.permission_gate import PermissionGate
+    from app.services.security_audit_service import SecurityAuditService
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_db] = override_db
+
+    async def fake_list_decisions(self, tenant_id: str, limit: int = 1000, offset: int = 0):
+        return [
+            {
+                "decision": "deny",
+                "reason": "tool_disabled",
+                "source": "tool_spec",
+                "tool_name": "web_search",
+                "user_id": "user-1",
+                "tenant_id": tenant_id,
+                "trace_id": "trace-1",
+                "created_at": "2026-05-03T10:11:22",
+            }
+        ]
+
+    async def fake_list_events(self, tenant_id: str, **kwargs):
+        return {
+            "events": [
+                {
+                    "result": "deny",
+                    "message": "tool_disabled",
+                    "tenant_id": tenant_id,
+                    "user_id": "user-1",
+                    "trace_id": "trace-1",
+                    "timestamp": "2026-05-03T10:11:45",
+                    "metadata": {"reason": "tool_disabled", "tool_name": "web_search", "source": "tool_spec"},
+                },
+                {
+                    "result": "allow",
+                    "message": "policy_pass",
+                    "tenant_id": tenant_id,
+                    "user_id": "user-1",
+                    "trace_id": "trace-2",
+                    "timestamp": "2026-05-03T10:12:10",
+                    "metadata": {"reason": "policy_pass", "tool_name": "doc_lookup", "source": "rbac"},
+                },
+            ],
+            "total": 2,
+            "source": "postgres",
+        }
+
+    monkeypatch.setattr(PermissionGate, "list_decisions", fake_list_decisions)
+    monkeypatch.setattr(SecurityAuditService, "list_events", fake_list_events)
+
+    response = await api_client.get("/api/v1/admin/runtime/tool-decisions/summary?since_hours=0")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 2
+    assert payload["decision_counts"]["deny"] == 1
+    assert payload["decision_counts"]["allow"] == 1
+    assert any(row["tool_name"] == "web_search" and row["deny"] == 1 for row in payload["matrix_by_tool"])
+    assert any(row["reason"] == "tool_disabled" and row["deny"] == 1 for row in payload["matrix_by_reason"])
 
 
 @pytest.mark.asyncio
@@ -1600,3 +1891,205 @@ async def test_ws_handle_chat_message_audits_guard_decisions(monkeypatch):
     assert audit_events[0]["result"] == "warning"
     assert audit_events[1]["result"] == "ok"
     assert any(item["type"] == "done" for item in websocket.sent)
+
+
+@pytest.mark.asyncio
+async def test_admin_evaluation_history_route(api_client: AsyncClient, monkeypatch):
+    current_user = SimpleNamespace(
+        id="user-1",
+        username="admin_demo",
+        email="admin@example.com",
+        role="ADMIN",
+        department="operations",
+        tenant_id="tenant-1",
+        level=9,
+        email_verified=True,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    async def override_current_user():
+        return current_user
+
+    async def override_db():
+        yield DummyDB()
+
+    from app.dependencies import get_db
+    from app.services.evaluation_service import EvaluationService
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_db] = override_db
+
+    async def fake_history(self, tenant_id: str, *, limit: int = 30):
+        assert tenant_id == "tenant-1"
+        assert limit == 5
+        return {
+            "items": [
+                {
+                    "generated_at": "2026-05-03T10:00:00+00:00",
+                    "dataset_size": 5,
+                    "gate": {"passed": True, "failures": []},
+                    "metrics": {"faithfulness": 0.95},
+                }
+            ],
+            "total": 1,
+        }
+
+    monkeypatch.setattr(EvaluationService, "history", fake_history)
+
+    response = await api_client.get("/api/v1/admin/evaluation/history?limit=5")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1
+    assert payload["items"][0]["gate"]["passed"] is True
+
+
+@pytest.mark.asyncio
+async def test_admin_evaluation_gate_summary_route(api_client: AsyncClient, monkeypatch):
+    current_user = SimpleNamespace(
+        id="user-1",
+        username="admin_demo",
+        email="admin@example.com",
+        role="ADMIN",
+        department="operations",
+        tenant_id="tenant-1",
+        level=9,
+        email_verified=True,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    async def override_current_user():
+        return current_user
+
+    async def override_db():
+        yield DummyDB()
+
+    from app.dependencies import get_db
+    from app.services.evaluation_service import EvaluationService
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_db] = override_db
+
+    async def fake_summary(self, tenant_id: str, *, limit: int = 30):
+        assert tenant_id == "tenant-1"
+        assert limit == 7
+        return {
+            "tenant_id": tenant_id,
+            "count": 2,
+            "pass_rate": 0.5,
+            "real_mode_rate": 0.5,
+            "latest_generated_at": "2026-05-03T11:00:00+00:00",
+            "failure_reasons": {"faithfulness": 1, "real_mode": 1},
+            "metric_averages": {"faithfulness": 0.775},
+            "trend": [],
+        }
+
+    monkeypatch.setattr(EvaluationService, "summarize_history", fake_summary)
+
+    response = await api_client.get("/api/v1/admin/evaluation/gate-summary?limit=7")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count"] == 2
+    assert payload["pass_rate"] == 0.5
+    assert payload["failure_reasons"]["faithfulness"] == 1
+
+
+@pytest.mark.asyncio
+async def test_admin_run_evaluation_async_route(api_client: AsyncClient, monkeypatch):
+    current_user = SimpleNamespace(
+        id="user-1",
+        username="admin_demo",
+        email="admin@example.com",
+        role="ADMIN",
+        department="operations",
+        tenant_id="tenant-1",
+        level=9,
+        email_verified=True,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    async def override_current_user():
+        return current_user
+
+    class DummyTask:
+        id = "eval-task-1"
+
+    from app.dependencies import get_db
+    from app.api.v1 import admin as admin_module
+
+    async def override_db():
+        yield DummyDB()
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_db] = override_db
+
+    seeded: list[dict] = []
+
+    async def fake_seed(task_id: str, *, tenant_id: str, task_type: str, description: str, stage: str = "queued"):
+        seeded.append({
+            "task_id": task_id,
+            "tenant_id": tenant_id,
+            "task_type": task_type,
+            "description": description,
+            "stage": stage,
+        })
+
+    class FakeCeleryTask:
+        def apply_async(self, args=(), queue=None):
+            assert args == ("tenant-1", 5, "user-1")
+            assert queue is not None
+            return DummyTask()
+
+    monkeypatch.setattr(admin_module, "_seed_runtime_task", fake_seed)
+    monkeypatch.setattr("app.maintenance.tasks.run_evaluation_job", FakeCeleryTask())
+
+    response = await api_client.post("/api/v1/admin/evaluation/run-async?sample_limit=5")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["task_id"] == "eval-task-1"
+    assert payload["sample_limit"] == 5
+    assert seeded[0]["task_type"] == "evaluation"
+
+
+@pytest.mark.asyncio
+async def test_admin_get_evaluation_task_route(api_client: AsyncClient, monkeypatch):
+    current_user = SimpleNamespace(
+        id="user-1",
+        username="admin_demo",
+        email="admin@example.com",
+        role="ADMIN",
+        department="operations",
+        tenant_id="tenant-1",
+        level=9,
+        email_verified=True,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    async def override_current_user():
+        return current_user
+
+    async def override_db():
+        yield DummyDB()
+
+    from app.dependencies import get_db
+    from app.api.v1 import admin as admin_module
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_db] = override_db
+
+    async def fake_get_runtime_task_payload(task_id: str, *, tenant_id: str, expected_type: str):
+        assert task_id == "eval-task-2"
+        assert tenant_id == "tenant-1"
+        assert expected_type == "evaluation"
+        return {"exists": True, "item": {"task_id": task_id, "status": "completed"}, "result": {"ok": True}}
+
+    monkeypatch.setattr(admin_module, "_get_runtime_task_payload", fake_get_runtime_task_payload)
+
+    response = await api_client.get("/api/v1/admin/evaluation/tasks/eval-task-2")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["exists"] is True
+    assert payload["item"]["status"] == "completed"

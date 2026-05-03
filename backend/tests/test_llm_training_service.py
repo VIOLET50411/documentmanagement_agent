@@ -632,7 +632,7 @@ async def test_summarize_deployment_aggregates_failure_recoverability(monkeypatc
             is_active=False,
             canary_percent=0,
             provider="openai-compatible",
-            metrics_json='{"publish_result":{"published":false,"reason":"publish_command_failed","message":"failed"}}',
+            metrics_json='{"publish_result":{"published":false,"reason":"publish_command_failed","message":"failed"},"deployment_gate":{"ready":true,"reason":"evaluation_gate_passed"}}',
             updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
         ),
         SimpleNamespace(
@@ -642,7 +642,7 @@ async def test_summarize_deployment_aggregates_failure_recoverability(monkeypatc
             is_active=False,
             canary_percent=0,
             provider="openai-compatible",
-            metrics_json='{"publish_result":{"published":false,"reason":"unsupported_ollama_adapter_base_model","message":"unsupported"}}',
+            metrics_json='{"publish_result":{"published":false,"reason":"unsupported_ollama_adapter_base_model","message":"unsupported"},"deployment_gate":{"ready":false,"reason":"evaluation_gate_failed"}}',
             updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
         ),
     ]
@@ -663,12 +663,113 @@ async def test_summarize_deployment_aggregates_failure_recoverability(monkeypatc
     assert summary["publish_counts"]["published"] == 1
     assert summary["publish_counts"]["failed"] == 2
     assert summary["verify_counts"]["verified"] == 1
+    assert summary["deployment_gate_counts"]["passed"] == 1
+    assert summary["deployment_gate_counts"]["blocked"] == 1
+    assert summary["deployment_gate_counts"]["unknown"] == 1
     assert summary["recoverable_failure_count"] == 1
     assert summary["non_recoverable_failure_count"] == 1
     assert summary["failure_category_counts"]["publish_command_failed"] == 1
     assert summary["failure_category_counts"]["unsupported_base_model"] == 1
     assert summary["top_recommendations"][0]["count"] == 1
     assert summary["recent_failures"][0]["model_id"] in {"model-recoverable", "model-nonrecoverable"}
+    assert "deployment_gate_ready" in summary["recent_failures"][0]
+
+
+@pytest.mark.asyncio
+async def test_summarize_deployment_excludes_retired_failures(monkeypatch):
+    service = LLMTrainingService(FakeDB(), redis_client=FakeRedis())
+    retired_model = SimpleNamespace(
+        id="model-retired",
+        model_name="tenant-model-retired",
+        status="retired",
+        is_active=False,
+        canary_percent=0,
+        provider="openai-compatible",
+        metrics_json='{"publish_result":{"published":false,"reason":"unsupported_ollama_adapter_base_model"},"retired":{"retired_at":"2026-05-03T10:00:00"}}',
+        updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+
+    async def fake_list_jobs(tenant_id: str, limit: int = 20):
+        return []
+
+    async def fake_list_models(tenant_id: str, limit: int = 20):
+        return [retired_model]
+
+    monkeypatch.setattr(service, "list_jobs", fake_list_jobs)
+    monkeypatch.setattr(service, "list_models", fake_list_models)
+    async def fake_get_active_model(tenant_id: str):
+        return None
+
+    async def fake_get_previous_active_model(tenant_id: str):
+        return None
+
+    monkeypatch.setattr(service, "get_active_model", fake_get_active_model)
+    monkeypatch.setattr(service, "get_previous_active_model", fake_get_previous_active_model)
+
+    summary = await service.summarize_deployment("tenant-1", limit=20)
+
+    assert summary["publish_counts"]["failed"] == 0
+    assert summary["non_recoverable_failure_count"] == 0
+    assert summary["retired_count"] == 1
+    assert summary["recent_failures"] == []
+
+
+@pytest.mark.asyncio
+async def test_retire_nonrecoverable_models_marks_only_nonrecoverable(monkeypatch):
+    db = FakeDB()
+    service = LLMTrainingService(db, redis_client=None)
+    retired_candidate = SimpleNamespace(
+        id="model-retire",
+        model_name="tenant-model-retire",
+        status="registered",
+        is_active=False,
+        provider="openai-compatible",
+        metrics_json='{"publish_result":{"published":false,"reason":"unsupported_ollama_adapter_base_model","message":"unsupported"}}',
+        notes=None,
+        updated_at=None,
+    )
+    recoverable_candidate = SimpleNamespace(
+        id="model-retry",
+        model_name="tenant-model-retry",
+        status="registered",
+        is_active=False,
+        provider="openai-compatible",
+        metrics_json='{"publish_result":{"published":false,"reason":"publish_command_failed","message":"failed"}}',
+        notes=None,
+        updated_at=None,
+    )
+    active_model = SimpleNamespace(
+        id="model-active",
+        model_name="tenant-model-active",
+        status="active",
+        is_active=True,
+        provider="ollama",
+        metrics_json='{"publish_result":{"published":true}}',
+        notes=None,
+        updated_at=None,
+    )
+
+    async def fake_list_models(tenant_id: str, limit: int = 20):
+        assert tenant_id == "tenant-1"
+        return [retired_candidate, recoverable_candidate, active_model]
+
+    monkeypatch.setattr(service, "list_models", fake_list_models)
+
+    payload = await service.retire_nonrecoverable_models(
+        tenant_id="tenant-1",
+        limit=10,
+        dry_run=False,
+        actor_id="admin-1",
+    )
+
+    assert payload["retired_count"] == 1
+    assert payload["changed_count"] == 1
+    assert retired_candidate.status == "retired"
+    assert '"retired_by": "admin-1"' in retired_candidate.metrics_json
+    assert "已退役历史不可恢复失败模型" in retired_candidate.notes
+    assert recoverable_candidate.status == "registered"
+    assert active_model.status == "active"
+    assert db.flushed == 1
 
 
 @pytest.mark.asyncio

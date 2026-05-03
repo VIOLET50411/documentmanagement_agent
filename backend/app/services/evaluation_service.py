@@ -83,6 +83,7 @@ class EvaluationService:
         self.report_generator.generate_json_report(payload, output_path=str(json_path))
         self.report_generator.generate_markdown_report(payload, output_path=str(markdown_path))
         dataset_path.write_text(json.dumps(dataset, ensure_ascii=False, indent=2), encoding="utf-8")
+        await self._persist_history_snapshot(tenant_id, payload)
 
         await self.audit.log_event(
             tenant_id,
@@ -130,6 +131,167 @@ class EvaluationService:
             "dataset_size": dataset_size,
             "report_json": str(json_path),
             "report_markdown": str(markdown_path),
+        }
+
+    async def history(self, tenant_id: str, *, limit: int = 30) -> dict[str, Any]:
+        if self.redis is None:
+            return {"items": [], "total": 0}
+        key = self._history_key(tenant_id)
+        rows = await self.redis.lrange(key, 0, max(limit - 1, 0))
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                parsed = json.loads(row)
+            except json.JSONDecodeError:
+                continue
+            normalized = self._normalize_saved_payload(parsed)
+            items.append(
+                {
+                    "generated_at": normalized.get("generated_at"),
+                    "dataset_size": normalized.get("dataset_size"),
+                    "generated_from": normalized.get("generated_from") or {},
+                    "gate": normalized.get("gate") or {},
+                    "metrics": normalized.get("metrics") or {},
+                }
+            )
+        total = await self.redis.llen(key)
+        return {"items": items, "total": int(total or 0)}
+
+    async def summarize_history(self, tenant_id: str, *, limit: int = 30) -> dict[str, Any]:
+        history = await self.history(tenant_id, limit=limit)
+        items = history.get("items") or []
+        if not items:
+            return {
+                "tenant_id": tenant_id,
+                "count": 0,
+                "pass_rate": 0.0,
+                "real_mode_rate": 0.0,
+                "latest_generated_at": None,
+                "failure_reasons": {},
+                "metric_averages": {},
+                "trend": [],
+            }
+
+        passed_count = 0
+        real_mode_count = 0
+        failure_reasons: dict[str, int] = {}
+        metric_buckets: dict[str, list[float]] = {
+            "faithfulness": [],
+            "answer_relevancy": [],
+            "context_precision": [],
+            "context_recall": [],
+        }
+        trend: list[dict[str, Any]] = []
+
+        for item in items:
+            gate = item.get("gate") if isinstance(item.get("gate"), dict) else {}
+            metrics = item.get("metrics") if isinstance(item.get("metrics"), dict) else {}
+            meta = metrics.get("_meta") if isinstance(metrics.get("_meta"), dict) else {}
+            if gate.get("passed"):
+                passed_count += 1
+            if meta.get("real_mode"):
+                real_mode_count += 1
+            for failure in gate.get("failures") or []:
+                reason = str((failure or {}).get("metric") or "unknown")
+                failure_reasons[reason] = failure_reasons.get(reason, 0) + 1
+            for metric_name in metric_buckets:
+                try:
+                    metric_buckets[metric_name].append(float(metrics.get(metric_name)))
+                except (TypeError, ValueError):
+                    continue
+            trend.append(
+                {
+                    "generated_at": item.get("generated_at"),
+                    "passed": bool(gate.get("passed")),
+                    "real_mode": bool(meta.get("real_mode")),
+                    "dataset_size": item.get("dataset_size"),
+                    "faithfulness": metrics.get("faithfulness"),
+                    "answer_relevancy": metrics.get("answer_relevancy"),
+                    "context_precision": metrics.get("context_precision"),
+                    "context_recall": metrics.get("context_recall"),
+                }
+            )
+
+        metric_averages = {
+            key: round(sum(values) / len(values), 4)
+            for key, values in metric_buckets.items()
+            if values
+        }
+        return {
+            "tenant_id": tenant_id,
+            "count": len(items),
+            "pass_rate": round(passed_count / len(items), 4),
+            "real_mode_rate": round(real_mode_count / len(items), 4),
+            "latest_generated_at": items[0].get("generated_at"),
+            "failure_reasons": dict(sorted(failure_reasons.items(), key=lambda item: (-item[1], item[0]))),
+            "metric_averages": metric_averages,
+            "trend": trend,
+        }
+
+    async def assess_deployment_readiness(self, tenant_id: str, *, max_age_hours: int | None = None) -> dict[str, Any]:
+        latest = await self.latest(tenant_id)
+        gate = latest.get("gate") if isinstance(latest.get("gate"), dict) else {}
+        metrics = latest.get("metrics") if isinstance(latest.get("metrics"), dict) else {}
+        effective_max_age_hours = max(int(max_age_hours or 24), 1)
+
+        if not latest.get("exists"):
+            return {
+                "ready": False,
+                "reason": "evaluation_missing",
+                "message": "未找到最新评估报告，已阻止自动发布和激活。",
+                "generated_at": None,
+                "gate": gate,
+                "metrics": metrics,
+                "max_age_hours": effective_max_age_hours,
+            }
+
+        generated_at = self._parse_iso_datetime(latest.get("generated_at"))
+        if generated_at is None:
+            return {
+                "ready": False,
+                "reason": "evaluation_timestamp_missing",
+                "message": "评估报告缺少生成时间，已阻止自动发布和激活。",
+                "generated_at": latest.get("generated_at"),
+                "gate": gate,
+                "metrics": metrics,
+                "max_age_hours": effective_max_age_hours,
+            }
+
+        age_seconds = max((datetime.now(timezone.utc) - generated_at).total_seconds(), 0.0)
+        stale = age_seconds > effective_max_age_hours * 3600
+        if stale:
+            return {
+                "ready": False,
+                "reason": "evaluation_stale",
+                "message": f"评估报告已过期，已阻止自动发布和激活。当前报告距今 {round(age_seconds / 3600, 2)} 小时。",
+                "generated_at": latest.get("generated_at"),
+                "gate": gate,
+                "metrics": metrics,
+                "age_seconds": round(age_seconds, 2),
+                "max_age_hours": effective_max_age_hours,
+            }
+
+        if not bool(gate.get("passed")):
+            return {
+                "ready": False,
+                "reason": "evaluation_gate_failed",
+                "message": "最新评估未通过质量门禁，已阻止自动发布和激活。",
+                "generated_at": latest.get("generated_at"),
+                "gate": gate,
+                "metrics": metrics,
+                "age_seconds": round(age_seconds, 2),
+                "max_age_hours": effective_max_age_hours,
+            }
+
+        return {
+            "ready": True,
+            "reason": "evaluation_gate_passed",
+            "message": "最新评估通过部署门禁，可以继续自动发布和激活。",
+            "generated_at": latest.get("generated_at"),
+            "gate": gate,
+            "metrics": metrics,
+            "age_seconds": round(age_seconds, 2),
+            "max_age_hours": effective_max_age_hours,
         }
 
     async def _load_documents(self, tenant_id: str, *, sample_limit: int) -> list[dict[str, Any]]:
@@ -379,6 +541,18 @@ class EvaluationService:
             "dataset_size": metrics.get("sample_count", 0),
         }
 
+    def _parse_iso_datetime(self, value: Any) -> datetime | None:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
     async def _notify_progress(
         self,
         callback: Callable[[str, dict[str, Any]], Awaitable[None] | None] | None,
@@ -390,3 +564,18 @@ class EvaluationService:
         result = callback(stage, payload)
         if result is not None:
             await result
+
+    async def _persist_history_snapshot(self, tenant_id: str, payload: dict[str, Any]) -> None:
+        if self.redis is None:
+            return
+        key = self._history_key(tenant_id)
+        row = json.dumps(payload, ensure_ascii=False)
+        if hasattr(self.redis, "lpush"):
+            await self.redis.lpush(key, row)
+        else:
+            await self.redis.rpush(key, row)
+        await self.redis.ltrim(key, 0, 199)
+        await self.redis.expire(key, 30 * 24 * 3600)
+
+    def _history_key(self, tenant_id: str) -> str:
+        return f"metrics:evaluation:history:{tenant_id}"

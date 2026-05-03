@@ -35,7 +35,7 @@ celery.conf.update(
     task_routes={
         "app.ingestion.tasks.process_document": {"queue": settings.celery_ingestion_queue},
         "app.maintenance.tasks.runtime_maintenance_job": {"queue": settings.celery_maintenance_queue},
-        "app.evaluation.tasks.run_evaluation_job": {"queue": settings.celery_maintenance_queue},
+        "app.maintenance.tasks.run_evaluation_job": {"queue": settings.celery_maintenance_queue},
         "app.maintenance.tasks.export_public_corpus_job": {"queue": settings.celery_maintenance_queue},
         "app.training.tasks.run_training_job": {"queue": settings.celery_maintenance_queue},
     },

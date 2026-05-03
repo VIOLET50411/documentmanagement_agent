@@ -19,6 +19,57 @@ from celery_app import celery
 from app.config import settings
 
 
+@celery.task(bind=True, name="app.maintenance.tasks.run_evaluation_job", acks_late=True, max_retries=0)
+def run_evaluation_job(self, tenant_id: str, sample_limit: int = 100, actor_id: str | None = None):
+    """Run evaluation asynchronously and persist runtime task progress."""
+    task_id = self.request.id or ""
+    description = f"评估任务: tenant={tenant_id}, sample_limit={max(sample_limit, 1)}"
+    _upsert_runtime_task_record(
+        task_id=task_id,
+        tenant_id=tenant_id,
+        task_type="evaluation",
+        status="running",
+        description=description,
+        stage="queued",
+        stage_payload={"tenant_id": tenant_id, "sample_limit": max(sample_limit, 1), "actor_id": actor_id},
+    )
+    try:
+        result = asyncio.run(
+            _run_evaluation_job_async(
+                tenant_id=tenant_id,
+                sample_limit=max(sample_limit, 1),
+                actor_id=actor_id,
+                task_id=task_id,
+                description=description,
+            )
+        )
+        return {"ok": True, "task_id": task_id, **result}
+    except Exception as exc:  # noqa: BLE001
+        error = str(exc)
+        _upsert_runtime_task_record(
+            task_id=task_id,
+            tenant_id=tenant_id,
+            task_type="evaluation",
+            status="failed",
+            description=description,
+            stage="failed",
+            error=error,
+            terminal=True,
+            stage_payload={"tenant_id": tenant_id, "sample_limit": max(sample_limit, 1), "error": error},
+        )
+        asyncio.run(
+            _write_audit(
+                tenant_id=tenant_id,
+                action="evaluation_run",
+                severity="high",
+                result="error",
+                message=f"evaluation task failed: {error}",
+                metadata={"tenant_id": tenant_id, "sample_limit": max(sample_limit, 1), "error": error, "task_id": task_id},
+            )
+        )
+        return {"ok": False, "task_id": task_id, "tenant_id": tenant_id, "sample_limit": max(sample_limit, 1), "error": error}
+
+
 @celery.task(bind=True, name="app.maintenance.tasks.runtime_maintenance_job")
 def runtime_maintenance_job(self, cleanup_empty: bool = True):
     """Run runtime TTL maintenance and write audit trail."""
@@ -52,10 +103,15 @@ def runtime_maintenance_job(self, cleanup_empty: bool = True):
                     _write_audit(
                         tenant_id=tenant_id,
                         action="security_policy_alert",
-                        severity="high",
-                        result="warning",
+                        severity="critical" if policy.get("blocking") else "high",
+                        result="blocked" if policy.get("blocking") else "warning",
                         message=f"security policy non-compliant: {', '.join(failed_controls) or 'unknown'}",
-                        metadata={"security_policy": policy, "failed_control_ids": failed_controls},
+                        metadata={
+                            "security_policy": policy,
+                            "failed_control_ids": failed_controls,
+                            "recommended_actions": policy.get("recommended_actions", []),
+                            "auto_action": policy.get("auto_action"),
+                        },
                     )
                 )
         return {"ok": True, "stats": stats, "tenants": tenant_ids, "alert": alert, "security_policy": policy}
@@ -72,6 +128,60 @@ def runtime_maintenance_job(self, cleanup_empty: bool = True):
                 )
             )
         return {"ok": False, "error": str(exc), "tenants": tenant_ids}
+
+
+async def _run_evaluation_job_async(*, tenant_id: str, sample_limit: int, actor_id: str | None, task_id: str, description: str) -> dict:
+    from app.services.evaluation_service import EvaluationService
+
+    engine = create_async_engine(
+        settings.postgres_dsn,
+        echo=settings.app_debug,
+        pool_size=2,
+        max_overflow=2,
+        pool_timeout=settings.postgres_pool_timeout_seconds,
+        pool_pre_ping=True,
+    )
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    redis_client = redis.asyncio.from_url(settings.redis_url, encoding="utf-8", decode_responses=True)
+    reports_dir = Path(settings.docmind_reports_dir)
+
+    async def on_progress(stage: str, payload: dict) -> None:
+        _upsert_runtime_task_record(
+            task_id=task_id,
+            tenant_id=tenant_id,
+            task_type="evaluation",
+            status="running",
+            description=description,
+            stage=stage,
+            stage_payload=payload,
+        )
+
+    try:
+        async with session_factory() as db:
+            service = EvaluationService(db, redis_client, reports_dir=reports_dir)
+            result = await service.run(tenant_id, sample_limit=sample_limit, actor=None, progress_callback=on_progress)
+        _upsert_runtime_task_record(
+            task_id=task_id,
+            tenant_id=tenant_id,
+            task_type="evaluation",
+            status="completed",
+            description=description,
+            stage="completed",
+            terminal=True,
+            stage_payload=result,
+        )
+        await _write_audit(
+            tenant_id=tenant_id,
+            action="evaluation_run_async",
+            severity="low" if (result.get("gate") or {}).get("passed") else "medium",
+            result="ok" if (result.get("gate") or {}).get("passed") else "warning",
+            message=f"evaluation task completed: passed={bool((result.get('gate') or {}).get('passed'))}, dataset_size={result.get('dataset_size', 0)}",
+            metadata={"tenant_id": tenant_id, "sample_limit": sample_limit, "task_id": task_id, "result": result},
+        )
+        return result
+    finally:
+        await redis_client.aclose()
+        await engine.dispose()
 
 
 async def _run_runtime_maintenance(*, cleanup_empty: bool) -> dict:
@@ -278,8 +388,12 @@ def _evaluate_security_policy() -> dict:
         return {
             "profile": str(settings.security_policy_profile or "enterprise"),
             "compliant": False,
+            "blocking": True,
+            "status": "blocked",
+            "auto_action": "block_high_risk_operations",
             "failed_controls": [{"id": "security_policy_evaluation_error", "message": str(exc)}],
             "controls": [],
+            "recommended_actions": ["修复安全策略评估错误，恢复策略状态判定。"],
             "error": str(exc),
         }
 

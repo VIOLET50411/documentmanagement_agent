@@ -15,6 +15,7 @@ from app.models.db.llm_training import LLMModelRegistry, LLMTrainingJob
 from app.services.llm_training_service import LLMTrainingService
 from app.services.mobile_oauth_service import MobileOAuthService
 from app.services.push_notification_service import PushNotificationService
+from app.services.evaluation_service import EvaluationService
 from app.services.security_policy_service import SecurityPolicyService
 from app.training.executor import describe_training_runtime
 
@@ -56,6 +57,10 @@ class DeliveryGapService:
             completed.append("financial_grade_policy_pack")
         else:
             pending.append("financial_grade_policy_pack")
+        if policy_eval.get("blocking"):
+            pending.append("security_fail_closed_linkage")
+        else:
+            completed.append("security_fail_closed_linkage")
 
         ragas_status = self._evaluate_ragas_status(effective_tenant)
         if ragas_status["real_mode"]:
@@ -78,6 +83,12 @@ class DeliveryGapService:
             completed.append("training_publishable_base_model_alignment")
         else:
             pending.append("training_publishable_base_model_alignment")
+
+        deployment_gate_status = await self._evaluate_training_deployment_gate_status(effective_tenant)
+        if deployment_gate_status["ready_for_activation"]:
+            completed.append("training_deployment_gate_ready")
+        else:
+            pending.append("training_deployment_gate_ready")
 
         mobile_auth_status = MobileOAuthService(self.db).status(settings.effective_public_base_url)
         if mobile_auth_status["ready"]:
@@ -125,17 +136,29 @@ class DeliveryGapService:
                 ragas_status["note"],
                 self._build_training_runtime_note(training_runtime),
                 publish_status["note"],
+                deployment_gate_status["note"],
                 self._build_mobile_runtime_note(mobile_auth_status),
                 self._build_push_runtime_note(push_status),
-                f"当前安全策略档位: {policy_eval.get('profile')}",
+                self._build_security_policy_note(policy_eval),
             ],
             "security_policy": policy_eval,
             "ragas_status": ragas_status,
             "training_runtime_status": training_runtime,
             "training_publish_status": publish_status,
+            "training_deployment_gate_status": deployment_gate_status,
             "mobile_auth_status": mobile_auth_status,
             "push_runtime_status": push_status,
         }
+
+    def _build_security_policy_note(self, policy: dict[str, Any]) -> str:
+        profile = str(policy.get("profile") or "enterprise")
+        status = str(policy.get("status") or "unknown")
+        missing = policy.get("missing_control_ids") if isinstance(policy.get("missing_control_ids"), list) else []
+        if status == "compliant":
+            return f"当前安全策略档位: {profile}，所有要求控制项均已满足。"
+        if status == "blocked":
+            return f"当前安全策略档位: {profile}，存在阻断项: {', '.join(str(item) for item in missing[:6]) or 'unknown'}。"
+        return f"当前安全策略档位: {profile}，存在待收口控制项: {', '.join(str(item) for item in missing[:6]) or 'unknown'}。"
 
     def _build_training_runtime_note(self, runtime: dict[str, Any]) -> str:
         if runtime.get("ready"):
@@ -258,6 +281,52 @@ class DeliveryGapService:
             **evidence,
             "note": note,
         }
+
+    async def _evaluate_training_deployment_gate_status(self, tenant_id: str) -> dict[str, Any]:
+        evaluation_service = EvaluationService(self.db, self.redis, reports_dir=Path(settings.docmind_reports_dir))
+        evaluation_readiness = await evaluation_service.assess_deployment_readiness(
+            tenant_id,
+            max_age_hours=settings.llm_training_eval_max_age_hours,
+        )
+        evaluation_summary = await evaluation_service.summarize_history(tenant_id, limit=10)
+        deployment_summary = await self._load_training_deployment_summary(tenant_id)
+
+        gate_counts = deployment_summary.get("deployment_gate_counts") if isinstance(deployment_summary.get("deployment_gate_counts"), dict) else {}
+        blocked_recent = deployment_summary.get("recent_failures") if isinstance(deployment_summary.get("recent_failures"), list) else []
+        blocked_reasons = [
+            str(item.get("deployment_gate_reason") or "")
+            for item in blocked_recent
+            if item.get("deployment_gate_ready") is False and str(item.get("deployment_gate_reason") or "").strip()
+        ]
+
+        ready_for_activation = bool(evaluation_readiness.get("ready")) and (
+            gate_counts.get("blocked", 0) == 0 or gate_counts.get("passed", 0) > 0
+        )
+        if ready_for_activation:
+            note = "训练部署门禁已满足，最新评估与最近模型门禁记录均允许进入自动激活。"
+        else:
+            primary_reason = str(evaluation_readiness.get("reason") or "deployment_gate_blocked").strip()
+            gate_reason = blocked_reasons[0] if blocked_reasons else primary_reason
+            note = f"训练部署门禁尚未满足，当前阻塞原因: {gate_reason}。"
+
+        return {
+            "ready_for_activation": ready_for_activation,
+            "evaluation_readiness": evaluation_readiness,
+            "evaluation_summary": evaluation_summary,
+            "deployment_summary": deployment_summary,
+            "blocked_reason_samples": blocked_reasons[:5],
+            "note": note,
+        }
+
+    async def _load_training_deployment_summary(self, tenant_id: str) -> dict[str, Any]:
+        if self.db is None:
+            return {
+                "tenant_id": tenant_id,
+                "deployment_gate_counts": {"passed": 0, "blocked": 0, "unknown": 0},
+                "recent_failures": [],
+            }
+        service = LLMTrainingService(self.db, redis_client=self.redis, reports_dir=Path(settings.docmind_reports_dir))
+        return await service.summarize_deployment(tenant_id, limit=20)
 
     async def _load_training_publish_evidence(self, tenant_id: str) -> dict[str, Any]:
         evidence = {

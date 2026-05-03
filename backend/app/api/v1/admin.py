@@ -39,6 +39,61 @@ def _error_signature(error_message: str | None) -> str:
     return text[:120]
 
 
+def _parse_runtime_iso(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
+def _normalize_tool_decision_item(item: dict, *, source_hint: str | None = None) -> dict:
+    metadata = item.get("metadata") or {}
+    source = source_hint or str(item.get("source") or metadata.get("source") or "unknown")
+    created_at = str(item.get("created_at") or item.get("timestamp") or "")
+    return {
+        "decision": str(item.get("decision") or item.get("result") or "unknown"),
+        "reason": str(metadata.get("reason") or item.get("reason") or item.get("message") or "unknown"),
+        "source": source,
+        "tool_name": str(metadata.get("tool_name") or item.get("tool_name") or item.get("target") or "unknown"),
+        "user_id": item.get("user_id") or item.get("actor_id"),
+        "tenant_id": item.get("tenant_id"),
+        "trace_id": item.get("trace_id"),
+        "created_at": created_at,
+        "channel": item.get("channel") or ("security_audit" if source == "security_audit" else "runtime"),
+    }
+
+
+def _merge_tool_decision_items(runtime_items: list[dict], audit_items: list[dict]) -> list[dict]:
+    deduped: dict[tuple[str, str, str, str, str], dict] = {}
+    for raw_item, source_hint in [*[(item, "runtime") for item in runtime_items], *[(item, "security_audit") for item in audit_items]]:
+        normalized = _normalize_tool_decision_item(raw_item, source_hint=source_hint)
+        created_at = normalized.get("created_at") or ""
+        parsed = _parse_runtime_iso(created_at)
+        created_bucket = parsed.replace(second=0, microsecond=0).isoformat() if parsed else created_at[:16]
+        key = (
+            str(normalized.get("trace_id") or ""),
+            str(normalized.get("tool_name") or ""),
+            str(normalized.get("decision") or ""),
+            str(normalized.get("reason") or ""),
+            created_bucket,
+        )
+        existing = deduped.get(key)
+        if existing is None:
+            deduped[key] = normalized
+            continue
+        if existing.get("source") != "security_audit" and normalized.get("source") == "security_audit":
+            normalized["channel"] = "merged"
+            deduped[key] = normalized
+        else:
+            existing["channel"] = "merged"
+    merged = list(deduped.values())
+    merged.sort(key=lambda item: item.get("created_at") or "", reverse=True)
+    return merged
+
+
 def _serialize_training_job(item) -> dict:
     payload = {
         "id": item.id,
@@ -500,7 +555,6 @@ async def get_llm_domain_config(current_user: User = Depends(require_role("ADMIN
         ],
     }
 
-
 @router.post("/llm/domain-corpus/export")
 async def export_llm_domain_corpus(
     doc_limit: int = 200,
@@ -557,7 +611,6 @@ async def export_public_corpus(
     result["requested_by"] = current_user.id
     return result
 
-
 @router.post("/llm/public-corpus/export-async")
 async def export_public_corpus_async(
     dataset_name: str = "swu_public_docs",
@@ -579,6 +632,7 @@ async def export_public_corpus_async(
     task = export_public_corpus_job.apply_async(
         args=(dataset_name, tenant_id, float(train_ratio), current_user.id),
         queue=settings.celery_maintenance_queue,
+        description=f"公开语料导出任务: dataset={dataset_name}, tenant={tenant_id}",
     )
     await _seed_runtime_task(
         task.id,
@@ -593,7 +647,6 @@ async def export_public_corpus_async(
         "dataset_name": dataset_name,
         "train_ratio": float(train_ratio),
     }
-
 
 @router.get("/llm/public-corpus/tasks/{task_id}")
 async def get_public_corpus_export_task(
@@ -819,7 +872,7 @@ async def activate_llm_model(
         effective_tenant,
         "llm_model_manual_activate",
         "medium",
-        f"管理员激活模型: {model.model_name}",
+        f"管理员激活模型 {model.model_name}",
         user_id=current_user.id,
         target=model_id,
         result="ok",
@@ -912,7 +965,7 @@ async def publish_llm_model(
             effective_tenant,
             "llm_model_manual_activate",
             "medium",
-            f"管理员激活模型: {model.model_name}",
+            f"管理员激活模型 {model.model_name}",
             user_id=current_user.id,
             target=model_id,
             result="ok",
@@ -966,6 +1019,52 @@ async def retry_failed_llm_model_publishes(
             "attempted_count": payload.get("attempted_count", 0),
             "skipped_count": payload.get("skipped_count", 0),
             "models": [item.get("model_id") for item in payload.get("attempted", [])],
+        },
+    )
+    return payload
+
+
+@router.post("/llm/models/retire-nonrecoverable")
+async def retire_nonrecoverable_llm_models(
+    tenant_id: str | None = None,
+    limit: int = 20,
+    dry_run: bool = True,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.llm_training_service import LLMTrainingService
+    from app.services.security_audit_service import SecurityAuditService
+
+    effective_tenant = tenant_id or current_user.tenant_id
+    redis_client = get_redis()
+    service = LLMTrainingService(db, redis_client=redis_client, reports_dir=REPORTS_DIR)
+    models = await service.list_models(effective_tenant, limit=max(limit * 5, 20))
+    changed = await service.reconcile_model_registry_states(effective_tenant, models)
+    payload = await service.retire_nonrecoverable_models(
+        tenant_id=effective_tenant,
+        limit=max(limit, 1),
+        dry_run=bool(dry_run),
+        actor_id=current_user.id,
+    )
+    if changed or payload.get("changed_count", 0):
+        await db.commit()
+    await SecurityAuditService(redis_client, db).log_event(
+        effective_tenant,
+        "llm_model_retire_nonrecoverable",
+        "medium" if dry_run else "high",
+        (
+            f"管理员{'预演' if dry_run else '执行'}历史不可恢复失败模型退役，"
+            f"命中 {payload.get('retired_count', 0)} 个模型"
+        ),
+        user_id=current_user.id,
+        result="warning" if dry_run else "ok",
+        metadata={
+            "dry_run": bool(dry_run),
+            "limit": max(limit, 1),
+            "retired_count": payload.get("retired_count", 0),
+            "changed_count": payload.get("changed_count", 0),
+            "skipped_count": payload.get("skipped_count", 0),
+            "model_ids": [item.get("model_id") for item in payload.get("retired", [])],
         },
     )
     return payload
@@ -1133,7 +1232,8 @@ async def get_runtime_tool_decisions(
     runtime_items = await gate.list_decisions(current_user.tenant_id, limit=max(limit, 1), offset=max(offset, 0))
 
     if source == "redis":
-        return {"items": runtime_items, "total": len(runtime_items), "limit": max(limit, 1), "offset": max(offset, 0), "source": "redis"}
+        rows = [_normalize_tool_decision_item(item, source_hint="runtime") for item in runtime_items]
+        return {"items": rows, "total": len(rows), "limit": max(limit, 1), "offset": max(offset, 0), "source": "redis"}
 
     audit_payload = await SecurityAuditService(get_redis(), db).list_events(
         current_user.tenant_id,
@@ -1141,28 +1241,12 @@ async def get_runtime_tool_decisions(
         offset=max(offset, 0),
         action="runtime_tool_decision",
     )
-    audit_items = []
-    for item in audit_payload.get("events", []):
-        metadata = item.get("metadata") or {}
-        audit_items.append(
-            {
-                "decision": item.get("result"),
-                "reason": metadata.get("reason") or item.get("message"),
-                "source": metadata.get("source") or "security_audit",
-                "tool_name": metadata.get("tool_name") or item.get("target"),
-                "user_id": item.get("user_id"),
-                "tenant_id": item.get("tenant_id"),
-                "trace_id": item.get("trace_id"),
-                "created_at": item.get("timestamp"),
-                "channel": "security_audit",
-            }
-        )
+    audit_items = [_normalize_tool_decision_item(item, source_hint="security_audit") for item in audit_payload.get("events", [])]
 
     if source == "audit":
         return {"items": audit_items, "total": len(audit_items), "limit": max(limit, 1), "offset": max(offset, 0), "source": "audit"}
 
-    merged = runtime_items + audit_items
-    merged.sort(key=lambda item: item.get("created_at") or "", reverse=True)
+    merged = _merge_tool_decision_items(runtime_items, audit_items)
     merged = merged[: max(limit, 1)]
     return {"items": merged, "total": len(merged), "limit": max(limit, 1), "offset": max(offset, 0), "source": "merged"}
 
@@ -1190,28 +1274,8 @@ async def get_runtime_tool_decisions_summary(
         action="runtime_tool_decision",
     )
 
-    items: list[dict] = []
-    items.extend(runtime_items)
-    for item in audit_payload.get("events", []):
-        metadata = item.get("metadata") or {}
-        items.append(
-            {
-                "decision": item.get("result"),
-                "reason": metadata.get("reason") or item.get("message"),
-                "source": metadata.get("source") or "security_audit",
-                "tool_name": metadata.get("tool_name") or item.get("target"),
-                "created_at": item.get("timestamp"),
-            }
-        )
-
-    def parse_iso(value: str | None) -> datetime | None:
-        if not value:
-            return None
-        normalized = value.replace("Z", "+00:00")
-        try:
-            return datetime.fromisoformat(normalized).replace(tzinfo=None)
-        except ValueError:
-            return None
+    audit_items = [_normalize_tool_decision_item(item, source_hint="security_audit") for item in audit_payload.get("events", [])]
+    items = _merge_tool_decision_items(runtime_items, audit_items)
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     since_dt = now
@@ -1225,7 +1289,7 @@ async def get_runtime_tool_decisions_summary(
 
     filtered_items = []
     for item in items:
-        created_at = parse_iso(str(item.get("created_at") or ""))
+        created_at = _parse_runtime_iso(str(item.get("created_at") or ""))
         if since_hours > 0 and created_at and created_at < since_dt:
             continue
         item_decision = str(item.get("decision") or "unknown").lower()
@@ -1254,7 +1318,7 @@ async def get_runtime_tool_decisions_summary(
         tool_name = str(item.get("tool_name") or "unknown")
         reason = str(item.get("reason") or "unknown")
         source = str(item.get("source") or "unknown")
-        created_at = parse_iso(str(item.get("created_at") or "")) or now
+        created_at = _parse_runtime_iso(str(item.get("created_at") or "")) or now
         bucket = created_at.replace(minute=0, second=0, microsecond=0).isoformat()
         decision_counts[decision] = decision_counts.get(decision, 0) + 1
         tool_counts[tool_name] = tool_counts.get(tool_name, 0) + 1
@@ -1378,7 +1442,7 @@ async def run_evaluation(sample_limit: int = 100, current_user: User = Depends(r
 
 @router.post("/evaluation/run-async")
 async def run_evaluation_async(sample_limit: int = 100, current_user: User = Depends(require_role("ADMIN"))):
-    from app.evaluation.tasks import run_evaluation_job
+    from app.maintenance.tasks import run_evaluation_job
 
     task = run_evaluation_job.apply_async(
         args=(current_user.tenant_id, max(sample_limit, 1), current_user.id),
@@ -1386,7 +1450,6 @@ async def run_evaluation_async(sample_limit: int = 100, current_user: User = Dep
     )
     await _seed_runtime_task(task.id, tenant_id=current_user.tenant_id, task_type="evaluation", description=f"评估任务: tenant={current_user.tenant_id}")
     return {"task_id": task.id, "status": "pending", "tenant_id": current_user.tenant_id, "sample_limit": max(sample_limit, 1)}
-
 
 @router.get("/evaluation/tasks/{task_id}")
 async def get_evaluation_task(task_id: str, current_user: User = Depends(require_role("ADMIN"))):
@@ -1398,6 +1461,32 @@ async def get_latest_evaluation(current_user: User = Depends(require_role("ADMIN
     from app.services.evaluation_service import EvaluationService
 
     return await EvaluationService(None, get_redis(), reports_dir=REPORTS_DIR).latest(current_user.tenant_id)
+
+
+@router.get("/evaluation/history")
+async def get_evaluation_history(
+    limit: int = 30,
+    current_user: User = Depends(require_role("ADMIN")),
+):
+    from app.services.evaluation_service import EvaluationService
+
+    return await EvaluationService(None, get_redis(), reports_dir=REPORTS_DIR).history(
+        current_user.tenant_id,
+        limit=max(limit, 1),
+    )
+
+
+@router.get("/evaluation/gate-summary")
+async def get_evaluation_gate_summary(
+    limit: int = 30,
+    current_user: User = Depends(require_role("ADMIN")),
+):
+    from app.services.evaluation_service import EvaluationService
+
+    return await EvaluationService(None, get_redis(), reports_dir=REPORTS_DIR).summarize_history(
+        current_user.tenant_id,
+        limit=max(limit, 1),
+    )
 
 
 @router.get("/evaluation/runtime-metrics")

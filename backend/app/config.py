@@ -134,6 +134,8 @@ class Settings(BaseSettings):
     llm_training_deploy_verify_enabled: bool = True
     llm_training_deploy_health_path: str = ""
     llm_training_deploy_verify_timeout_seconds: int = 20
+    llm_training_require_evaluation_gate: bool = True
+    llm_training_eval_max_age_hours: int = 24
 
     embedding_provider: str = "local"
     embedding_model_name: str = "BAAI/bge-m3"

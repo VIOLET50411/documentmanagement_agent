@@ -1,4 +1,5 @@
-﻿import json
+import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -162,6 +163,141 @@ async def test_latest_supports_legacy_metrics_only_payload(tmp_path: Path):
     assert result["gate"]["passed"] is False
     assert result["generated_from"]["legacy_report"] is True
     assert result["generated_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_assess_deployment_readiness_blocks_missing_report(tmp_path: Path):
+    service = EvaluationService(None, None, reports_dir=tmp_path)
+
+    result = await service.assess_deployment_readiness("tenant-missing", max_age_hours=24)
+
+    assert result["ready"] is False
+    assert result["reason"] == "evaluation_missing"
+
+
+@pytest.mark.asyncio
+async def test_assess_deployment_readiness_blocks_stale_report(tmp_path: Path):
+    tenant_id = "tenant-stale"
+    payload = {
+        "metrics": {
+            "faithfulness": 0.95,
+            "answer_relevancy": 0.9,
+            "context_precision": 0.9,
+            "context_recall": 0.9,
+            "_meta": {"real_mode": True, "mode": "ragas_api"},
+        },
+        "gate": {"passed": True, "failures": []},
+        "dataset_size": 5,
+        "generated_at": (datetime.now(timezone.utc) - timedelta(hours=30)).isoformat(),
+        "generated_from": {"tenant_id": tenant_id, "dataset_summary": {"dataset_size": 5}},
+    }
+    (tmp_path / f"evaluation_{tenant_id}.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    (tmp_path / f"evaluation_{tenant_id}.md").write_text("# report", encoding="utf-8")
+    (tmp_path / f"evaluation_{tenant_id}.dataset.json").write_text(json.dumps([1, 2, 3, 4, 5]), encoding="utf-8")
+
+    result = await EvaluationService(None, None, reports_dir=tmp_path).assess_deployment_readiness(tenant_id, max_age_hours=24)
+
+    assert result["ready"] is False
+    assert result["reason"] == "evaluation_stale"
+
+
+@pytest.mark.asyncio
+async def test_assess_deployment_readiness_accepts_fresh_passed_report(tmp_path: Path):
+    tenant_id = "tenant-fresh"
+    payload = {
+        "metrics": {
+            "faithfulness": 0.95,
+            "answer_relevancy": 0.9,
+            "context_precision": 0.9,
+            "context_recall": 0.9,
+            "_meta": {"real_mode": True, "mode": "ragas_api"},
+        },
+        "gate": {"passed": True, "failures": []},
+        "dataset_size": 5,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_from": {"tenant_id": tenant_id, "dataset_summary": {"dataset_size": 5}},
+    }
+    (tmp_path / f"evaluation_{tenant_id}.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    (tmp_path / f"evaluation_{tenant_id}.md").write_text("# report", encoding="utf-8")
+    (tmp_path / f"evaluation_{tenant_id}.dataset.json").write_text(json.dumps([1, 2, 3, 4, 5]), encoding="utf-8")
+
+    result = await EvaluationService(None, None, reports_dir=tmp_path).assess_deployment_readiness(tenant_id, max_age_hours=24)
+
+    assert result["ready"] is True
+    assert result["reason"] == "evaluation_gate_passed"
+
+
+@pytest.mark.asyncio
+async def test_evaluation_history_and_summary_use_redis_snapshots(tmp_path: Path):
+    class FakeRedis:
+        def __init__(self):
+            self.lists: dict[str, list[str]] = {}
+
+        async def lpush(self, key: str, value: str):
+            self.lists.setdefault(key, []).insert(0, value)
+            return len(self.lists[key])
+
+        async def ltrim(self, key: str, start: int, end: int):
+            stop = None if end == -1 else end + 1
+            self.lists[key] = self.lists.get(key, [])[start:stop]
+            return True
+
+        async def expire(self, _key: str, _ttl: int):
+            return True
+
+        async def lrange(self, key: str, start: int, end: int):
+            stop = None if end == -1 else end + 1
+            return self.lists.get(key, [])[start:stop]
+
+        async def llen(self, key: str):
+            return len(self.lists.get(key, []))
+
+    redis_client = FakeRedis()
+    service = EvaluationService(None, redis_client, reports_dir=tmp_path)
+    await service._persist_history_snapshot(
+        "tenant-1",
+        {
+            "metrics": {
+                "faithfulness": 0.95,
+                "answer_relevancy": 0.9,
+                "context_precision": 0.91,
+                "context_recall": 0.92,
+                "_meta": {"real_mode": True, "mode": "ragas_api"},
+            },
+            "gate": {"passed": True, "failures": []},
+            "dataset_size": 5,
+            "generated_at": "2026-05-03T10:00:00+00:00",
+            "generated_from": {"tenant_id": "tenant-1"},
+        },
+    )
+    await service._persist_history_snapshot(
+        "tenant-1",
+        {
+            "metrics": {
+                "faithfulness": 0.6,
+                "answer_relevancy": 0.75,
+                "context_precision": 0.7,
+                "context_recall": 0.65,
+                "_meta": {"real_mode": False, "mode": "fallback"},
+            },
+            "gate": {"passed": False, "failures": [{"metric": "faithfulness"}, {"metric": "real_mode"}]},
+            "dataset_size": 3,
+            "generated_at": "2026-05-03T11:00:00+00:00",
+            "generated_from": {"tenant_id": "tenant-1"},
+        },
+    )
+
+    history = await service.history("tenant-1", limit=10)
+    summary = await service.summarize_history("tenant-1", limit=10)
+
+    assert history["total"] == 2
+    assert len(history["items"]) == 2
+    assert history["items"][0]["generated_at"] == "2026-05-03T11:00:00+00:00"
+    assert summary["count"] == 2
+    assert summary["pass_rate"] == 0.5
+    assert summary["real_mode_rate"] == 0.5
+    assert summary["failure_reasons"]["faithfulness"] == 1
+    assert summary["failure_reasons"]["real_mode"] == 1
 
 
 @pytest.mark.asyncio

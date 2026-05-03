@@ -1,4 +1,4 @@
-﻿"""Training-job orchestration and tenant model registry service."""
+"""Training-job orchestration and tenant model registry service."""
 
 from __future__ import annotations
 
@@ -349,6 +349,7 @@ class LLMTrainingService:
 
         publish_counts = {"published": 0, "publish_ready": 0, "failed": 0, "unknown": 0}
         verify_counts = {"verified": 0, "failed": 0, "unknown": 0}
+        deployment_gate_counts = {"passed": 0, "blocked": 0, "unknown": 0}
         failure_category_counts: dict[str, int] = {}
         recommendation_counts: dict[str, int] = {}
         recent_failures: list[dict[str, Any]] = []
@@ -356,6 +357,7 @@ class LLMTrainingService:
         latest_model = models[0] if models else None
         recoverable_failure_count = 0
         non_recoverable_failure_count = 0
+        retired_count = 0
 
         for job in jobs:
             result_payload = self._load_json(getattr(job, "result_json", None))
@@ -365,9 +367,13 @@ class LLMTrainingService:
                 verification_by_model_id[activated_model_id] = verification
 
         for model in models:
+            if self._is_retired_model(model):
+                retired_count += 1
+                continue
             metrics = self._load_json(model.metrics_json)
             publish_result = metrics.get("publish_result") if isinstance(metrics.get("publish_result"), dict) else {}
             verify_result = metrics.get("verify_result") if isinstance(metrics.get("verify_result"), dict) else {}
+            deployment_gate = metrics.get("deployment_gate") if isinstance(metrics.get("deployment_gate"), dict) else {}
             if not verify_result:
                 fallback_verify = verification_by_model_id.get(str(model.id))
                 verify_result = fallback_verify if isinstance(fallback_verify, dict) else {}
@@ -387,9 +393,24 @@ class LLMTrainingService:
             else:
                 verify_counts["unknown"] += 1
 
-            if publish_result.get("published") is False or verify_result.get("ok") is False:
+            if deployment_gate.get("ready") is True:
+                deployment_gate_counts["passed"] += 1
+            elif deployment_gate:
+                deployment_gate_counts["blocked"] += 1
+            else:
+                deployment_gate_counts["unknown"] += 1
+
+            if publish_result.get("published") is False or verify_result.get("ok") is False or deployment_gate.get("ready") is False:
+                failure_signal = str(
+                    publish_result.get("reason")
+                    or verify_result.get("reason")
+                    or verify_result.get("message")
+                    or ""
+                ).strip()
+                if not failure_signal and deployment_gate.get("ready") is False:
+                    failure_signal = str(deployment_gate.get("reason") or "").strip()
                 failure_category = self.classify_failure(
-                    str(publish_result.get("reason") or verify_result.get("reason") or verify_result.get("message") or "")
+                    failure_signal
                 )
                 if failure_category["recoverable"]:
                     recoverable_failure_count += 1
@@ -404,6 +425,8 @@ class LLMTrainingService:
                         "model_id": model.id,
                         "model_name": model.model_name,
                         "status": model.status,
+                        "deployment_gate_ready": deployment_gate.get("ready"),
+                        "deployment_gate_reason": deployment_gate.get("reason"),
                         "publish_reason": publish_result.get("reason"),
                         "verify_reason": self._sanitize_terminal_output(verify_result.get("reason") or verify_result.get("message")),
                         "failure_category": failure_category["category"],
@@ -421,9 +444,11 @@ class LLMTrainingService:
             "latest_model": _serialize_registry_model_brief(latest_model) if latest_model else None,
             "publish_counts": publish_counts,
             "verify_counts": verify_counts,
+            "deployment_gate_counts": deployment_gate_counts,
             "failure_category_counts": failure_category_counts,
             "recoverable_failure_count": recoverable_failure_count,
             "non_recoverable_failure_count": non_recoverable_failure_count,
+            "retired_count": retired_count,
             "top_recommendations": [
                 {"action": action, "count": count}
                 for action, count in sorted(recommendation_counts.items(), key=lambda item: (-item[1], item[0]))[:5]
@@ -482,6 +507,124 @@ class LLMTrainingService:
             "skipped_count": len(skipped),
             "attempted": attempted,
             "skipped": skipped[:20],
+        }
+
+    async def retire_nonrecoverable_models(
+        self,
+        *,
+        tenant_id: str,
+        limit: int = 20,
+        dry_run: bool = True,
+        actor_id: str | None = None,
+    ) -> dict[str, Any]:
+        models = await self.list_models(tenant_id, limit=max(limit * 5, 20))
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        retired: list[dict[str, Any]] = []
+        skipped: list[dict[str, Any]] = []
+        changed = False
+
+        for model in models:
+            if len(retired) >= max(limit, 1):
+                break
+
+            if self._is_retired_model(model):
+                skipped.append(
+                    {
+                        "model_id": model.id,
+                        "model_name": model.model_name,
+                        "reason": "already_retired",
+                    }
+                )
+                continue
+
+            if bool(getattr(model, "is_active", False)) or str(getattr(model, "status", "")).strip().lower() in {"active", "published", "verified"}:
+                skipped.append(
+                    {
+                        "model_id": model.id,
+                        "model_name": model.model_name,
+                        "reason": "still_active_or_published",
+                    }
+                )
+                continue
+
+            metrics = self._load_json(getattr(model, "metrics_json", None))
+            publish_result = metrics.get("publish_result") if isinstance(metrics.get("publish_result"), dict) else {}
+            verify_result = metrics.get("verify_result") if isinstance(metrics.get("verify_result"), dict) else {}
+            failure_signal = str(
+                publish_result.get("reason")
+                or publish_result.get("message")
+                or verify_result.get("reason")
+                or verify_result.get("message")
+                or ""
+            ).strip()
+            if not failure_signal:
+                skipped.append(
+                    {
+                        "model_id": model.id,
+                        "model_name": model.model_name,
+                        "reason": "no_failure_signal",
+                    }
+                )
+                continue
+
+            failure = self.classify_failure(failure_signal)
+            if failure.get("recoverable"):
+                skipped.append(
+                    {
+                        "model_id": model.id,
+                        "model_name": model.model_name,
+                        "reason": "recoverable_failure",
+                        "failure_category": failure.get("category"),
+                    }
+                )
+                continue
+
+            retirement_record = {
+                "retired_at": now.isoformat(),
+                "retired_by": actor_id,
+                "reason": failure_signal,
+                "failure_category": failure.get("category"),
+                "recommended_action": failure.get("recommended_action"),
+                "dry_run": bool(dry_run),
+            }
+            retired.append(
+                {
+                    "model_id": model.id,
+                    "model_name": model.model_name,
+                    "failure_category": failure.get("category"),
+                    "reason": failure_signal,
+                    "recommended_action": failure.get("recommended_action"),
+                }
+            )
+
+            if dry_run:
+                continue
+
+            metrics["retired"] = retirement_record
+            model.metrics_json = json.dumps(metrics, ensure_ascii=False)
+            model.status = "retired"
+            model.is_active = False
+            model.updated_at = now
+            note_line = (
+                f"[{now.isoformat()}] 已退役历史不可恢复失败模型："
+                f"{failure.get('category')} / {failure_signal}"
+            )
+            existing_notes = str(getattr(model, "notes", "") or "").strip()
+            model.notes = f"{existing_notes}\n{note_line}".strip() if existing_notes else note_line
+            changed = True
+
+        if changed:
+            await self.db.flush()
+
+        return {
+            "tenant_id": tenant_id,
+            "dry_run": bool(dry_run),
+            "limit": max(limit, 1),
+            "changed_count": 0 if dry_run else len(retired),
+            "retired_count": len(retired),
+            "skipped_count": len(skipped),
+            "retired": retired,
+            "skipped": skipped[:50],
         }
 
     def classify_failure(self, error_message: str | None) -> dict[str, Any]:
@@ -954,6 +1097,19 @@ class LLMTrainingService:
         await self.db.flush()
         return sanitized_payload
 
+    async def record_deployment_gate_result(self, *, tenant_id: str, model_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        model = await self.get_model(tenant_id, model_id)
+        if model is None:
+            raise ValueError("模型不存在")
+        model.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        metrics = self._load_json(getattr(model, "metrics_json", None))
+        metrics["deployment_gate"] = payload
+        model.metrics_json = json.dumps(metrics, ensure_ascii=False)
+        if payload.get("message"):
+            model.notes = str(payload.get("message"))[:2000]
+        await self.db.flush()
+        return payload
+
     async def _record_verify_outcome(self, model: LLMModelRegistry, payload: dict[str, Any]) -> dict[str, Any]:
         model.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         metrics = self._load_json(getattr(model, "metrics_json", None))
@@ -1084,11 +1240,19 @@ class LLMTrainingService:
         return text.strip()
 
     def _infer_inactive_model_status(self, model: LLMModelRegistry) -> str:
+        if self._is_retired_model(model):
+            return "retired"
         metrics = self._load_json(getattr(model, "metrics_json", None))
         publish_result = metrics.get("publish_result") if isinstance(metrics.get("publish_result"), dict) else {}
         if publish_result.get("published") is True or getattr(model, "provider", "") == "ollama":
             return "published"
         return "registered"
+
+    def _is_retired_model(self, model: LLMModelRegistry) -> bool:
+        if str(getattr(model, "status", "")).strip().lower() == "retired":
+            return True
+        metrics = self._load_json(getattr(model, "metrics_json", None))
+        return isinstance(metrics.get("retired"), dict)
 
     def _resolve_runtime_reference_time(self, runtime_item: dict[str, Any]) -> datetime | None:
         stage_payload = runtime_item.get("stage_payload")

@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from celery_app import celery
 from app.config import settings
 from app.models.db.llm_training import LLMTrainingJob
+from app.services.evaluation_service import EvaluationService
 from app.services.llm_training_service import LLMTrainingService
 from app.services.security_audit_service import SecurityAuditService
 from app.training.executor import TrainingExecutionRequest, build_training_executor
@@ -68,6 +69,7 @@ async def _run_training_job_async(*, training_job_id: str, runtime_task_id: str)
     try:
         async with session_factory() as db:
             service = LLMTrainingService(db, redis_client=redis_client, reports_dir=reports_dir)
+            evaluation_service = EvaluationService(db, redis_client=redis_client, reports_dir=reports_dir)
             job = await db.get(LLMTrainingJob, training_job_id)
             if job is None:
                 raise ValueError("训练任务不存在")
@@ -185,6 +187,15 @@ async def _run_training_job_async(*, training_job_id: str, runtime_task_id: str)
             )
             await db.commit()
 
+            evaluation_gate = await _evaluate_deployment_gate(
+                evaluation_service=evaluation_service,
+                training_service=service,
+                audit=audit,
+                job=job,
+                model=model,
+                runtime_task_id=runtime_task_id,
+            )
+
             deployment_verification = None
             publish_result = {
                 "ok": False,
@@ -193,7 +204,12 @@ async def _run_training_job_async(*, training_job_id: str, runtime_task_id: str)
                 "reason": "executor_not_published",
                 "message": "训练执行器未声明产物已发布",
             }
-            if job.activate_on_success and settings.llm_training_auto_activate:
+            gate_ready = bool(evaluation_gate.get("ready"))
+            if (
+                job.activate_on_success
+                and settings.llm_training_auto_activate
+                and (not settings.llm_training_require_evaluation_gate or gate_ready)
+            ):
                 publish_result = await service.publish_model_artifact(tenant_id=job.tenant_id, model_id=model.id)
                 await _audit_training_event(
                     audit,
@@ -206,9 +222,23 @@ async def _run_training_job_async(*, training_job_id: str, runtime_task_id: str)
                     severity="medium" if publish_result.get("published") else "high",
                     metadata={"job_id": job.id, "model_id": model.id, "publish_result": publish_result},
                 )
+            elif job.activate_on_success and settings.llm_training_auto_activate and settings.llm_training_require_evaluation_gate:
+                publish_result = {
+                    "ok": False,
+                    "publish_ready": False,
+                    "published": False,
+                    "reason": "evaluation_gate_blocked",
+                    "message": str(evaluation_gate.get("message") or "评估门禁未通过，已阻止自动发布。"),
+                    "evaluation_gate": evaluation_gate,
+                }
             publish_ready = bool(publish_result.get("publish_ready"))
             auto_activated = False
-            if job.activate_on_success and settings.llm_training_auto_activate and publish_ready:
+            if (
+                job.activate_on_success
+                and settings.llm_training_auto_activate
+                and publish_ready
+                and (not settings.llm_training_require_evaluation_gate or gate_ready)
+            ):
                 await _persist_job_stage(service, db, training_job_id, status="running", stage="deploying")
                 await _upsert_runtime_task(
                     runtime_task_id=runtime_task_id,
@@ -270,6 +300,7 @@ async def _run_training_job_async(*, training_job_id: str, runtime_task_id: str)
                 "auto_activated": auto_activated,
                 "publish_ready": publish_ready,
                 "publish_result": publish_result,
+                "evaluation_gate": evaluation_gate,
                 "executor_metadata": validated_result.get("executor_metadata") or {},
                 "deployment_verification": deployment_verification,
             }
@@ -332,6 +363,41 @@ async def _persist_job_stage(
 ) -> None:
     await service.update_job_stage(training_job_id, status=status, stage=stage, result=result, error=error)
     await db.commit()
+
+
+async def _evaluate_deployment_gate(
+    *,
+    evaluation_service: EvaluationService,
+    training_service: LLMTrainingService,
+    audit: SecurityAuditService,
+    job: LLMTrainingJob,
+    model,
+    runtime_task_id: str,
+) -> dict:
+    if not settings.llm_training_require_evaluation_gate:
+        gate = {
+            "ready": True,
+            "reason": "evaluation_gate_disabled",
+            "message": "已关闭训练部署评估门禁，继续自动发布和激活。",
+        }
+    else:
+        gate = await evaluation_service.assess_deployment_readiness(
+            job.tenant_id,
+            max_age_hours=settings.llm_training_eval_max_age_hours,
+        )
+    await training_service.record_deployment_gate_result(tenant_id=job.tenant_id, model_id=model.id, payload=gate)
+    await _audit_training_event(
+        audit,
+        tenant_id=job.tenant_id,
+        user_id=job.created_by,
+        trace_id=runtime_task_id,
+        event_type="llm_model_deployment_gate",
+        message=str(gate.get("message") or "训练部署门禁结果已记录"),
+        result="ok" if gate.get("ready") else "warning",
+        severity="low" if gate.get("ready") else "high",
+        metadata={"job_id": job.id, "model_id": model.id, "deployment_gate": gate},
+    )
+    return gate
 
 
 async def _execute_with_heartbeat(
