@@ -3,7 +3,6 @@
     <div class="block-head">
       <div>
         <h2>{{ title }}</h2>
-        <p>{{ summary }}</p>
       </div>
       <button v-if="isAdmin" class="btn btn-ghost btn-sm" @click="loadAdminDiagnostics" :disabled="loadingAdminDiagnostics">
         {{ loadingAdminDiagnostics ? '刷新中...' : '刷新' }}
@@ -177,11 +176,6 @@
             <small>{{ pushProviderStatus?.providers?.fcm?.reason || 'Android 推送通道' }}</small>
           </div>
           <div class="status-card">
-            <span>APNs</span>
-            <strong>{{ pushProviderStatus?.providers?.apns?.ready ? '已就绪' : '未就绪' }}</strong>
-            <small>{{ pushProviderStatus?.providers?.apns?.reason || 'iOS 推送通道' }}</small>
-          </div>
-          <div class="status-card">
             <span>微信小程序</span>
             <strong>{{ pushProviderStatus?.providers?.wechat?.ready ? '已就绪' : '未就绪' }}</strong>
             <small>{{ pushProviderStatus?.providers?.wechat?.reason || '订阅消息通道' }}</small>
@@ -246,8 +240,8 @@ const summary = computed(() => {
 }
 
 .block-head h2 {
-  font-size: 2rem;
-  letter-spacing: -0.02em;
+  font-size: 1.25rem;
+  font-weight: 600;
 }
 
 .block-head p,
@@ -256,17 +250,19 @@ const summary = computed(() => {
 }
 
 .settings-panel {
-  border: 1px solid var(--border-color);
-  border-radius: 30px;
-  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
-  padding: 24px;
-  box-shadow: var(--shadow-sm);
-  backdrop-filter: blur(18px);
+  border: none;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  border-radius: 0;
+  margin-bottom: 32px;
 }
 
 .settings-panel h3 {
-  font-size: 1.1rem;
-  margin-bottom: 18px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 16px;
 }
 
 .status-grid {

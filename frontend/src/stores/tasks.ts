@@ -2,19 +2,42 @@ import { defineStore } from "pinia"
 import { ref } from "vue"
 import { adminApi } from "@/api/admin"
 
-type GenericRecord = Record<string, any>
+export interface RuntimeTask {
+  task_id: string; type: string; status: string; description?: string; trace_id?: string; retries?: number; start_time?: string; end_time?: string; updated_at?: string; stage?: string;
+}
+
+export interface PipelineJob {
+  doc_id: string; title?: string; status: string; percentage?: number; attempt?: number; detail?: string; error_message?: string; updated_at?: string; task_id?: string;
+}
+
+export interface TrainingJob {
+  id: string; target_model_name?: string; dataset_name?: string; status: string; stage?: string; provider?: string; train_records?: number; val_records?: number; error_message?: string; updated_at?: string; created_at?: string; runtime_task_id?: string;
+}
+
+export interface CheckpointSummary {
+  session_id: string; latest_node_name?: string; latest_iteration?: number; resumable: boolean; latest_at?: string;
+}
+
+export interface TraceEvent {
+  event_id?: string; sequence_num?: number; status?: string; type?: string; source?: string; trace_id?: string; fallback_reason?: string; message?: string; msg?: string; answer?: string; content?: string; timestamp?: string; created_at?: string; degraded?: boolean;
+}
 
 export const useTasksStore = defineStore("tasks", () => {
   const loading = ref(false)
   const error = ref("")
-  const runtimeTasks = ref<GenericRecord[]>([])
-  const pipelineJobs = ref<GenericRecord[]>([])
-  const trainingJobs = ref<GenericRecord[]>([])
-  const checkpointSummary = ref<GenericRecord[]>([])
-  const runtimeMetrics = ref<GenericRecord | null>(null)
-  const trainingSummary = ref<GenericRecord | null>(null)
-  const deploymentSummary = ref<GenericRecord | null>(null)
+  const runtimeTasks = ref<RuntimeTask[]>([])
+  const pipelineJobs = ref<PipelineJob[]>([])
+  const trainingJobs = ref<TrainingJob[]>([])
+  const checkpointSummary = ref<CheckpointSummary[]>([])
+  const runtimeMetrics = ref<any>(null)
+  const trainingSummary = ref<any>(null)
+  const deploymentSummary = ref<any>(null)
   const updatedAt = ref("")
+
+  // Trace Replay State
+  const traceEvents = ref<TraceEvent[]>([])
+  const replayingTrace = ref(false)
+  const traceError = ref("")
 
   async function loadDashboard() {
     loading.value = true
@@ -53,6 +76,23 @@ export const useTasksStore = defineStore("tasks", () => {
     }
   }
 
+  async function replayTrace(traceId: string) {
+    replayingTrace.value = true
+    traceError.value = ""
+    traceEvents.value = []
+    try {
+      const response = await adminApi.replayRuntimeTrace(traceId)
+      traceEvents.value = response.events || []
+      if (!traceEvents.value.length) {
+        traceError.value = '没有找到这条运行轨迹，或该轨迹不属于当前租户。'
+      }
+    } catch (caught: any) {
+      traceError.value = caught?.response?.data?.detail || '运行轨迹回放失败。'
+    } finally {
+      replayingTrace.value = false
+    }
+  }
+
   return {
     loading,
     error,
@@ -64,6 +104,10 @@ export const useTasksStore = defineStore("tasks", () => {
     trainingSummary,
     deploymentSummary,
     updatedAt,
+    traceEvents,
+    replayingTrace,
+    traceError,
     loadDashboard,
+    replayTrace,
   }
 })

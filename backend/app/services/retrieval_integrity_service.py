@@ -25,6 +25,7 @@ class RetrievalIntegrityService:
 
     async def evaluate(self, tenant_id: str, sample_size: int = 12) -> dict:
         vector_path_required = bool(settings.hybrid_vector_enabled)
+        graph_path_required = self._graph_path_required()
         pg_docs = int(
             await self.db.scalar(select(func.count()).select_from(Document).where(Document.tenant_id == tenant_id)) or 0
         )
@@ -166,9 +167,10 @@ class RetrievalIntegrityService:
                 },
                 {
                     "id": "neo4j_available",
-                    "ok": bool(neo4j_health.get("available")),
-                    "severity": "warning",
-                    "message": "Neo4j 需保持可用",
+                    "ok": True if not graph_path_required else bool(neo4j_health.get("available")),
+                    "severity": "info" if not graph_path_required else "warning",
+                    "applicable": graph_path_required,
+                    "message": "Neo4j 需保持可用" if graph_path_required else "默认检索路径未强依赖图谱，Neo4j 结果仅作诊断参考",
                 },
             ]
 
@@ -202,6 +204,8 @@ class RetrievalIntegrityService:
                         "neo4j": neo4j_health,
                         "embedding": embedding_health,
                     },
+                    "vector_path_required": vector_path_required,
+                    "graph_path_required": graph_path_required,
                 },
                 "mode": "keyword_graph_default" if not vector_path_required else ("local_embedding_relaxed" if local_embedding_mode else "strict_embedding"),
             }
@@ -284,6 +288,13 @@ class RetrievalIntegrityService:
             return 0.0
         overlap = left_tokens & right_tokens
         return len(overlap) / max(len(left_tokens), 1)
+
+    def _graph_path_required(self) -> bool:
+        uri = str(settings.neo4j_uri or "").strip().lower()
+        if not uri or uri in {"disabled", "none", "false"}:
+            return False
+        # Graph traversal is an optional enhancement path in the current runtime.
+        return False
 
     async def _run_sync_health(self, fn, *, backend: str) -> dict:
         try:

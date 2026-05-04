@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.db.llm_training import LLMModelRegistry, LLMTrainingJob
+from app.services.evaluation_service import EvaluationService
 from app.training.executor import describe_training_runtime
 
 
@@ -28,6 +29,8 @@ class LLMTrainingService:
     FAILURE_PATTERNS = (
         ("training_runtime_stale", "runtime_stale", True, "检查 Celery worker、Redis 心跳与训练执行器超时配置"),
         ("training_plan_only_result", "plan_only_result", False, "当前训练执行器仅返回计划结果，需要切换到真实训练运行时"),
+        ("approval_pending", "approval_pending", False, "先在管理端完成模型审批，再执行激活或灰度发布"),
+        ("approval_rejected", "approval_rejected", False, "检查评审意见并修复模型质量或安全问题后重新送审"),
         ("publish_command_failed", "publish_command_failed", True, "检查发布命令、Ollama 挂载路径与模型目录"),
         ("artifact_dir_missing", "artifact_missing", False, "检查训练产物目录是否生成并已挂载"),
         ("adapter_dir_missing", "artifact_missing", False, "检查适配器目录是否完整导出并已挂载"),
@@ -175,10 +178,24 @@ class LLMTrainingService:
         )
         return any(re.search(pattern, normalized) for pattern in patterns)
 
-    async def activate_model(self, *, tenant_id: str, model_id: str, actor_id: str | None = None) -> LLMModelRegistry:
+    async def activate_model(
+        self,
+        *,
+        tenant_id: str,
+        model_id: str,
+        actor_id: str | None = None,
+        require_preverified: bool | None = None,
+    ) -> LLMModelRegistry:
         model = await self.get_model(tenant_id, model_id)
         if model is None:
-            raise ValueError("模型不存在")
+            raise ValueError("model_not_found")
+        activation_readiness = await self.ensure_model_activation_readiness(
+            tenant_id=tenant_id,
+            model=model,
+            require_preverified=require_preverified,
+        )
+        if activation_readiness["ready"] is False:
+            raise ValueError(str(activation_readiness.get("message") or "activation_not_ready"))
 
         previous_active_payload = await self.get_active_model(tenant_id)
 
@@ -189,6 +206,11 @@ class LLMTrainingService:
         model.updated_at = model.activated_at
         metrics = self._load_json(model.metrics_json)
         metrics["activated_by"] = actor_id
+        metrics["activated_at"] = model.activated_at.isoformat()
+        if previous_active_payload and previous_active_payload.get("model_id") != model.id:
+            metrics["previous_active_model"] = previous_active_payload
+        else:
+            metrics.pop("previous_active_model", None)
         model.metrics_json = json.dumps(metrics, ensure_ascii=False)
         await self.db.flush()
 
@@ -197,6 +219,99 @@ class LLMTrainingService:
                 await self.redis.set(self._previous_active_model_key(tenant_id), json.dumps(previous_active_payload, ensure_ascii=False))
             await self.redis.set(self._active_model_key(tenant_id), json.dumps(self._serialize_active_model(model), ensure_ascii=False))
         return model
+
+    async def ensure_model_activation_readiness(
+        self,
+        *,
+        tenant_id: str,
+        model: LLMModelRegistry,
+        require_preverified: bool | None = None,
+    ) -> dict[str, Any]:
+        metrics = self._load_json(getattr(model, "metrics_json", None))
+        publish_result = metrics.get("publish_result") if isinstance(metrics.get("publish_result"), dict) else {}
+        verify_result = metrics.get("verify_result") if isinstance(metrics.get("verify_result"), dict) else {}
+
+        published = bool(publish_result.get("published")) or str(getattr(model, "status", "")).strip().lower() in {"published", "verified", "active"}
+        if not published:
+            return {
+                "ready": False,
+                "reason": "publish_incomplete",
+                "message": "model publish incomplete; activation blocked",
+                "publish_result": publish_result,
+            }
+
+        approval_state = self._model_approval_state(model)
+        if approval_state["ready"] is False:
+            return {
+                "ready": False,
+                "reason": str(approval_state.get("reason") or "approval_pending"),
+                "message": str(approval_state.get("message") or "manual approval required before activation"),
+                "approval": approval_state,
+            }
+
+        if settings.llm_training_require_evaluation_gate:
+            gate = await EvaluationService(self.db, self.redis, reports_dir=self.reports_dir).assess_deployment_readiness(
+                tenant_id,
+                max_age_hours=settings.llm_training_eval_max_age_hours,
+            )
+            await self.record_deployment_gate_result(tenant_id=tenant_id, model_id=model.id, payload=gate)
+            if gate.get("ready") is not True:
+                return {
+                    "ready": False,
+                    "reason": str(gate.get("reason") or "evaluation_gate_blocked"),
+                    "message": str(gate.get("message") or "evaluation gate blocked activation"),
+                    "deployment_gate": gate,
+                }
+
+        enforce_preverified = settings.llm_training_deploy_verify_enabled if require_preverified is None else bool(require_preverified)
+        if enforce_preverified and verify_result.get("ok") is not True:
+            return {
+                "ready": False,
+                "reason": str(verify_result.get("reason") or "serving_verification_required"),
+                "message": "deployment verification required before activation",
+                "verify_result": verify_result,
+            }
+
+        return {
+            "ready": True,
+            "reason": "activation_ready",
+            "message": "activation ready",
+            "publish_result": publish_result,
+            "approval": approval_state,
+            "verify_result": verify_result,
+        }
+
+    async def record_model_approval(
+        self,
+        *,
+        tenant_id: str,
+        model_id: str,
+        approved: bool,
+        actor_id: str | None = None,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        model = await self.get_model(tenant_id, model_id)
+        if model is None:
+            raise ValueError("模型不存在")
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        metrics = self._load_json(model.metrics_json)
+        approval = {
+            "required": bool(settings.llm_training_require_manual_approval),
+            "approved": bool(approved),
+            "decision": "approved" if approved else "rejected",
+            "actor_id": actor_id,
+            "reason": str(reason or "").strip(),
+            "decided_at": now.isoformat(),
+            "ready": bool(approved) or not bool(settings.llm_training_require_manual_approval),
+            "message": "模型审批已通过，可进入激活流程。" if approved else "模型审批已拒绝，禁止进入激活流程。",
+        }
+        metrics["approval"] = approval
+        model.metrics_json = json.dumps(metrics, ensure_ascii=False)
+        model.updated_at = now
+        if not approved:
+            model.notes = str(approval["message"])[:2000]
+        await self.db.flush()
+        return approval
 
     async def update_model_canary_percent(
         self,
@@ -246,6 +361,8 @@ class LLMTrainingService:
                 except json.JSONDecodeError:
                     return None
 
+        if not hasattr(self.db, "execute"):
+            return None
         row = await self.db.execute(select(LLMModelRegistry).where(LLMModelRegistry.tenant_id == tenant_id, LLMModelRegistry.is_active.is_(True)))
         model = row.scalar_one_or_none()
         if model is None:
@@ -253,15 +370,24 @@ class LLMTrainingService:
         return self._serialize_active_model(model)
 
     async def get_previous_active_model(self, tenant_id: str) -> dict[str, Any] | None:
-        if self.redis is None:
+        if self.redis is not None:
+            raw = await self.redis.get(self._previous_active_model_key(tenant_id))
+            if raw:
+                try:
+                    payload = json.loads(raw)
+                except json.JSONDecodeError:
+                    payload = None
+                if isinstance(payload, dict):
+                    return payload
+
+        if not hasattr(self.db, "execute"):
             return None
-        raw = await self.redis.get(self._previous_active_model_key(tenant_id))
-        if not raw:
+        row = await self.db.execute(select(LLMModelRegistry).where(LLMModelRegistry.tenant_id == tenant_id, LLMModelRegistry.is_active.is_(True)))
+        active_model = row.scalar_one_or_none()
+        if active_model is None:
             return None
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError:
-            return None
+        metrics = self._load_json(getattr(active_model, "metrics_json", None))
+        payload = metrics.get("previous_active_model")
         return payload if isinstance(payload, dict) else None
 
     async def summarize_rollout(self, tenant_id: str, *, limit: int = 100) -> dict[str, Any]:
@@ -350,6 +476,7 @@ class LLMTrainingService:
         publish_counts = {"published": 0, "publish_ready": 0, "failed": 0, "unknown": 0}
         verify_counts = {"verified": 0, "failed": 0, "unknown": 0}
         deployment_gate_counts = {"passed": 0, "blocked": 0, "unknown": 0}
+        approval_counts = {"approved": 0, "pending": 0, "rejected": 0, "not_required": 0}
         failure_category_counts: dict[str, int] = {}
         recommendation_counts: dict[str, int] = {}
         recent_failures: list[dict[str, Any]] = []
@@ -374,6 +501,8 @@ class LLMTrainingService:
             publish_result = metrics.get("publish_result") if isinstance(metrics.get("publish_result"), dict) else {}
             verify_result = metrics.get("verify_result") if isinstance(metrics.get("verify_result"), dict) else {}
             deployment_gate = metrics.get("deployment_gate") if isinstance(metrics.get("deployment_gate"), dict) else {}
+            approval = metrics.get("approval") if isinstance(metrics.get("approval"), dict) else {}
+            approval_state = self._model_approval_state(model, approval_payload=approval)
             if not verify_result:
                 fallback_verify = verification_by_model_id.get(str(model.id))
                 verify_result = fallback_verify if isinstance(fallback_verify, dict) else {}
@@ -400,15 +529,37 @@ class LLMTrainingService:
             else:
                 deployment_gate_counts["unknown"] += 1
 
-            if publish_result.get("published") is False or verify_result.get("ok") is False or deployment_gate.get("ready") is False:
-                failure_signal = str(
-                    publish_result.get("reason")
-                    or verify_result.get("reason")
-                    or verify_result.get("message")
-                    or ""
-                ).strip()
-                if not failure_signal and deployment_gate.get("ready") is False:
+            decision = str(approval_state.get("decision") or "")
+            if not approval_state.get("required"):
+                approval_counts["not_required"] += 1
+            elif decision == "approved":
+                approval_counts["approved"] += 1
+            elif decision == "rejected":
+                approval_counts["rejected"] += 1
+            else:
+                approval_counts["pending"] += 1
+
+            if (
+                publish_result.get("published") is False
+                or verify_result.get("ok") is False
+                or deployment_gate.get("ready") is False
+                or approval_state.get("ready") is False
+            ):
+                failure_signal = ""
+                if approval_state.get("ready") is False:
+                    approval_decision = str(approval_state.get("decision") or "").strip().lower()
+                    if approval_decision == "rejected":
+                        failure_signal = "approval_rejected"
+                    elif approval_decision == "pending":
+                        failure_signal = "approval_pending"
+                    else:
+                        failure_signal = str(approval_state.get("reason") or approval_state.get("message") or "").strip()
+                elif deployment_gate.get("ready") is False:
                     failure_signal = str(deployment_gate.get("reason") or "").strip()
+                elif publish_result.get("published") is False:
+                    failure_signal = str(publish_result.get("reason") or publish_result.get("message") or "").strip()
+                elif verify_result.get("ok") is False:
+                    failure_signal = str(verify_result.get("reason") or verify_result.get("message") or "").strip()
                 failure_category = self.classify_failure(
                     failure_signal
                 )
@@ -427,6 +578,10 @@ class LLMTrainingService:
                         "status": model.status,
                         "deployment_gate_ready": deployment_gate.get("ready"),
                         "deployment_gate_reason": deployment_gate.get("reason"),
+                        "approval_ready": approval_state.get("ready"),
+                        "approval_required": approval_state.get("required"),
+                        "approval_decision": approval_state.get("decision"),
+                        "approval_reason": approval_state.get("reason"),
                         "publish_reason": publish_result.get("reason"),
                         "verify_reason": self._sanitize_terminal_output(verify_result.get("reason") or verify_result.get("message")),
                         "failure_category": failure_category["category"],
@@ -445,6 +600,7 @@ class LLMTrainingService:
             "publish_counts": publish_counts,
             "verify_counts": verify_counts,
             "deployment_gate_counts": deployment_gate_counts,
+            "approval_counts": approval_counts,
             "failure_category_counts": failure_category_counts,
             "recoverable_failure_count": recoverable_failure_count,
             "non_recoverable_failure_count": non_recoverable_failure_count,
@@ -457,6 +613,7 @@ class LLMTrainingService:
             "recent_failures": recent_failures[:10],
             "auto_activate_enabled": bool(settings.llm_training_auto_activate),
             "publish_enabled": bool(settings.llm_training_publish_enabled),
+            "manual_approval_required": bool(settings.llm_training_require_manual_approval),
             "deploy_verify_enabled": bool(settings.llm_training_deploy_verify_enabled),
             "deploy_fail_rollback": bool(settings.llm_training_deploy_fail_rollback),
         }
@@ -1109,6 +1266,51 @@ class LLMTrainingService:
             model.notes = str(payload.get("message"))[:2000]
         await self.db.flush()
         return payload
+
+    def _model_approval_state(
+        self,
+        model: LLMModelRegistry,
+        *,
+        approval_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        required = bool(settings.llm_training_require_manual_approval)
+        approval = approval_payload if approval_payload is not None else self._load_json(getattr(model, "metrics_json", None)).get("approval")
+        if not isinstance(approval, dict):
+            approval = {}
+        decision = str(approval.get("decision") or "").strip().lower()
+        approved = approval.get("approved") is True or decision == "approved"
+        reason = str(approval.get("reason") or "").strip()
+        if not required:
+            return {
+                "required": False,
+                "ready": True,
+                "decision": "not_required",
+                "reason": "",
+                "message": "当前未启用人工审批门。",
+            }
+        if approved:
+            return {
+                "required": True,
+                "ready": True,
+                "decision": "approved",
+                "reason": reason,
+                "message": "模型审批已通过，可进入激活流程。",
+            }
+        if decision == "rejected":
+            return {
+                "required": True,
+                "ready": False,
+                "decision": "rejected",
+                "reason": reason or "approval_rejected",
+                "message": "模型审批已拒绝，禁止进入激活流程。",
+            }
+        return {
+            "required": True,
+            "ready": False,
+            "decision": "pending",
+            "reason": "approval_pending",
+            "message": "模型尚未完成人工审批，禁止进入激活流程。",
+        }
 
     async def _record_verify_outcome(self, model: LLMModelRegistry, payload: dict[str, Any]) -> dict[str, Any]:
         model.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)

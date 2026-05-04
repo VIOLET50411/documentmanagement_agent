@@ -55,7 +55,6 @@ async def test_push_multi_provider_routes_devices(monkeypatch):
     }
     devices = [
         {'platform': 'android', 'device_token': 'fcm-1'},
-        {'platform': 'ios', 'device_token': 'apns-1'},
         {'platform': 'wechat', 'device_token': 'wechat-openid'},
         {'platform': 'unknown', 'device_token': 'log-1'},
     ]
@@ -70,7 +69,7 @@ async def test_push_multi_provider_routes_devices(monkeypatch):
     results = await service._dispatch_multi_async(payload, devices)
 
     providers = {item['provider']: item['sent'] for item in results}
-    assert providers == {'fcm': 1, 'apns': 1, 'wechat': 1, 'log': 1}
+    assert providers == {'fcm': 1, 'wechat': 1, 'log': 1}
 
 
 def test_push_provider_not_configured_falls_back_to_log(monkeypatch):
@@ -98,9 +97,9 @@ def test_push_provider_not_configured_fail_closed(monkeypatch):
     service = PushNotificationService(redis_client=object())
     monkeypatch.setattr(settings, 'push_notification_fail_closed', True)
 
-    result = service._provider_not_configured('apns', {'title': 'x'}, [{'platform': 'ios', 'device_token': 'abc'}])
+    result = service._provider_not_configured('wechat', {'title': 'x'}, [{'platform': 'wechat', 'device_token': 'abc'}])
 
-    assert result['provider'] == 'apns'
+    assert result['provider'] == 'wechat'
     assert result['failed'] == 1
 
 
@@ -123,9 +122,9 @@ async def test_push_health_summary_marks_multi_ready_when_subprovider_configured
     monkeypatch.setattr(settings, 'push_fcm_access_token', 'access-token')
     monkeypatch.setattr(settings, 'push_fcm_project_id', 'docmind-7bbdd')
     monkeypatch.setattr(settings, 'push_fcm_service_account_file', '')
-    monkeypatch.setattr(settings, 'push_apns_topic', '')
-    monkeypatch.setattr(settings, 'push_apns_auth_token', '')
     monkeypatch.setattr(settings, 'push_wechat_access_token', '')
+    monkeypatch.setattr(settings, 'push_wechat_app_id', '')
+    monkeypatch.setattr(settings, 'push_wechat_app_secret', '')
     monkeypatch.setattr(settings, 'push_wechat_template_id', '')
 
     payload = await service.get_health_summary(tenant_id='tenant-1')
@@ -136,10 +135,38 @@ async def test_push_health_summary_marks_multi_ready_when_subprovider_configured
     assert payload['active_provider_readiness']['fcm']['ready'] is True
     assert payload['provider_diagnostics']['fcm']['code_ready'] is True
     assert payload['provider_diagnostics']['fcm']['next_step'] == '运行凭据已到位，可直接联调真实推送。'
-    assert payload['provider_diagnostics']['apns']['next_step'] == '补齐 Apple Push topic 与 auth token 后即可联调 iOS 真机推送。'
-    assert payload['provider_diagnostics']['wechat']['next_step'] == '补齐小程序 access token 与订阅消息模板 ID 后即可联调微信通知。'
-    assert payload['providers']['apns']['missing_env_vars'] == ['PUSH_APNS_TOPIC', 'PUSH_APNS_AUTH_TOKEN']
-    assert payload['providers']['wechat']['missing_env_vars'] == ['PUSH_WECHAT_ACCESS_TOKEN', 'PUSH_WECHAT_TEMPLATE_ID']
+    assert payload['provider_diagnostics']['wechat']['next_step'] == '补齐小程序 access token 或 appid/appsecret，以及订阅消息模板 ID 后即可联调微信通知。'
+    assert payload['providers']['wechat']['missing_env_vars'] == ['PUSH_WECHAT_ACCESS_TOKEN', 'PUSH_WECHAT_APP_ID', 'PUSH_WECHAT_APP_SECRET', 'PUSH_WECHAT_TEMPLATE_ID']
+    assert payload['configuration_sources']['fcm']['source'] == 'access_token'
+    assert payload['configuration_sources']['wechat']['source'] == 'none'
+    assert payload['readiness_score'] == 90
+    assert 'PUSH_WECHAT_TEMPLATE_ID=<subscribe-template-id>' in payload['setup_guides']['wechat']['env_examples']
+    assert any(item['provider'] == 'wechat' for item in payload['action_items'])
+
+
+@pytest.mark.asyncio
+async def test_push_health_summary_accepts_wechat_app_secret_mode(monkeypatch):
+    service = PushNotificationService(redis_client=object())
+    monkeypatch.setattr(settings, 'push_notifications_enabled', True)
+    monkeypatch.setattr(settings, 'push_notification_provider', 'multi')
+    monkeypatch.setattr(settings, 'push_notification_fail_closed', False)
+    monkeypatch.setattr(settings, 'push_fcm_server_key', '')
+    monkeypatch.setattr(settings, 'push_fcm_access_token', 'access-token')
+    monkeypatch.setattr(settings, 'push_fcm_project_id', 'docmind-7bbdd')
+    monkeypatch.setattr(settings, 'push_fcm_service_account_file', '')
+    monkeypatch.setattr(settings, 'push_wechat_access_token', '')
+    monkeypatch.setattr(settings, 'push_wechat_app_id', 'wx-app')
+    monkeypatch.setattr(settings, 'push_wechat_app_secret', 'wx-secret')
+    monkeypatch.setattr(settings, 'push_wechat_template_id', 'template-1')
+
+    payload = await service.get_health_summary(tenant_id='tenant-1')
+
+    assert payload['providers']['wechat']['configured'] is True
+    assert payload['providers']['wechat']['auth_mode'] == 'app_secret'
+    assert payload['providers']['wechat']['missing_env_vars'] == []
+    assert payload['configuration_sources']['wechat']['source'] == 'app_secret'
+    assert payload['configuration_sources']['wechat']['detail'] == 'wx-app'
+    assert payload['setup_guides']['wechat']['secret_targets'] == []
 
 
 @pytest.mark.asyncio
@@ -152,8 +179,6 @@ async def test_push_health_summary_reports_platform_gap_when_required_provider_m
     monkeypatch.setattr(settings, 'push_fcm_access_token', 'access-token')
     monkeypatch.setattr(settings, 'push_fcm_project_id', 'docmind-7bbdd')
     monkeypatch.setattr(settings, 'push_fcm_service_account_file', '')
-    monkeypatch.setattr(settings, 'push_apns_topic', '')
-    monkeypatch.setattr(settings, 'push_apns_auth_token', '')
     monkeypatch.setattr(settings, 'push_wechat_access_token', '')
     monkeypatch.setattr(settings, 'push_wechat_template_id', '')
 
@@ -162,7 +187,7 @@ async def test_push_health_summary_reports_platform_gap_when_required_provider_m
         now = datetime.now(timezone.utc)
         return [
             SimpleNamespace(platform='android', is_active=True, created_at=now, updated_at=now, last_seen_at=now),
-            SimpleNamespace(platform='ios', is_active=True, created_at=now, updated_at=now, last_seen_at=now),
+            SimpleNamespace(platform='desktop', is_active=True, created_at=now, updated_at=now, last_seen_at=now),
         ]
 
     service._list_tenant_devices = fake_list_tenant_devices  # type: ignore[method-assign]
@@ -170,18 +195,10 @@ async def test_push_health_summary_reports_platform_gap_when_required_provider_m
     payload = await service.get_health_summary(tenant_id='tenant-1')
 
     assert payload['provider_coverage']['android']['deliverable'] is True
-    assert payload['provider_coverage']['ios']['deliverable'] is False
-    assert payload['delivery_gaps'] == [
-        {
-            'platform': 'ios',
-            'device_count': 1,
-            'required_provider': 'apns',
-            'configured_provider': 'multi',
-            'issue': 'apns_required_for_ios',
-            'severity': 'warning',
-            'recommendation': '检测到 1 台 ios 设备，请补齐 apns 推送配置。',
-        }
-    ]
+    assert payload['provider_coverage']['desktop']['required_provider'] is None
+    assert payload['provider_coverage']['desktop']['delivery_mode'] == 'unknown_platform'
+    assert payload['delivery_gaps'] == []
+    assert payload['readiness_score'] == 90
 
 
 @pytest.mark.asyncio
@@ -263,25 +280,23 @@ async def test_push_health_summary_reports_single_provider_mismatch(monkeypatch)
     monkeypatch.setattr(settings, 'push_fcm_access_token', 'access-token')
     monkeypatch.setattr(settings, 'push_fcm_project_id', 'docmind-7bbdd')
     monkeypatch.setattr(settings, 'push_fcm_service_account_file', '')
-    monkeypatch.setattr(settings, 'push_apns_topic', 'com.docmind.app')
-    monkeypatch.setattr(settings, 'push_apns_auth_token', 'apns-token')
-    monkeypatch.setattr(settings, 'push_wechat_access_token', '')
-    monkeypatch.setattr(settings, 'push_wechat_template_id', '')
+    monkeypatch.setattr(settings, 'push_wechat_access_token', 'wechat-token')
+    monkeypatch.setattr(settings, 'push_wechat_template_id', 'template-1')
 
     async def fake_list_tenant_devices(*, tenant_id: str):
         assert tenant_id == 'tenant-1'
         now = datetime.now(timezone.utc)
         return [
-            SimpleNamespace(platform='ios', is_active=True, created_at=now, updated_at=now, last_seen_at=now),
+            SimpleNamespace(platform='wechat', is_active=True, created_at=now, updated_at=now, last_seen_at=now),
         ]
 
     service._list_tenant_devices = fake_list_tenant_devices  # type: ignore[method-assign]
 
     payload = await service.get_health_summary(tenant_id='tenant-1')
 
-    assert 'fcm_cannot_deliver_ios' in payload['issues']
+    assert 'fcm_cannot_deliver_wechat' in payload['issues']
     assert payload['delivery_gaps'][0]['severity'] == 'error'
-    assert payload['delivery_gaps'][0]['recommendation'] == '当前 provider=fcm 无法覆盖 ios 设备，请切换到 apns 或 multi 模式。'
+    assert payload['delivery_gaps'][0]['recommendation'] == '当前 provider=fcm 无法覆盖 wechat 设备，请切换到 wechat 或 multi 模式。'
 
 
 @pytest.mark.asyncio
@@ -411,69 +426,6 @@ async def test_fcm_invalid_token_deactivates_device(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_apns_invalid_token_deactivates_device(monkeypatch):
-    service = PushNotificationService(redis_client=object())
-    payload = {
-        'tenant_id': 'tenant-1',
-        'user_id': 'user-1',
-        'title': '测试消息',
-        'body': '无效 APNs token',
-        'status': 'test',
-    }
-    devices = [{'platform': 'ios', 'device_token': 'apns-invalid-1'}]
-    deactivated = {}
-
-    monkeypatch.setattr(settings, 'push_apns_topic', 'com.docmind.app')
-    monkeypatch.setattr(settings, 'push_apns_auth_token', 'apns-token')
-    monkeypatch.setattr(settings, 'push_auto_deactivate_invalid_tokens', True)
-
-    async def fake_deactivate(self, runtime_payload, invalid_devices, *, provider, reason):
-        deactivated['provider'] = provider
-        deactivated['reason'] = reason
-        deactivated['tokens'] = [item['device_token'] for item in invalid_devices]
-
-    monkeypatch.setattr(PushNotificationService, '_deactivate_devices_async', fake_deactivate)
-
-    class FakeErrorResponse:
-        status_code = 410
-        text = json.dumps({'reason': 'BadDeviceToken'})
-
-        def json(self):
-            return json.loads(self.text)
-
-        def raise_for_status(self):
-            import httpx
-
-            request = httpx.Request('POST', 'https://api.push.apple.com/3/device/apns-invalid-1')
-            raise httpx.HTTPStatusError('410 invalid token', request=request, response=self)
-
-    class FakeAsyncClient:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def post(self, endpoint, json=None, headers=None):
-            return FakeErrorResponse()
-
-    monkeypatch.setattr('app.services.push_notification_service.httpx.AsyncClient', FakeAsyncClient)
-
-    result = await service._send_apns_async(payload, devices)
-
-    assert result['sent'] == 0
-    assert result['failed'] == 1
-    assert deactivated == {
-        'provider': 'apns',
-        'reason': 'invalid_device_token',
-        'tokens': ['apns-invalid-1'],
-    }
-
-
-@pytest.mark.asyncio
 async def test_wechat_invalid_openid_deactivates_device(monkeypatch):
     service = PushNotificationService(redis_client=object())
     payload = {
@@ -558,9 +510,9 @@ async def test_push_device_summary_marks_current_token_status():
                 id='dev-2',
                 tenant_id='tenant-1',
                 user_id='user-1',
-                platform='ios',
+                platform='desktop',
                 device_token='token-inactive',
-                device_name='iPhone',
+                device_name='Desktop Debug',
                 app_version='1.0.0',
                 is_active=False,
                 created_at=None,
@@ -581,4 +533,62 @@ async def test_push_device_summary_marks_current_token_status():
     assert summary['active'] == 1
     assert summary['inactive'] == 1
     assert summary['current_token_status'] == 'matched_inactive'
-    assert summary['current_device']['platform'] == 'ios'
+    assert summary['current_device']['platform'] == 'desktop'
+
+
+@pytest.mark.asyncio
+async def test_resolve_wechat_openid_from_js_code(monkeypatch):
+    service = PushNotificationService(redis_client=object())
+    monkeypatch.setattr(settings, 'push_wechat_access_token', '')
+    monkeypatch.setattr(settings, 'push_wechat_app_id', 'wx-app')
+    monkeypatch.setattr(settings, 'push_wechat_app_secret', 'wx-secret')
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {'openid': 'openid-123'}
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            self.kwargs = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, endpoint, params=None):
+            assert endpoint == 'https://api.weixin.qq.com/sns/jscode2session'
+            assert params['appid'] == 'wx-app'
+            assert params['secret'] == 'wx-secret'
+            assert params['js_code'] == 'login-code'
+            return FakeResponse()
+
+    monkeypatch.setattr('app.services.push_notification_service.httpx.AsyncClient', FakeAsyncClient)
+
+    result = await service.resolve_wechat_openid('login-code')
+
+    assert result == 'openid-123'
+
+
+def test_build_wechat_subscribe_data_matches_document_operation_template():
+    service = PushNotificationService(redis_client=object())
+
+    data = service._build_wechat_subscribe_data(
+        {
+            'document_id': 'doc-123_ABC',
+            'title': '制度文件处理完成',
+            'body': '采购制度PDF已完成解析并建立索引',
+            'status': 'ready',
+            'timestamp': '2026-05-04T03:00:00+08:00',
+        }
+    )
+
+    assert set(data.keys()) == {'character_string1', 'thing2', 'thing3', 'phrase4', 'time5', 'date5'}
+    assert data['character_string1']['value'] == 'doc-123_ABC'
+    assert len(data['thing2']['value']) <= 20
+    assert len(data['thing3']['value']) <= 20
+    assert len(data['phrase4']['value']) <= 5

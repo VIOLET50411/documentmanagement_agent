@@ -298,6 +298,11 @@ async def test_evaluation_history_and_summary_use_redis_snapshots(tmp_path: Path
     assert summary["real_mode_rate"] == 0.5
     assert summary["failure_reasons"]["faithfulness"] == 1
     assert summary["failure_reasons"]["real_mode"] == 1
+    assert summary["drift"]["available"] is True
+    assert summary["drift"]["gate_changed"] is True
+    assert summary["drift"]["real_mode_changed"] is True
+    assert summary["drift"]["dataset_size_delta"] == -2
+    assert summary["drift"]["metrics"]["faithfulness"] == -0.35
 
 
 @pytest.mark.asyncio

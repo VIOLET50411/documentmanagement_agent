@@ -7,12 +7,6 @@
           <p class="inspect-copy">把工具决策、检查点恢复和轨迹回放集中在一个视图里，便于排查请求链路、降级点和失败原因。</p>
         </div>
         <div class="action-group">
-          <button class="refresh-btn" @click="runtimeStore.loadToolDecisionSummary()" :disabled="runtimeStore.loadingToolSummary">
-            {{ runtimeStore.loadingToolSummary ? '加载中...' : '刷新工具统计' }}
-          </button>
-          <button class="refresh-btn" @click="runtimeStore.loadCheckpointSummary()" :disabled="runtimeStore.loadingCheckpointSummary">
-            {{ runtimeStore.loadingCheckpointSummary ? '加载中...' : '刷新检查点' }}
-          </button>
         </div>
       </div>
 
@@ -125,14 +119,15 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from "vue"
+import { onMounted, onUnmounted } from 'vue'
 import { useRuntimeStore } from "@/stores/runtime"
+
+const runtimeStore = useRuntimeStore()
+let timer: number
 
 defineProps<{
   formatDate: (value?: string | null) => string
 }>()
-
-const runtimeStore = useRuntimeStore()
 
 onMounted(async () => {
   if (!runtimeStore.toolDecisionSummary) {
@@ -141,6 +136,14 @@ onMounted(async () => {
   if (!runtimeStore.checkpointSummary.length) {
     await runtimeStore.loadCheckpointSummary()
   }
+  timer = window.setInterval(() => {
+    runtimeStore.loadToolDecisionSummary()
+    runtimeStore.loadCheckpointSummary()
+  }, 10000)
+})
+
+onUnmounted(() => {
+  if (timer) window.clearInterval(timer)
 })
 
 function traceStatusLabel(status?: string) {

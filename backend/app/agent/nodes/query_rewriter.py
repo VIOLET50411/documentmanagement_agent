@@ -8,7 +8,19 @@ from app.services.llm_service import LLMService
 
 logger = structlog.get_logger("docmind.query_rewriter")
 
-AMBIGUOUS_REFERENCES = ("这个", "这份", "该制度", "该规范", "它", "this", "that", "it")
+AMBIGUOUS_REFERENCES = (
+    "这个",
+    "这个制度",
+    "这份",
+    "这份制度",
+    "该制度",
+    "该规范",
+    "它",
+    "其",
+    "this",
+    "that",
+    "it",
+)
 
 REWRITE_SYSTEM_PROMPT = """你是企业文档检索助手的查询改写器。请把用户问题改写成更适合企业文档检索的形式，并遵守以下规则：
 1. 如果问题里有指代词，请结合历史消息补全对象。

@@ -1,12 +1,5 @@
 <template>
   <div class="search-page workbench-page">
-    <header class="page-header">
-      <div>
-        <p class="page-kicker">检索工作台</p>
-        <h1>直接验证混合检索结果</h1>
-        <p class="page-subtitle">分别查看关键词、向量、图谱和混合模式的召回表现。</p>
-      </div>
-    </header>
 
     <section class="search-shell card-glass">
       <div class="search-bar">
@@ -90,35 +83,12 @@ async function doSearch() {
   height: 100%;
 }
 
-.search-shell,
-.page-header {
+.search-shell {
   max-width: 1080px;
   margin: 0 auto;
 }
 
-.page-header {
-  margin-bottom: 18px;
-}
 
-.page-kicker {
-  font-size: 0.76rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-tertiary);
-}
-
-.page-header h1 {
-  font-size: clamp(1.95rem, 3vw, 2.8rem);
-  line-height: 1.08;
-  margin-top: 6px;
-  letter-spacing: -0.03em;
-}
-
-.page-subtitle {
-  color: var(--text-secondary);
-  font-size: 1.02rem;
-  margin-top: 10px;
-}
 
 .search-bar {
   display: grid;

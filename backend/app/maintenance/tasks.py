@@ -448,7 +448,10 @@ def _upsert_runtime_task_record(
             "error": error[:2000] if error else None,
             "updated_at": now,
         }
-        raw = client.get(key)
+        try:
+            raw = client.get(key)
+        except redis.RedisError:
+            return
         if raw:
             try:
                 existing = json.loads(raw)
@@ -461,10 +464,13 @@ def _upsert_runtime_task_record(
                 payload["end_time"] = existing.get("end_time")
         if stage_payload:
             payload["stage_payload"] = stage_payload
-        client.set(key, json.dumps(payload, ensure_ascii=False), ex=settings.runtime_task_retention_seconds)
-        index_key = f"runtime:tasks:{tenant_id}"
-        client.zadd(index_key, {task_id: datetime.now(timezone.utc).timestamp()})
-        client.expire(index_key, settings.runtime_task_retention_seconds)
+        try:
+            client.set(key, json.dumps(payload, ensure_ascii=False), ex=settings.runtime_task_retention_seconds)
+            index_key = f"runtime:tasks:{tenant_id}"
+            client.zadd(index_key, {task_id: datetime.now(timezone.utc).timestamp()})
+            client.expire(index_key, settings.runtime_task_retention_seconds)
+        except redis.RedisError:
+            return
     finally:
         client.close()
 

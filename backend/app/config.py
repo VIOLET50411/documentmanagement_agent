@@ -1,4 +1,4 @@
-﻿"""DocMind Agent settings configuration."""
+"""DocMind Agent settings configuration."""
 
 from pathlib import Path
 from typing import List
@@ -39,8 +39,8 @@ class Settings(BaseSettings):
     postgres_user: str = "docmind"
     postgres_password: str = "docmind_password"
     postgres_db: str = "docmind_db"
-    postgres_pool_size: int = 80
-    postgres_max_overflow: int = 80
+    postgres_pool_size: int = 20
+    postgres_max_overflow: int = 20
     postgres_pool_timeout_seconds: int = 30
 
     @property
@@ -136,6 +136,7 @@ class Settings(BaseSettings):
     llm_training_deploy_verify_timeout_seconds: int = 20
     llm_training_require_evaluation_gate: bool = True
     llm_training_eval_max_age_hours: int = 24
+    llm_training_require_manual_approval: bool = True
 
     embedding_provider: str = "local"
     embedding_model_name: str = "BAAI/bge-m3"
@@ -201,11 +202,9 @@ class Settings(BaseSettings):
     push_fcm_access_token: str = ""
     push_fcm_project_id: str = ""
     push_fcm_service_account_file: str = ""
-    push_apns_endpoint: str = "https://api.push.apple.com"
-    push_apns_topic: str = ""
-    push_apns_auth_token: str = ""
-    push_apns_priority: str = "10"
     push_wechat_access_token: str = ""
+    push_wechat_app_id: str = ""
+    push_wechat_app_secret: str = ""
     push_wechat_template_id: str = ""
     push_wechat_page: str = "pages/docs/index"
     push_wechat_miniprogram_state: str = "developer"

@@ -1,4 +1,4 @@
-﻿"""Chat API with SSE streaming and persistent session/message records."""
+"""Chat API with SSE streaming and persistent session/message records."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from app.dependencies import get_db, get_redis
 from app.models.db.session import ChatMessage, ChatSession
 from app.models.db.user import User
 from app.models.schemas.chat import ChatRequest, ChatResponse
+from app.utils.history_truncator import truncate_history
 from app.services.security_audit_service import SecurityAuditService
 
 router = APIRouter()
@@ -92,11 +93,11 @@ async def chat_message(
     masker = PIIMasker()
     masked_query, pii_mapping = masker.mask(request.message)
     history_rows = await db.execute(select(ChatMessage).where(ChatMessage.session_id == session.id).order_by(ChatMessage.created_at.asc()))
-    history_messages = [
+    history_messages = truncate_history([
         {"role": item.role, "content": item.content}
         for item in history_rows.scalars().all()
         if item.id != assistant_message.id
-    ]
+    ])
 
     runtime = AgentRuntime(redis_client)
     runtime_request = RuntimeRequest(
@@ -169,9 +170,29 @@ async def chat_stream(
 
     if resume_trace_id:
         async def replay_generator():
+            from app.agent.runtime import AgentRuntime, RuntimeRequest
+            from app.security.input_guard import InputGuard
+            from app.security.output_guard import OutputGuard
+            from app.security.pii_masker import PIIMasker
+
             replayed = False
             replay_terminal = False
             highest_sequence = max(last_sequence, 0)
+            audit = SecurityAuditService(redis_client, db)
+
+            async def emit_resume(payload: dict) -> str:
+                nonlocal highest_sequence
+                highest_sequence += 1
+                event_payload = payload.copy()
+                event_payload.setdefault("event_id", str(uuid.uuid4()))
+                event_payload.setdefault("sequence_num", highest_sequence)
+                event_payload.setdefault("trace_id", resume_trace_id)
+                event_payload.setdefault("source", "chat_replay")
+                event_payload.setdefault("degraded", False)
+                event_payload.setdefault("fallback_reason", None)
+                await _persist_replay_event(redis_client, current_user.tenant_id, event_payload)
+                return _sse_event(event_payload)
+
             if redis_client is not None:
                 rows = await redis_client.lrange(f"runtime:replay:{resume_trace_id}", 0, -1)
                 for row in rows:
@@ -191,16 +212,32 @@ async def chat_stream(
             if replayed and replay_terminal:
                 return
             if not replayed or not replay_terminal:
-                from app.agent.runtime import AgentRuntime, RuntimeRequest
+                guard_result = await InputGuard().check(request.message)
+                await _audit_guard_decision(
+                    audit,
+                    tenant_id=current_user.tenant_id,
+                    user_id=current_user.id,
+                    trace_id=resume_trace_id,
+                    guard_name="input",
+                    target="chat.resume.query",
+                    message=request.message,
+                    guard_result=guard_result,
+                )
+                if not guard_result["safe"]:
+                    yield await emit_resume({"status": "error", "msg": guard_result["reason"]})
+                    yield await emit_resume({"status": "done", "answer": guard_result["reason"], "citations": [], "agent_used": "input_guard"})
+                    return
 
+                masker = PIIMasker()
+                masked_query, pii_mapping = masker.mask(request.message)
                 history_rows = await db.execute(select(ChatMessage).where(ChatMessage.session_id == (request.thread_id or "")).order_by(ChatMessage.created_at.asc()))
-                history_messages = [
+                history_messages = truncate_history([
                     {"role": item.role, "content": item.content}
                     for item in history_rows.scalars().all()
-                ]
+                ])
                 runtime = AgentRuntime(redis_client)
                 runtime_request = RuntimeRequest(
-                    query=request.message,
+                    query=masked_query,
                     thread_id=request.thread_id,
                     search_type=request.search_type,
                     user_context={"user_id": current_user.id, "tenant_id": current_user.tenant_id, "role": current_user.role},
@@ -209,19 +246,34 @@ async def chat_stream(
                 resumed = False
                 async for payload in runtime.resume_from_checkpoint(runtime_request, trace_id=resume_trace_id, db=db, current_user=current_user):
                     resumed = True
+                    payload["trace_id"] = resume_trace_id
+                    if payload.get("status") == "done":
+                        restored_answer = masker.restore(payload.get("answer", ""), pii_mapping)
+                        guarded_output = await OutputGuard().check(restored_answer)
+                        await _audit_guard_decision(
+                            audit,
+                            tenant_id=current_user.tenant_id,
+                            user_id=current_user.id,
+                            trace_id=resume_trace_id,
+                            guard_name="output",
+                            target="chat.resume.answer",
+                            message=restored_answer,
+                            guard_result=guarded_output,
+                        )
+                        if not guarded_output["safe"]:
+                            payload["answer"] = "输出内容命中安全规则，系统已拦截。"
+                            payload["citations"] = []
+                            payload["agent_used"] = "output_guard"
+                        else:
+                            payload["answer"] = restored_answer
                     highest_sequence += 1
                     payload["sequence_num"] = highest_sequence
-                    payload["trace_id"] = resume_trace_id
                     await _persist_replay_event(redis_client, current_user.tenant_id, payload)
                     yield _sse_event(payload)
                 if not resumed:
-                    yield _sse_event(
+                    yield await emit_resume(
                         {
                             "status": "done",
-                            "source": "chat_replay",
-                            "event_id": str(uuid.uuid4()),
-                            "sequence_num": highest_sequence + 1,
-                            "trace_id": resume_trace_id,
                             "degraded": True,
                             "fallback_reason": "replay_window_miss",
                             "msg": "未找到可续传事件，请重新发起请求。",
@@ -320,11 +372,11 @@ async def chat_stream(
             masker = PIIMasker()
             masked_query, pii_mapping = masker.mask(request.message)
             history_rows = await db.execute(select(ChatMessage).where(ChatMessage.session_id == session.id).order_by(ChatMessage.created_at.asc()))
-            history_messages = [
+            history_messages = truncate_history([
                 {"role": item.role, "content": item.content}
                 for item in history_rows.scalars().all()
                 if item.id != assistant_message.id
-            ]
+            ])
 
             runtime = AgentRuntime(redis_client)
             runtime_request = RuntimeRequest(

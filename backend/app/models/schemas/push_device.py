@@ -24,6 +24,25 @@ class PushNotificationTestRequest(BaseModel):
     body: str = Field(default="移动端推送链路已经联通。", min_length=2, max_length=500)
 
 
+class WechatMiniappSubscribeBindRequest(BaseModel):
+    js_code: str = Field(min_length=4, max_length=256)
+    device_name: str | None = Field(default=None, max_length=120)
+    app_version: str | None = Field(default=None, max_length=40)
+    subscription_result: str | None = Field(default=None, max_length=40)
+
+
+class WechatMiniappSubscribeBindResponse(BaseModel):
+    success: bool = True
+    platform: str
+    device_token: str
+    device_name: str | None = None
+    app_version: str | None = None
+    subscription_result: str | None = None
+    provider_ready: bool = True
+    template_id_configured: bool = True
+    message: str
+
+
 class PushDeviceResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

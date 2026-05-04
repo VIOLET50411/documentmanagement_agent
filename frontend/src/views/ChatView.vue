@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="chat-page">
     <section v-if="showHistoryList" class="history-state card-shell">
       <div class="history-header">
@@ -40,35 +40,22 @@
 
     <section v-else-if="showHeroState" class="hero-state">
       <div class="hero-intro">
-        <p class="section-kicker">企业文档工作台</p>
-        <h2>让检索、引用和回答落在同一条链路上</h2>
-        <p class="section-copy">上传制度、预算、采购、审批等文档后，DocMind 会优先基于证据回答，并给出可追溯引用。</p>
+        <h2><span class="star-icon" style="color: var(--color-primary)">✺</span> 您好，今天想了解什么？</h2>
       </div>
 
       <ChatComposer
-        class="hero-composer card-shell"
+        class="hero-composer"
         v-model="inputMessage"
         v-model:selected-model="selectedModel"
-        placeholder="请输入问题，例如：总结差旅报销制度的审批链路，并标注引用位置"
+        placeholder="How can I help you today?"
         :disabled="chatStore.isStreaming"
         @submit="handleSend"
       />
 
-      <div class="quick-grid">
-        <button v-for="prompt in quickPrompts" :key="prompt.label" class="quick-card" @click="sendQuickPrompt(prompt.text)">
-          <strong>{{ prompt.label }}</strong>
-          <span>{{ prompt.hint }}</span>
-        </button>
-      </div>
-
-      <div class="onboarding card-shell">
-        <div class="onboarding-header">
-          <strong>建议从这几步开始</strong>
-          <span>帮助你快速验证链路是否完整</span>
-        </div>
-        <button v-for="item in onboardingItems" :key="item" class="onboarding-item" @click="sendQuickPrompt(item)">
-          <span class="onboarding-dot"></span>
-          <span>{{ item }}</span>
+      <div class="quick-pills">
+        <button v-for="prompt in quickPrompts" :key="prompt.label" class="quick-pill" @click="sendQuickPrompt(prompt.text)">
+          <span class="pill-icon">✧</span>
+          <span>{{ prompt.label }}</span>
         </button>
       </div>
     </section>
@@ -215,11 +202,9 @@ function formatRelativeTime(value: string) {
 
 .card-shell {
   border: 1px solid var(--border-color);
-  border-radius: 28px;
-  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
   box-shadow: var(--shadow-sm);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
 }
 
 .section-kicker {
@@ -257,10 +242,16 @@ function formatRelativeTime(value: string) {
 
 .history-header h2,
 .hero-intro h2 {
-  margin-top: 8px;
-  font-size: clamp(1.8rem, 1vw + 1.45rem, 2.45rem);
-  line-height: 1.1;
-  font-family: "Manrope", "PingFang SC", "Microsoft YaHei UI", sans-serif;
+  font-size: clamp(2rem, 2.5vw + 1rem, 3rem);
+  line-height: 1.2;
+  font-family: var(--font-heading);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
 }
 
 .history-toolbar {
@@ -298,11 +289,10 @@ function formatRelativeTime(value: string) {
 }
 
 .history-item,
-.quick-card,
-.onboarding-item,
 .action-button {
-  border: 0;
-  background: transparent;
+  border: 1px solid var(--border-color);
+  background: var(--bg-surface);
+  transition: all var(--transition-fast);
 }
 
 .history-item {
@@ -311,19 +301,15 @@ function formatRelativeTime(value: string) {
   justify-content: space-between;
   gap: 16px;
   width: 100%;
-  padding: 18px 20px;
+  padding: 16px 20px;
   text-align: left;
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.42);
-  transition: transform var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
+  border-radius: var(--radius-md);
 }
 
 .history-item:hover,
-.quick-card:hover,
-.onboarding-item:hover,
 .action-button:hover {
-  transform: translateY(-1px);
   background: var(--bg-surface-hover);
+  border-color: var(--border-color-strong);
 }
 
 .history-item strong,
@@ -340,9 +326,10 @@ function formatRelativeTime(value: string) {
 
 .empty-panel {
   padding: 24px;
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.34);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface-hover);
   color: var(--text-secondary);
+  border: 1px solid var(--border-color);
 }
 
 .empty-panel span {
@@ -352,69 +339,46 @@ function formatRelativeTime(value: string) {
 }
 
 .hero-state {
-  max-width: 980px;
+  max-width: 780px;
   margin: 0 auto;
-  padding: 48px 0 24px;
+  padding: 10vh 0 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
 }
 
 .hero-intro {
-  max-width: 760px;
+  margin-bottom: 24px;
 }
 
-.quick-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+.quick-pills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 16px;
 }
 
-.quick-card {
-  padding: 18px 20px;
-  border-radius: 22px;
-  text-align: left;
-  background: rgba(255, 255, 255, 0.36);
-}
-
-.quick-card strong,
-.quick-card span {
-  display: block;
-}
-
-.quick-card span {
-  margin-top: 8px;
+.quick-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-surface);
   color: var(--text-secondary);
   font-size: 14px;
+  transition: all var(--transition-fast);
+  cursor: pointer;
 }
 
-.onboarding {
-  padding: 20px;
-}
-
-.onboarding-header {
-  margin-bottom: 12px;
-  align-items: flex-start;
-  flex-direction: column;
-}
-
-.onboarding-header span {
-  color: var(--text-secondary);
-}
-
-.onboarding-item {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 6px;
-  text-align: left;
-  border-radius: 16px;
-}
-
-.onboarding-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--color-primary);
-  box-shadow: 0 0 0 6px var(--color-primary-soft);
+.quick-pill:hover {
+  background: var(--bg-surface-hover);
+  color: var(--text-primary);
+  border-color: var(--border-color-strong);
 }
 
 .conversation-state {
@@ -433,8 +397,8 @@ function formatRelativeTime(value: string) {
   max-width: 920px;
   width: 100%;
   margin: 0 auto;
-  padding-bottom: 6px;
-  background: linear-gradient(180deg, transparent, var(--bg-app) 22%);
+  padding-bottom: 24px;
+  background: linear-gradient(180deg, transparent, var(--bg-app) 24px);
 }
 
 .footer-note {

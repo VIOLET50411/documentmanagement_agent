@@ -248,7 +248,6 @@ async def test_build_report_marks_mobile_and_push_gaps(tmp_path: Path, monkeypat
             "issues": [],
             "providers": {
                 "fcm": {"ready": True},
-                "apns": {"ready": False},
                 "wechat": {"ready": False},
             },
         }
@@ -287,12 +286,17 @@ async def test_build_report_marks_mobile_and_push_gaps(tmp_path: Path, monkeypat
     assert "miniapp_oauth_bootstrap_ready" in payload["pending"]
     assert "training_deployment_gate_ready" in payload["pending"]
     assert "push_notification_runtime_ready" in payload["completed"]
-    assert "apns_push_provider_ready" in payload["pending"]
     assert "wechat_push_provider_ready" in payload["pending"]
     assert "security_fail_closed_linkage" in payload["completed"]
     assert payload["training_deployment_gate_status"]["ready_for_activation"] is False
-    assert "训练部署门禁尚未满足" in payload["notes"][4]
-    assert "推送主链路已就绪" in payload["notes"][6]
+    assert payload["summary"]["external_blocker_count"] == 1
+    assert payload["summary"]["internal_blocker_count"] >= 2
+    assert payload["summary"]["completion_percent"] > 0
+    assert {item["provider"] for item in payload["external_blockers"]} == {"wechat"}
+    assert any(item["id"] == "miniapp_oauth_bootstrap_ready" or item["id"] == "mobile_oauth_runtime_ready" for item in payload["internal_blockers"])
+    assert any(item["id"] == "training_deployment_gate_ready" for item in payload["internal_blockers"])
+    assert any("训练部署门禁尚未满足" in note for note in payload["notes"])
+    assert any("推送主链路已就绪" in note for note in payload["notes"])
 
 
 @pytest.mark.asyncio

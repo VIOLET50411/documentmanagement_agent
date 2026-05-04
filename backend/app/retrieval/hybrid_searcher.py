@@ -36,7 +36,7 @@ class HybridSearcher:
     GRAPH_HINTS = ("\u5173\u7cfb", "\u5173\u8054", "\u5f15\u7528", "\u4fee\u8ba2", "\u8d1f\u8d23", "\u4e0a\u7ea7", "\u4e0b\u7ea7", "\u5bf9\u6bd4", "\u6bd4\u8f83")
     KEYWORD_TIMEOUT_SECONDS = 2.0
     VECTOR_TIMEOUT_SECONDS = 0.35
-    VECTOR_CONCURRENCY_LIMIT = 1
+    VECTOR_CONCURRENCY_LIMIT = 4
     VECTOR_ACQUIRE_TIMEOUT_SECONDS = 0.005
     _vector_semaphore = asyncio.Semaphore(VECTOR_CONCURRENCY_LIMIT)
 
@@ -178,6 +178,8 @@ class HybridSearcher:
         tenant_key = filters.get("tenant_id") or "default"
         semaphore = self.__class__._vector_semaphore
         acquired = False
+        # Compute embedding once; reuse in fallback path to avoid duplicate API calls.
+        query_embedding = self.embedder.local_embed_query(query) if allow_fast_skip else await self.embedder.aembed_query(query, tenant_key)
         try:
             try:
                 await asyncio.wait_for(semaphore.acquire(), timeout=self.VECTOR_ACQUIRE_TIMEOUT_SECONDS if allow_fast_skip else self.VECTOR_TIMEOUT_SECONDS)
@@ -194,7 +196,6 @@ class HybridSearcher:
                 )
                 return []
 
-            query_embedding = self.embedder.local_embed_query(query) if allow_fast_skip else await self.embedder.aembed_query(query, tenant_key)
             live_results = await self.milvus_client.search(query_embedding=query_embedding, filters=filters, top_k=top_k)
             await RetrievalObservabilityService(get_redis()).record(
                 filters["tenant_id"],
@@ -227,7 +228,6 @@ class HybridSearcher:
                 .limit(max(top_k * 3, 60))
             )
 
-            query_embedding = self.embedder.local_embed_query(query) if allow_fast_skip else await self.embedder.aembed_query(query, tenant_key)
             scored = []
             query_terms = self._extract_terms(query)
             for chunk, document in rows.all():
@@ -273,10 +273,18 @@ class HybridSearcher:
     def _dense_similarity(self, left: list[float], right: list[float]) -> float:
         if not left or not right:
             return 0.0
-        dot = sum(a * b for a, b in zip(left, right))
-        left_norm = math.sqrt(sum(a * a for a in left)) or 1.0
-        right_norm = math.sqrt(sum(b * b for b in right)) or 1.0
-        return dot / (left_norm * right_norm)
+        try:
+            import numpy as np
+            a, b = np.asarray(left, dtype=np.float32), np.asarray(right, dtype=np.float32)
+            norm_a, norm_b = np.linalg.norm(a), np.linalg.norm(b)
+            if norm_a == 0 or norm_b == 0:
+                return 0.0
+            return float(np.dot(a, b) / (norm_a * norm_b))
+        except ImportError:
+            dot = sum(a * b for a, b in zip(left, right))
+            left_norm = math.sqrt(sum(a * a for a in left)) or 1.0
+            right_norm = math.sqrt(sum(b * b for b in right)) or 1.0
+            return dot / (left_norm * right_norm)
 
     def _sparse_overlap(self, left: dict[str, float], right: dict[str, float]) -> float:
         overlap = 0.0

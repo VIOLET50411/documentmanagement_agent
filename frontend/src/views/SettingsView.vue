@@ -1,12 +1,5 @@
 <template>
   <div class="settings-page">
-    <header class="settings-header">
-      <div>
-        <p class="settings-eyebrow">工作台设置</p>
-        <h1>设置</h1>
-      </div>
-      <p class="settings-summary">统一管理账号、界面偏好、回答策略、设备接入与通知记录。</p>
-    </header>
 
     <div class="settings-shell">
       <aside class="settings-nav">
@@ -19,7 +12,6 @@
             @click="setSection(item.key)"
           >
             <span class="settings-tab-title">{{ item.label }}</span>
-            <small>{{ item.description }}</small>
           </button>
         </div>
       </aside>
@@ -29,7 +21,6 @@
           <div class="block-head">
             <div>
               <h2>通用</h2>
-              <p>控制外观、界面提示和个人资料显示方式。</p>
             </div>
           </div>
 
@@ -98,7 +89,6 @@
           <div class="block-head">
             <div>
               <h2>账号</h2>
-              <p>查看当前登录身份、租户信息和邮箱验证状态。</p>
             </div>
           </div>
 
@@ -117,7 +107,6 @@
           <div class="block-head">
             <div>
               <h2>回答偏好</h2>
-              <p>定义默认输出风格、语言和回答基准。</p>
             </div>
           </div>
 
@@ -142,8 +131,12 @@
             </div>
 
             <label class="field">
-              <span>默认回答要求</span>
-              <textarea class="input large-input" readonly>优先给出结论、引用来源和下一步建议；信息不足时明确说明限制。</textarea>
+              <span>附加要求</span>
+              <select class="input" v-model="responseRequirement">
+                <option value="default">优先给结论，提供引用来源</option>
+                <option value="detailed">详细展开，按步骤解答</option>
+                <option value="concise">极简模式，仅回答核心内容</option>
+              </select>
             </label>
           </section>
         </div>
@@ -205,7 +198,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import SettingsAdminPanels from '@/components/settings/SettingsAdminPanels.vue'
@@ -215,6 +208,8 @@ import { useAuthStore } from '@/stores/auth'
 import { useNotificationsStore } from '@/stores/notifications'
 import { useSettingsStore } from '@/stores/settings'
 import { useThemeStore } from '@/stores/theme'
+
+const responseRequirement = ref('default')
 
 const route = useRoute()
 const router = useRouter()
@@ -363,44 +358,17 @@ onMounted(async () => {
   padding: 6px 22px 28px;
 }
 
-.settings-header,
 .settings-shell {
   max-width: 1440px;
   margin: 0 auto;
 }
 
-.settings-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 24px;
-  padding: 18px 0 24px;
-}
 
-.settings-eyebrow {
-  color: var(--text-tertiary);
-  font-size: 0.86rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  margin-bottom: 10px;
-}
-
-.settings-header h1 {
-  font-family: var(--font-serif);
-  font-size: 3rem;
-  letter-spacing: -0.03em;
-}
-
-.settings-summary {
-  max-width: 360px;
-  color: var(--text-secondary);
-  text-align: right;
-}
 
 .settings-shell {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
-  gap: 42px;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 48px;
   align-items: start;
 }
 
@@ -410,35 +378,33 @@ onMounted(async () => {
 }
 
 .settings-nav-card {
-  padding: 10px;
-  border: 1px solid var(--border-color);
-  border-radius: 28px;
-  background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
-  box-shadow: var(--shadow-sm);
-  backdrop-filter: blur(18px);
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 .settings-tab {
   width: 100%;
   border: none;
   background: transparent;
-  border-radius: 18px;
-  padding: 14px 16px;
+  border-radius: 6px;
+  padding: 10px 14px;
   text-align: left;
   color: var(--text-primary);
   cursor: pointer;
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  align-items: center;
+  transition: background-color var(--transition-fast), transform var(--transition-fast);
+}
+
+.settings-tab:active {
+  transform: scale(0.97);
 }
 
 .settings-tab + .settings-tab {
-  margin-top: 6px;
-}
-
-.settings-tab small {
-  color: var(--text-secondary);
-  font-size: 0.8rem;
+  margin-top: 2px;
 }
 
 .settings-tab:hover,
@@ -447,12 +413,11 @@ onMounted(async () => {
 }
 
 .settings-tab.active {
-  box-shadow: inset 0 0 0 1px var(--border-color);
+  font-weight: 500;
 }
 
 .settings-tab-title {
-  font-size: 0.98rem;
-  font-weight: 600;
+  font-size: 14px;
 }
 
 .settings-content {
@@ -473,8 +438,8 @@ onMounted(async () => {
 }
 
 .block-head h2 {
-  font-size: 2rem;
-  letter-spacing: -0.02em;
+  font-size: 1.25rem;
+  font-weight: 600;
 }
 
 .block-head p,
@@ -491,17 +456,19 @@ onMounted(async () => {
 }
 
 .settings-panel {
-  border: 1px solid var(--border-color);
-  border-radius: 30px;
-  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
-  padding: 24px;
-  box-shadow: var(--shadow-sm);
-  backdrop-filter: blur(18px);
+  border: none;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  border-radius: 0;
+  margin-bottom: 32px;
 }
 
 .settings-panel h3 {
-  font-size: 1.1rem;
-  margin-bottom: 18px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 16px;
 }
 
 .form-grid {
@@ -619,7 +586,7 @@ onMounted(async () => {
   border-radius: 50%;
   background: #fff;
   display: block;
-  transition: transform var(--transition-fast);
+  transition: all var(--transition-fast);
 }
 
 .toggle-switch.on {
@@ -655,14 +622,6 @@ onMounted(async () => {
 }
 
 @media (max-width: 980px) {
-  .settings-header {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .settings-summary {
-    text-align: left;
-  }
 
   .settings-shell {
     grid-template-columns: 1fr;
@@ -671,12 +630,32 @@ onMounted(async () => {
 
   .settings-nav {
     position: static;
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 12px;
+    margin-bottom: -12px; /* compensate for padding */
+    gap: 8px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none; /* Firefox */
   }
 
-  .settings-nav-card {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
+  .settings-nav::-webkit-scrollbar {
+    display: none; /* Chrome/Safari */
+  }
+
+  .settings-tab {
+    white-space: nowrap;
+    padding: 8px 16px;
+    border-radius: 999px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+  }
+
+  .settings-tab.active {
+    background: var(--text-primary);
+    color: var(--bg-body);
+    border-color: var(--text-primary);
   }
 
   .settings-tab + .settings-tab {
@@ -691,14 +670,6 @@ onMounted(async () => {
 @media (max-width: 640px) {
   .settings-page {
     padding-inline: 16px;
-  }
-
-  .settings-header h1 {
-    font-size: 2.45rem;
-  }
-
-  .settings-nav-card {
-    grid-template-columns: 1fr;
   }
 
   .block-head {

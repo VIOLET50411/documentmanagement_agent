@@ -7,6 +7,6 @@
   </scroll-view>
   <view class="composer">
     <input value="{{input}}" bindinput="onInput" placeholder="输入你的问题" />
-    <button bindtap="sendMessage">发送</button>
+    <button bindtap="sendMessage" loading="{{loading}}">发送</button>
   </view>
 </view>

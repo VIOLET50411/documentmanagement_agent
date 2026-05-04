@@ -281,6 +281,7 @@ async def test_chat_replay_route_streams_cached_events(api_client: AsyncClient, 
 async def test_chat_replay_route_falls_back_to_checkpoint_resume(api_client: AsyncClient, monkeypatch):
     fake_redis = FakeRedis()
     trace_id = "trace-resume"
+    audit_events: list[dict] = []
 
     current_user = SimpleNamespace(
         id="user-1",
@@ -314,6 +315,7 @@ async def test_chat_replay_route_falls_back_to_checkpoint_resume(api_client: Asy
         async def resume_from_checkpoint(self, _request, *, trace_id, db, current_user):
             assert trace_id == "trace-resume"
             assert current_user.tenant_id == "tenant-1"
+            assert _request.query == "[MASKED]"
             yield {
                 "status": "reading",
                 "trace_id": trace_id,
@@ -333,15 +335,64 @@ async def test_chat_replay_route_falls_back_to_checkpoint_resume(api_client: Asy
                 "agent_used": "resume",
             }
 
+    class DummyMasker:
+        def mask(self, text):
+            assert text == "恢复会话"
+            return "[MASKED]", {"[PHONE_1]": "13800138000"}
+
+        def restore(self, text, mapping):
+            assert mapping == {"[PHONE_1]": "13800138000"}
+            return f"{text} 13800138000"
+
+    async def fake_input_check(self, _text: str):
+        return {
+            "safe": True,
+            "blocked": False,
+            "reason": "",
+            "severity": "low",
+            "issues": [],
+            "mode": "sidecar",
+            "decision_source": "guardrails_sidecar",
+            "degraded": False,
+        }
+
+    async def fake_output_check(self, _text: str, context=None):
+        return {
+            "safe": False,
+            "blocked": True,
+            "reason": "输出内容命中本地敏感信息规则。",
+            "severity": "high",
+            "issues": ["Possible phone number in output"],
+            "mode": "local_rule",
+            "decision_source": "local_heuristic",
+            "degraded": False,
+        }
+
+    async def fake_log_event(self, tenant_id, event_type, severity, message, **kwargs):
+        audit_events.append(
+            {
+                "tenant_id": tenant_id,
+                "event_type": event_type,
+                "severity": severity,
+                "message": message,
+                **kwargs,
+            }
+        )
+
     from app.dependencies import get_db
     from app.api.v1 import chat as chat_module
     from app.api.middleware import rate_limit as rate_limit_module
+    from app.services.security_audit_service import SecurityAuditService
 
     app.dependency_overrides[get_current_user] = override_current_user
     app.dependency_overrides[get_db] = override_db
     monkeypatch.setattr(chat_module, "get_redis", lambda: fake_redis)
     monkeypatch.setattr(rate_limit_module, "get_redis", lambda: fake_redis)
     monkeypatch.setattr("app.agent.runtime.AgentRuntime", DummyRuntime)
+    monkeypatch.setattr("app.security.pii_masker.PIIMasker", DummyMasker)
+    monkeypatch.setattr("app.security.input_guard.InputGuard.check", fake_input_check)
+    monkeypatch.setattr("app.security.output_guard.OutputGuard.check", fake_output_check)
+    monkeypatch.setattr(SecurityAuditService, "log_event", fake_log_event)
 
     async with api_client.stream(
         "POST",
@@ -354,7 +405,10 @@ async def test_chat_replay_route_falls_back_to_checkpoint_resume(api_client: Asy
             body += chunk
 
     assert '"status": "reading"' in body
-    assert '"resume ok"' in body
+    assert '"输出内容命中安全规则，系统已拦截。"' in body
+    assert [item["event_type"] for item in audit_events] == ["input_guard_decision", "output_guard_decision"]
+    assert audit_events[0]["target"] == "chat.resume.query"
+    assert audit_events[1]["target"] == "chat.resume.answer"
 
 
 @pytest.mark.asyncio
@@ -965,12 +1019,67 @@ async def test_admin_push_notification_status_route(api_client: AsyncClient, mon
                     "mode": "v1",
                     "required_env_vars": ["PUSH_FCM_ACCESS_TOKEN + PUSH_FCM_PROJECT_ID"],
                     "missing_env_vars": [],
+                    "next_step": "运行凭据已到位，可直接联调真实推送。",
                 }
             },
             "tenant_id": tenant_id,
             "device_summary": {"total": 2, "active": 2, "inactive": 0, "by_platform": {"android": 2}},
             "provider_coverage": {"android": {"device_count": 2, "required_provider": "fcm", "provider_ready": True, "delivery_mode": "direct", "deliverable": True}},
             "delivery_gaps": [],
+            "configuration_sources": {
+                "fcm": {"source": "access_token", "configured": True, "detail": "docmind-7bbdd"},
+                "wechat": {"source": "none", "configured": False, "detail": None},
+                "webhook": {"source": "none", "configured": False, "detail": None},
+            },
+            "setup_guides": {
+                "fcm": {
+                    "configured": True,
+                    "ready": True,
+                    "required_env_vars": ["PUSH_FCM_ACCESS_TOKEN + PUSH_FCM_PROJECT_ID"],
+                    "missing_env_vars": [],
+                    "env_examples": ["PUSH_FCM_ACCESS_TOKEN=<token>"],
+                    "secret_targets": [],
+                    "docker_mount_dir": "/run/secrets/docmind",
+                    "next_step": "运行凭据已到位，可直接联调真实推送。",
+                },
+                "wechat": {
+                    "configured": False,
+                    "ready": False,
+                    "required_env_vars": ["PUSH_WECHAT_ACCESS_TOKEN or PUSH_WECHAT_APP_ID + PUSH_WECHAT_APP_SECRET", "PUSH_WECHAT_TEMPLATE_ID"],
+                    "missing_env_vars": ["PUSH_WECHAT_ACCESS_TOKEN", "PUSH_WECHAT_APP_ID", "PUSH_WECHAT_APP_SECRET", "PUSH_WECHAT_TEMPLATE_ID"],
+                    "env_examples": ["PUSH_WECHAT_TEMPLATE_ID=<subscribe-template-id>"],
+                    "secret_targets": [],
+                    "docker_mount_dir": "/run/secrets/docmind",
+                    "next_step": "补齐小程序 access token 或 appid/appsecret，以及订阅消息模板 ID 后即可联调微信通知。",
+                },
+                "webhook": {
+                    "configured": False,
+                    "ready": False,
+                    "required_env_vars": ["PUSH_NOTIFICATION_WEBHOOK_URL"],
+                    "missing_env_vars": ["PUSH_NOTIFICATION_WEBHOOK_URL"],
+                    "env_examples": ["PUSH_NOTIFICATION_WEBHOOK_URL=https://push-gateway.example.com/webhook"],
+                    "secret_targets": [],
+                    "docker_mount_dir": "/run/secrets/docmind",
+                    "next_step": "补齐 webhook 地址后即可联调外部推送网关。",
+                },
+            },
+            "readiness_score": 100,
+            "action_items": [],
+            "provider_diagnostics": {
+                "fcm": {
+                    "configured": True,
+                    "ready": True,
+                    "code_ready": True,
+                    "missing_env_vars": [],
+                    "required_env_vars": ["PUSH_FCM_ACCESS_TOKEN + PUSH_FCM_PROJECT_ID"],
+                    "transport": "https",
+                    "delivery_mode": "v1",
+                    "supports_platforms": ["android"],
+                    "next_step": "运行凭据已到位，可直接联调真实推送。",
+                    "env_examples": ["PUSH_FCM_ACCESS_TOKEN=<token>"],
+                    "secret_targets": [],
+                }
+            },
             "redis_available": True,
         }
 
@@ -985,6 +1094,10 @@ async def test_admin_push_notification_status_route(api_client: AsyncClient, mon
     assert payload["device_summary"]["total"] == 2
     assert payload["provider_coverage"]["android"]["deliverable"] is True
     assert payload["providers"]["fcm"]["missing_env_vars"] == []
+    assert payload["configuration_sources"]["fcm"]["source"] == "access_token"
+    assert payload["readiness_score"] == 100
+    assert payload["setup_guides"]["wechat"]["env_examples"] == ["PUSH_WECHAT_TEMPLATE_ID=<subscribe-template-id>"]
+    assert payload["provider_diagnostics"]["fcm"]["next_step"] == "运行凭据已到位，可直接联调真实推送。"
 
 
 @pytest.mark.asyncio
@@ -1039,6 +1152,163 @@ async def test_admin_security_policy_route(api_client: AsyncClient, monkeypatch)
     assert payload["auto_action"] == "block_high_risk_operations"
     assert payload["missing_control_ids"] == ["guardrails_fail_closed"]
     assert payload["recommended_actions"] == ["开启 Guardrails fail-closed。"]
+
+
+@pytest.mark.asyncio
+async def test_admin_gap_report_route_includes_blocker_summaries(api_client: AsyncClient, monkeypatch):
+    current_user = SimpleNamespace(
+        id="user-1",
+        username="admin_demo",
+        email="admin@example.com",
+        role="ADMIN",
+        department="operations",
+        tenant_id="tenant-1",
+        level=9,
+        email_verified=True,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    async def override_current_user():
+        return current_user
+
+    async def override_db():
+        yield DummyDB()
+
+    from app.dependencies import get_db
+    from app.services.delivery_gap_service import DeliveryGapService
+    from app.services.push_notification_service import PushNotificationService
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_db] = override_db
+    monkeypatch.setattr("app.api.v1.admin.get_redis", lambda: FakeRedis())
+
+    async def fake_build_report(self, tenant_id: str | None = None):
+        assert tenant_id == "tenant-1"
+        return {
+            "target_profile": "financial",
+            "tenant_id": "tenant-1",
+            "completed": ["runtime_v2_only"],
+            "in_progress": [],
+            "pending": ["wechat_push_provider_ready"],
+            "summary": {
+                "completed_count": 1,
+                "in_progress_count": 0,
+                "pending_count": 1,
+                "internal_blocker_count": 0,
+                "external_blocker_count": 1,
+                "completion_percent": 50.0,
+            },
+            "blockers": [
+                {
+                    "id": "wechat_push_provider_ready",
+                    "scope": "external",
+                    "provider": "wechat",
+                    "missing_env_vars": ["PUSH_WECHAT_TEMPLATE_ID"],
+                    "next_step": "补齐小程序 access token 或 appid/appsecret，以及订阅消息模板 ID 后即可联调微信通知。",
+                },
+            ],
+            "external_blockers": [
+                {"id": "wechat_push_provider_ready", "scope": "external", "provider": "wechat"},
+            ],
+            "internal_blockers": [],
+            "notes": ["当前只剩外部 provider 凭据待补齐。"],
+        }
+
+    async def fake_health(self, *, tenant_id: str):
+        assert tenant_id == "tenant-1"
+        return {
+            "tenant_id": tenant_id,
+            "ready": True,
+            "providers": {"fcm": {"ready": True}, "wechat": {"ready": False}},
+        }
+
+    monkeypatch.setattr(DeliveryGapService, "build_report", fake_build_report)
+    monkeypatch.setattr(PushNotificationService, "get_health_summary", fake_health)
+
+    response = await api_client.get("/api/v1/admin/system/gap-report")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["external_blocker_count"] == 1
+    assert payload["summary"]["completion_percent"] == 50.0
+    assert {item["provider"] for item in payload["external_blockers"]} == {"wechat"}
+    assert payload["push_runtime_status"]["providers"]["fcm"]["ready"] is True
+
+
+@pytest.mark.asyncio
+async def test_admin_model_approval_route(api_client: AsyncClient, monkeypatch):
+    current_user = SimpleNamespace(
+        id="user-1",
+        username="admin_demo",
+        email="admin@example.com",
+        role="ADMIN",
+        department="operations",
+        tenant_id="tenant-1",
+        level=9,
+        email_verified=True,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    async def override_current_user():
+        return current_user
+
+    async def override_db():
+        yield DummyDB()
+
+    from app.dependencies import get_db
+    from app.api.v1 import admin as admin_module
+    from app.services.llm_training_service import LLMTrainingService
+    from app.services.security_audit_service import SecurityAuditService
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_db] = override_db
+    monkeypatch.setattr(admin_module, "get_redis", lambda: FakeRedis())
+
+    async def fake_record(self, *, tenant_id: str, model_id: str, approved: bool, actor_id: str | None = None, reason: str | None = None):
+        assert tenant_id == "tenant-1"
+        assert model_id == "model-1"
+        assert approved is True
+        assert actor_id == "user-1"
+        assert reason == "qa passed"
+        return {"required": True, "approved": True, "decision": "approved", "ready": True, "reason": "qa passed"}
+
+    async def fake_get_model(self, tenant_id: str, model_id: str):
+        return SimpleNamespace(
+            id=model_id,
+            tenant_id=tenant_id,
+            training_job_id="job-1",
+            model_name="tenant-model",
+            provider="ollama",
+            serving_base_url="http://ollama:11434/v1",
+            serving_model_name="tenant-model",
+            base_model="llama3.1:8b",
+            artifact_dir="/tmp/model",
+            source_export_dir="/tmp/export",
+            source_dataset_name="dataset",
+            status="published",
+            is_active=False,
+            canary_percent=0,
+            metrics_json='{"approval":{"decision":"approved"}}',
+            notes="",
+            created_by="user-1",
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            activated_at=None,
+        )
+
+    async def fake_log(self, tenant_id: str, event_type: str, severity: str, message: str, **kwargs):
+        return None
+
+    monkeypatch.setattr(LLMTrainingService, "record_model_approval", fake_record)
+    monkeypatch.setattr(LLMTrainingService, "get_model", fake_get_model)
+    monkeypatch.setattr(SecurityAuditService, "log_event", fake_log)
+
+    response = await api_client.post("/api/v1/admin/llm/models/model-1/approve?reason=qa%20passed")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["approval"]["decision"] == "approved"
+    assert payload["item"]["id"] == "model-1"
 
 
 @pytest.mark.asyncio
@@ -1156,10 +1426,12 @@ async def test_admin_llm_deployment_summary_route(api_client: AsyncClient, monke
             "latest_model": {"id": "model-1"},
             "publish_counts": {"published": 1, "publish_ready": 0, "failed": 0, "unknown": 0},
             "verify_counts": {"verified": 1, "failed": 0, "unknown": 0},
+            "approval_counts": {"approved": 1, "pending": 0, "rejected": 0, "not_required": 0},
             "can_rollback": True,
             "recent_failures": [],
             "auto_activate_enabled": True,
             "publish_enabled": True,
+            "manual_approval_required": True,
             "deploy_verify_enabled": True,
             "deploy_fail_rollback": True,
         }
@@ -1174,6 +1446,8 @@ async def test_admin_llm_deployment_summary_route(api_client: AsyncClient, monke
     payload = response.json()
     assert payload["publish_counts"]["published"] == 1
     assert payload["verify_counts"]["verified"] == 1
+    assert payload["approval_counts"]["approved"] == 1
+    assert payload["manual_approval_required"] is True
     assert payload["can_rollback"] is True
 
 
@@ -1219,7 +1493,9 @@ async def test_admin_llm_training_deployment_alias_route(api_client: AsyncClient
             "tenant_id": tenant_id,
             "publish_counts": {"published": 2, "publish_ready": 1, "failed": 0, "unknown": 0},
             "verify_counts": {"verified": 2, "failed": 0, "unknown": 0},
+            "approval_counts": {"approved": 2, "pending": 0, "rejected": 0, "not_required": 0},
             "can_rollback": True,
+            "manual_approval_required": False,
         }
 
     monkeypatch.setattr(LLMTrainingService, "list_models", fake_list_models)
@@ -1232,6 +1508,8 @@ async def test_admin_llm_training_deployment_alias_route(api_client: AsyncClient
     payload = response.json()
     assert payload["publish_counts"]["published"] == 2
     assert payload["verify_counts"]["verified"] == 2
+    assert payload["approval_counts"]["approved"] == 2
+    assert payload["manual_approval_required"] is False
     assert payload["can_rollback"] is True
 
 
@@ -1890,7 +2168,131 @@ async def test_ws_handle_chat_message_audits_guard_decisions(monkeypatch):
     assert [item["event_type"] for item in audit_events] == ["input_guard_decision", "output_guard_decision"]
     assert audit_events[0]["result"] == "warning"
     assert audit_events[1]["result"] == "ok"
-    assert any(item["type"] == "done" for item in websocket.sent)
+
+
+@pytest.mark.asyncio
+async def test_ws_handle_chat_message_hides_runtime_exception_details(monkeypatch):
+    current_user = SimpleNamespace(
+        id="user-1",
+        username="admin_demo",
+        email="admin@example.com",
+        role="ADMIN",
+        department="operations",
+        tenant_id="tenant-1",
+        level=9,
+        email_verified=True,
+        created_at=datetime.now(timezone.utc),
+    )
+    fake_redis = FakeRedis()
+    audit_events: list[dict] = []
+
+    class FakeWebSocket:
+        def __init__(self):
+            self.sent: list[dict] = []
+
+        async def send_json(self, payload):
+            self.sent.append(payload)
+
+    class DummyWsDB(DummyDB):
+        async def scalar(self, *_args, **_kwargs):
+            return None
+
+        async def execute(self, *_args, **_kwargs):
+            class DummyResult:
+                def scalars(self_inner):
+                    return self_inner
+
+                def all(self_inner):
+                    return []
+
+            return DummyResult()
+
+    class DummyRuntime:
+        def __init__(self, _redis):
+            pass
+
+        async def run(self, _request, **_kwargs):
+            raise RuntimeError("secret backend stack")
+            yield  # pragma: no cover
+
+    class DummyMasker:
+        def mask(self, text):
+            return text, {}
+
+        def restore(self, text, mapping):
+            return text
+
+    class DummyCache:
+        def __init__(self, _redis):
+            pass
+
+        async def get(self, *_args, **_kwargs):
+            return None
+
+        async def put(self, *_args, **_kwargs):
+            return True
+
+    async def fake_input_check(self, _text: str):
+        return {
+            "safe": True,
+            "blocked": False,
+            "reason": "",
+            "severity": "low",
+            "issues": [],
+            "mode": "sidecar",
+            "decision_source": "guardrails_sidecar",
+            "degraded": False,
+        }
+
+    async def fake_output_check(self, _text: str, context=None):
+        return {
+            "safe": True,
+            "blocked": False,
+            "reason": "",
+            "severity": "low",
+            "issues": [],
+            "mode": "sidecar",
+            "decision_source": "guardrails_sidecar",
+            "degraded": False,
+        }
+
+    async def fake_log_event(self, tenant_id, event_type, severity, message, **kwargs):
+        audit_events.append(
+            {
+                "tenant_id": tenant_id,
+                "event_type": event_type,
+                "severity": severity,
+                "message": message,
+                **kwargs,
+            }
+        )
+
+    from app.api.v1 import ws_chat as ws_chat_module
+    from app.services.security_audit_service import SecurityAuditService
+
+    monkeypatch.setattr(ws_chat_module, "get_redis", lambda: fake_redis)
+    monkeypatch.setattr("app.agent.runtime.AgentRuntime", DummyRuntime)
+    monkeypatch.setattr("app.retrieval.semantic_cache.SemanticCache", DummyCache)
+    monkeypatch.setattr("app.security.pii_masker.PIIMasker", DummyMasker)
+    monkeypatch.setattr("app.security.input_guard.InputGuard.check", fake_input_check)
+    monkeypatch.setattr("app.security.output_guard.OutputGuard.check", fake_output_check)
+    monkeypatch.setattr(SecurityAuditService, "log_event", fake_log_event)
+
+    websocket = FakeWebSocket()
+    db = DummyWsDB()
+
+    await ws_chat_module._handle_chat_message(
+        websocket=websocket,
+        db=db,
+        current_user=current_user,
+        content="请总结制度",
+        thread_id=None,
+        search_type="hybrid",
+    )
+
+    assert websocket.sent[-1] == {"type": "error", "msg": "运行时处理失败，请稍后重试。"}
+    assert audit_events[-1]["event_type"] == "ws_runtime_exception"
+    assert audit_events[-1]["metadata"]["detail"] == "secret backend stack"
 
 
 @pytest.mark.asyncio
@@ -2041,7 +2443,8 @@ async def test_admin_run_evaluation_async_route(api_client: AsyncClient, monkeyp
             assert queue is not None
             return DummyTask()
 
-    monkeypatch.setattr(admin_module, "_seed_runtime_task", fake_seed)
+    from app.api.v1.admin import evaluation as eval_module
+    monkeypatch.setattr(eval_module, "_seed_runtime_task", fake_seed)
     monkeypatch.setattr("app.maintenance.tasks.run_evaluation_job", FakeCeleryTask())
 
     response = await api_client.post("/api/v1/admin/evaluation/run-async?sample_limit=5")
@@ -2085,7 +2488,8 @@ async def test_admin_get_evaluation_task_route(api_client: AsyncClient, monkeypa
         assert expected_type == "evaluation"
         return {"exists": True, "item": {"task_id": task_id, "status": "completed"}, "result": {"ok": True}}
 
-    monkeypatch.setattr(admin_module, "_get_runtime_task_payload", fake_get_runtime_task_payload)
+    from app.api.v1.admin import evaluation as eval_module
+    monkeypatch.setattr(eval_module, "_get_runtime_task_payload", fake_get_runtime_task_payload)
 
     response = await api_client.get("/api/v1/admin/evaluation/tasks/eval-task-2")
 

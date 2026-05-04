@@ -1,5 +1,6 @@
 const { apiRequest } = require('../../utils/api')
 const { getStorage, setStorage } = require('../../utils/auth')
+const { connectChatSocket } = require('../../utils/ws')
 
 const THREAD_KEY = 'chat_thread_id'
 
@@ -8,9 +9,13 @@ Page({
     messages: [],
     input: '',
     loading: false,
-    statusText: '\u51c6\u5907\u5c31\u7eea',
+    statusText: '准备就绪',
     threadId: '',
   },
+
+  socketTask: null,
+  pendingMessage: '',
+  assistantReplyBuffer: '',
 
   onShow() {
     const token = getStorage('access_token')
@@ -25,60 +30,134 @@ Page({
     }
   },
 
+  onHide() {
+    this.closeSocket()
+  },
+
+  onUnload() {
+    this.closeSocket()
+  },
+
   onInput(event) {
     this.setData({ input: event.detail.value })
   },
 
   async loadHistory(threadId) {
-    this.setData({ statusText: '\u6b63\u5728\u52a0\u8f7d\u5386\u53f2\u8bb0\u5f55...' })
+    this.setData({ statusText: '正在加载历史记录...' })
     try {
       const response = await apiRequest({ url: `/chat/history?thread_id=${encodeURIComponent(threadId)}` })
       const data = response.data || {}
-      this.setData({ messages: data.messages || [], statusText: '\u5386\u53f2\u8bb0\u5f55\u5df2\u52a0\u8f7d' })
+      this.setData({ messages: data.messages || [], statusText: '历史记录已加载' })
     } catch (error) {
       console.error('loadHistory failed', error)
-      this.setData({ statusText: '\u52a0\u8f7d\u5386\u53f2\u8bb0\u5f55\u5931\u8d25' })
+      this.setData({ statusText: '加载历史记录失败' })
     }
   },
 
   async sendMessage() {
     if (this.data.loading || !this.data.input.trim()) return
+    const token = getStorage('access_token')
+    if (!token) {
+      wx.redirectTo({ url: '/pages/login/index' })
+      return
+    }
+
     const content = this.data.input.trim()
     const nextMessages = this.data.messages.concat([{ role: 'user', content }])
+    this.pendingMessage = content
+    this.assistantReplyBuffer = ''
     this.setData({
       loading: true,
       input: '',
-      statusText: '\u6b63\u5728\u751f\u6210\u56de\u7b54...',
+      statusText: '正在生成回答...',
       messages: nextMessages,
     })
 
-    try {
-      const response = await apiRequest({
-        url: '/chat/message',
-        method: 'POST',
-        data: {
-          message: content,
-          thread_id: this.data.threadId || undefined,
-          search_type: 'hybrid',
-        },
-      })
-      const data = response.data || {}
-      if (data.thread_id) {
-        setStorage(THREAD_KEY, data.thread_id)
+    this.closeSocket()
+    this.socketTask = connectChatSocket({
+      token,
+      onOpen: () => {
+        this.socketTask.send({
+          data: JSON.stringify({
+            type: 'message',
+            content,
+            thread_id: this.data.threadId || undefined,
+            search_type: 'hybrid',
+          }),
+        })
+      },
+      onMessage: (payload) => this.handleSocketPayload(payload),
+      onClose: () => {
+        if (this.data.loading) {
+          this.setData({ loading: false })
+        }
+      },
+    })
+  },
+
+  handleSocketPayload(payload) {
+    const type = payload && payload.type
+    if (type === 'auth_ok') {
+      this.setData({ statusText: '连接已认证，正在发送消息...' })
+      return
+    }
+
+    if (type === 'status') {
+      this.setData({ statusText: payload.msg || payload.status || '处理中...' })
+      return
+    }
+
+    if (type === 'token') {
+      this.assistantReplyBuffer += payload.content || ''
+      this.patchAssistantMessage(this.assistantReplyBuffer)
+      return
+    }
+
+    if (type === 'done') {
+      const threadId = payload.thread_id || this.data.threadId
+      if (threadId) {
+        setStorage(THREAD_KEY, threadId)
       }
+      const answer = payload.answer || this.assistantReplyBuffer || '未返回内容'
+      this.patchAssistantMessage(answer)
       this.setData({
-        threadId: data.thread_id || this.data.threadId,
-        messages: nextMessages.concat([{ role: 'assistant', content: data.answer || '\u672a\u8fd4\u56de\u5185\u5bb9' }]),
-        statusText: '\u56de\u7b54\u5b8c\u6210',
+        threadId,
+        loading: false,
+        statusText: '回答完成',
       })
-    } catch (error) {
-      console.error('sendMessage failed', error)
+      this.closeSocket()
+      return
+    }
+
+    if (type === 'error') {
+      console.error('chat socket error payload', payload)
       this.setData({
-        messages: nextMessages,
-        statusText: '\u8bf7\u6c42\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5',
+        loading: false,
+        statusText: payload.msg || '请求失败，请稍后重试',
       })
-    } finally {
-      this.setData({ loading: false })
+      this.closeSocket()
+    }
+  },
+
+  patchAssistantMessage(content) {
+    const messages = this.data.messages.slice()
+    const last = messages[messages.length - 1]
+    if (last && last.role === 'assistant') {
+      last.content = content
+    } else {
+      messages.push({ role: 'assistant', content })
+    }
+    this.setData({ messages })
+  },
+
+  closeSocket() {
+    if (this.socketTask) {
+      try {
+        this.socketTask.close()
+      } catch (error) {
+        console.error('closeSocket failed', error)
+      }
+      this.socketTask = null
     }
   },
 })

@@ -1,9 +1,10 @@
-﻿"""Document service: upload, list, status, retry, and delete document records."""
+"""Document service: upload, list, status, retry, and delete document records."""
 
 from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 
@@ -25,6 +26,16 @@ class DocumentService:
         file_obj = file.file
         await asyncio.to_thread(file_obj.seek, 0, 2)
         size = await asyncio.to_thread(file_obj.tell)
+        await asyncio.to_thread(file_obj.seek, 0)
+
+        # Compute SHA256 for deduplication
+        hasher = hashlib.sha256()
+        while True:
+            chunk = await asyncio.to_thread(file_obj.read, 65536)
+            if not chunk:
+                break
+            hasher.update(chunk)
+        file_hash = hasher.hexdigest()
         await asyncio.to_thread(file_obj.seek, 0)
 
         object_path = f"{tenant_id}/{doc_id}/{file.filename}"
@@ -53,6 +64,7 @@ class DocumentService:
             department=resolved_department,
             access_level=resolved_access_level,
             uploader_id=uploader_id,
+            file_hash=file_hash,
             status="uploaded",
             created_at=now,
             updated_at=now,
@@ -191,6 +203,18 @@ class DocumentService:
         try:
             self.minio.remove_object(settings.minio_bucket, document.minio_path)
         except S3Error:
+            pass
+
+        # Clean up external search indices (Milvus + ES)
+        try:
+            from app.retrieval.milvus_client import MilvusClient
+            await asyncio.to_thread(MilvusClient().delete_by_doc, doc_id)
+        except Exception:
+            pass
+        try:
+            from app.retrieval.es_client import ESClient
+            ESClient().delete_by_doc(doc_id)
+        except Exception:
             pass
 
         redis = get_redis()

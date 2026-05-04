@@ -41,7 +41,7 @@ export const useNotificationsStore = defineStore("notifications", () => {
   const isNativeRuntime = ref(isNativeApp())
   const nativePlatform = ref(platformName())
   const nativePlatformLabel = computed(() =>
-    nativePlatform.value === "android" ? "Android" : nativePlatform.value === "ios" ? "iOS" : nativePlatform.value
+    nativePlatform.value === "android" ? "Android" : nativePlatform.value
   )
 
   const devices = ref<PushDeviceRecord[]>([])
@@ -59,7 +59,7 @@ export const useNotificationsStore = defineStore("notifications", () => {
   const storedPushRegistration = ref<StoredPushRegistration | null>(getStoredPushRegistration())
 
   const deviceForm = reactive<PushDevicePayload>({
-    platform: nativePlatform.value === "android" || nativePlatform.value === "ios" ? nativePlatform.value : "android",
+    platform: nativePlatform.value === "android" ? nativePlatform.value : "android",
     device_token: "",
     device_name: "",
     app_version: "1.0.0",

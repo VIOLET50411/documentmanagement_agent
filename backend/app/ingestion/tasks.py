@@ -1,4 +1,4 @@
-﻿"""Celery task definitions for online incremental document processing."""
+"""Celery task definitions for online incremental document processing."""
 
 from __future__ import annotations
 
@@ -31,6 +31,18 @@ LARGE_FILE_THRESHOLD_BYTES = 50 * 1024 * 1024
 DEFAULT_BATCH_SIZE = 120
 LARGE_FILE_BATCH_SIZE = 60
 PDF_HEAVY_BATCH_SIZE = 40
+
+# Module-level Redis connection pool to avoid creating a new TCP connection
+# for every progress update during document ingestion.
+_task_redis_client = None
+
+
+def _get_task_redis():
+    """Return a shared sync Redis client for Celery task helpers."""
+    global _task_redis_client
+    if _task_redis_client is None:
+        _task_redis_client = redis.from_url(settings.redis_url)
+    return _task_redis_client
 
 
 @celery.task(bind=True, max_retries=3, acks_late=True)
@@ -358,7 +370,7 @@ def _update_progress(
     detail: str | None = None,
     tenant_id: str | None = None,
 ):
-    client = redis.from_url(settings.redis_url)
+    client = _get_task_redis()
     now = datetime.now(timezone.utc).isoformat()
     mapping = {"status": status, "percentage": str(percentage), "updated_at": now}
     if task_id:
@@ -418,7 +430,7 @@ def _upsert_runtime_task(
 ) -> None:
     if not task_id:
         return
-    client = redis.from_url(settings.redis_url)
+    client = _get_task_redis()
     key = f"runtime:task:{task_id}"
     now = datetime.now(timezone.utc).isoformat()
     raw = client.get(key)
@@ -466,7 +478,7 @@ def _upsert_runtime_task(
 def _notify_document_status(*, tenant_id: str, user_id: str, document_id: str, title: str, status: str) -> None:
     if not user_id:
         return
-    PushNotificationService(redis_client=redis.from_url(settings.redis_url)).send_document_status_sync(
+    PushNotificationService(redis_client=_get_task_redis()).send_document_status_sync(
         tenant_id=tenant_id,
         user_id=user_id,
         document_id=document_id,

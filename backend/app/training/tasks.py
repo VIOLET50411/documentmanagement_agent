@@ -1,4 +1,4 @@
-﻿"""Celery tasks for tenant training jobs, execution, deployment, and rollback."""
+"""Celery tasks for tenant training jobs, execution, deployment, and rollback."""
 
 from __future__ import annotations
 
@@ -196,98 +196,18 @@ async def _run_training_job_async(*, training_job_id: str, runtime_task_id: str)
                 runtime_task_id=runtime_task_id,
             )
 
-            deployment_verification = None
-            publish_result = {
-                "ok": False,
-                "publish_ready": bool((validated_result.get("executor_metadata") or {}).get("publish_ready")),
-                "published": False,
-                "reason": "executor_not_published",
-                "message": "训练执行器未声明产物已发布",
-            }
-            gate_ready = bool(evaluation_gate.get("ready"))
-            if (
-                job.activate_on_success
-                and settings.llm_training_auto_activate
-                and (not settings.llm_training_require_evaluation_gate or gate_ready)
-            ):
-                publish_result = await service.publish_model_artifact(tenant_id=job.tenant_id, model_id=model.id)
-                await _audit_training_event(
-                    audit,
-                    tenant_id=job.tenant_id,
-                    user_id=job.created_by,
-                    trace_id=runtime_task_id,
-                    event_type="llm_model_publish",
-                    message=str(publish_result.get("message") or "训练产物发布结果已记录"),
-                    result="ok" if publish_result.get("published") else "warning",
-                    severity="medium" if publish_result.get("published") else "high",
-                    metadata={"job_id": job.id, "model_id": model.id, "publish_result": publish_result},
-                )
-            elif job.activate_on_success and settings.llm_training_auto_activate and settings.llm_training_require_evaluation_gate:
-                publish_result = {
-                    "ok": False,
-                    "publish_ready": False,
-                    "published": False,
-                    "reason": "evaluation_gate_blocked",
-                    "message": str(evaluation_gate.get("message") or "评估门禁未通过，已阻止自动发布。"),
-                    "evaluation_gate": evaluation_gate,
-                }
+            publish_result, deployment_verification, auto_activated = await _handle_auto_publish_and_activation(
+                service=service,
+                db=db,
+                audit=audit,
+                job=job,
+                model=model,
+                validated_result=validated_result,
+                evaluation_gate=evaluation_gate,
+                runtime_task_id=runtime_task_id,
+                training_job_id=training_job_id,
+            )
             publish_ready = bool(publish_result.get("publish_ready"))
-            auto_activated = False
-            if (
-                job.activate_on_success
-                and settings.llm_training_auto_activate
-                and publish_ready
-                and (not settings.llm_training_require_evaluation_gate or gate_ready)
-            ):
-                await _persist_job_stage(service, db, training_job_id, status="running", stage="deploying")
-                await _upsert_runtime_task(
-                    runtime_task_id=runtime_task_id,
-                    tenant_id=job.tenant_id,
-                    training_job_id=job.id,
-                    status="running",
-                    stage="deploying",
-                    payload={"model_id": model.id, "serving_model_name": publish_result.get("serving_model_name") or validated_result["serving_model_name"]},
-                )
-                await service.activate_model(tenant_id=job.tenant_id, model_id=model.id, actor_id=job.created_by)
-                auto_activated = True
-                await _audit_training_event(
-                    audit,
-                    tenant_id=job.tenant_id,
-                    user_id=job.created_by,
-                    trace_id=runtime_task_id,
-                    event_type="llm_model_activated",
-                    message=f"模型已激活: {model.model_name}",
-                    result="ok",
-                    metadata={"job_id": job.id, "model_id": model.id},
-                )
-                if settings.llm_training_deploy_verify_enabled:
-                    deployment_verification = await service.verify_model_serving(tenant_id=job.tenant_id, model_id=model.id)
-                    await _audit_training_event(
-                        audit,
-                        tenant_id=job.tenant_id,
-                        user_id=job.created_by,
-                        trace_id=runtime_task_id,
-                        event_type="llm_model_verify",
-                        message="训练模型部署校验完成" if deployment_verification.get("ok") else "训练模型部署校验失败",
-                        result="ok" if deployment_verification.get("ok") else "error",
-                        severity="low" if deployment_verification.get("ok") else "high",
-                        metadata={"job_id": job.id, "model_id": model.id, "verify_result": deployment_verification},
-                    )
-                    if not deployment_verification.get("ok"):
-                        if settings.llm_training_deploy_fail_rollback:
-                            await service.rollback_active_model(tenant_id=job.tenant_id, actor_id=job.created_by)
-                            await _audit_training_event(
-                                audit,
-                                tenant_id=job.tenant_id,
-                                user_id=job.created_by,
-                                trace_id=runtime_task_id,
-                                event_type="llm_model_rollback",
-                                message="部署校验失败，已自动回滚上一版模型",
-                                result="warning",
-                                severity="high",
-                                metadata={"job_id": job.id, "model_id": model.id, "verify_result": deployment_verification},
-                            )
-                        raise RuntimeError(f"训练模型部署校验失败: {json.dumps(deployment_verification, ensure_ascii=False)}")
 
             result = {
                 "ok": True,
@@ -398,6 +318,127 @@ async def _evaluate_deployment_gate(
         metadata={"job_id": job.id, "model_id": model.id, "deployment_gate": gate},
     )
     return gate
+
+
+async def _handle_auto_publish_and_activation(
+    *,
+    service: LLMTrainingService,
+    db: AsyncSession,
+    audit: SecurityAuditService,
+    job: LLMTrainingJob,
+    model,
+    validated_result: dict,
+    evaluation_gate: dict,
+    runtime_task_id: str,
+    training_job_id: str,
+) -> tuple[dict, dict | None, bool]:
+    deployment_verification = None
+    publish_result = {
+        "ok": False,
+        "publish_ready": bool((validated_result.get("executor_metadata") or {}).get("publish_ready")),
+        "published": False,
+        "reason": "executor_not_published",
+        "message": "训练执行器未声明产物已发布",
+    }
+    gate_ready = bool(evaluation_gate.get("ready"))
+    approval_ready = not bool(settings.llm_training_require_manual_approval)
+
+    if (
+        job.activate_on_success
+        and settings.llm_training_auto_activate
+        and (not settings.llm_training_require_evaluation_gate or gate_ready)
+        and approval_ready
+    ):
+        publish_result = await service.publish_model_artifact(tenant_id=job.tenant_id, model_id=model.id)
+        await _audit_training_event(
+            audit,
+            tenant_id=job.tenant_id,
+            user_id=job.created_by,
+            trace_id=runtime_task_id,
+            event_type="llm_model_publish",
+            message=str(publish_result.get("message") or "训练产物发布结果已记录"),
+            result="ok" if publish_result.get("published") else "warning",
+            severity="medium" if publish_result.get("published") else "high",
+            metadata={"job_id": job.id, "model_id": model.id, "publish_result": publish_result},
+        )
+    elif job.activate_on_success and settings.llm_training_auto_activate and settings.llm_training_require_evaluation_gate:
+        publish_result = {
+            "ok": False,
+            "publish_ready": False,
+            "published": False,
+            "reason": "evaluation_gate_blocked",
+            "message": str(evaluation_gate.get("message") or "评估门禁未通过，已阻止自动发布。"),
+            "evaluation_gate": evaluation_gate,
+        }
+    elif job.activate_on_success and settings.llm_training_auto_activate and settings.llm_training_require_manual_approval:
+        publish_result = {
+            "ok": False,
+            "publish_ready": False,
+            "published": False,
+            "reason": "approval_pending",
+            "message": "已启用人工审批门，自动发布已暂停，等待管理员审批。",
+        }
+
+    publish_ready = bool(publish_result.get("publish_ready"))
+    if not (
+        job.activate_on_success
+        and settings.llm_training_auto_activate
+        and publish_ready
+        and (not settings.llm_training_require_evaluation_gate or gate_ready)
+        and approval_ready
+    ):
+        return publish_result, deployment_verification, False
+
+    if settings.llm_training_deploy_verify_enabled:
+        await _persist_job_stage(service, db, training_job_id, status="running", stage="verifying")
+        await _upsert_runtime_task(
+            runtime_task_id=runtime_task_id,
+            tenant_id=job.tenant_id,
+            training_job_id=job.id,
+            status="running",
+            stage="verifying",
+            payload={"model_id": model.id, "serving_model_name": publish_result.get("serving_model_name") or validated_result["serving_model_name"]},
+        )
+        deployment_verification = await service.verify_model_serving(tenant_id=job.tenant_id, model_id=model.id)
+        await _audit_training_event(
+            audit,
+            tenant_id=job.tenant_id,
+            user_id=job.created_by,
+            trace_id=runtime_task_id,
+            event_type="llm_model_verify",
+            message="训练模型部署校验完成" if deployment_verification.get("ok") else "训练模型部署校验失败",
+            result="ok" if deployment_verification.get("ok") else "error",
+            severity="low" if deployment_verification.get("ok") else "high",
+            metadata={"job_id": job.id, "model_id": model.id, "verify_result": deployment_verification},
+        )
+        if not deployment_verification.get("ok"):
+            raise RuntimeError(f"训练模型部署校验失败: {json.dumps(deployment_verification, ensure_ascii=False)}")
+
+    await _persist_job_stage(service, db, training_job_id, status="running", stage="deploying")
+    await _upsert_runtime_task(
+        runtime_task_id=runtime_task_id,
+        tenant_id=job.tenant_id,
+        training_job_id=job.id,
+        status="running",
+        stage="deploying",
+        payload={"model_id": model.id, "serving_model_name": publish_result.get("serving_model_name") or validated_result["serving_model_name"]},
+    )
+    await service.activate_model(
+        tenant_id=job.tenant_id,
+        model_id=model.id,
+        actor_id=job.created_by,
+    )
+    await _audit_training_event(
+        audit,
+        tenant_id=job.tenant_id,
+        user_id=job.created_by,
+        trace_id=runtime_task_id,
+        event_type="llm_model_activated",
+        message=f"模型已激活: {model.model_name}",
+        result="ok",
+        metadata={"job_id": job.id, "model_id": model.id},
+    )
+    return publish_result, deployment_verification, True
 
 
 async def _execute_with_heartbeat(

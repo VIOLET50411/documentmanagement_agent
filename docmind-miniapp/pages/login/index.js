@@ -14,6 +14,12 @@ Page({
     bootstrapSummary: '',
   },
 
+  onLoad(options) {
+    if (options && options.reason) {
+      this.setData({ error: decodeURIComponent(options.reason) })
+    }
+  },
+
   onShow() {
     const app = getApp()
     this.setData({
@@ -75,7 +81,7 @@ Page({
       })
       const miniapp = bootstrap.auth && bootstrap.auth.miniapp ? bootstrap.auth.miniapp : null
       const summary = miniapp && miniapp.ready
-        ? '已获取 bootstrap 配置，小程序客户端已就绪。'
+        ? '已获取 bootstrap 配置，小程序客户端已具备联调条件。'
         : '已获取 bootstrap 配置，但小程序客户端仍有待补齐项。'
       this.setData({
         apiBase: nextConfig.apiBase,

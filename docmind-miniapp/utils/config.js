@@ -1,7 +1,8 @@
 const API_BASE_KEY = 'docmind_api_base'
 const WS_BASE_KEY = 'docmind_ws_base'
 const BOOTSTRAP_CACHE_KEY = 'docmind_bootstrap_cache'
-const DEFAULT_API_BASE = 'http://172.20.10.3:18000/api/v1'
+const DEFAULT_API_BASE = 'http://localhost:18000/api/v1'
+const LEGACY_API_BASES = ['http://172.20.10.3:18000/api/v1']
 
 function trimTrailingSlash(value) {
   return String(value || '').replace(/\/+$/, '')
@@ -31,7 +32,8 @@ function readStorage(key) {
 }
 
 function resolveRuntimeConfig() {
-  const configuredApiBase = readStorage(API_BASE_KEY) || DEFAULT_API_BASE
+  const storedApiBase = readStorage(API_BASE_KEY)
+  const configuredApiBase = LEGACY_API_BASES.includes(storedApiBase) ? DEFAULT_API_BASE : (storedApiBase || DEFAULT_API_BASE)
   const configuredWsBase = readStorage(WS_BASE_KEY)
   const apiBase = ensureHttpBase(configuredApiBase)
   const wsBase = configuredWsBase ? trimTrailingSlash(configuredWsBase) : buildWsBase(apiBase)
@@ -71,7 +73,7 @@ function fetchBootstrapConfig(value) {
           resolve(response.data)
           return
         }
-        reject(new Error(`bootstrap 请求失败（${response.statusCode}）`))
+        reject(new Error(`bootstrap 请求失败：${response.statusCode}`))
       },
       fail: (error) => {
         reject(new Error(error && error.errMsg ? error.errMsg : 'bootstrap 请求失败'))

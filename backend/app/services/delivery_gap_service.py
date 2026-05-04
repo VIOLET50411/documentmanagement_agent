@@ -89,6 +89,11 @@ class DeliveryGapService:
             completed.append("training_deployment_gate_ready")
         else:
             pending.append("training_deployment_gate_ready")
+        approval_status = await self._evaluate_training_manual_approval_status(effective_tenant)
+        if approval_status["ready_for_activation"]:
+            completed.append("training_manual_approval_gate")
+        else:
+            pending.append("training_manual_approval_gate")
 
         mobile_auth_status = MobileOAuthService(self.db).status(settings.effective_public_base_url)
         if mobile_auth_status["ready"]:
@@ -113,12 +118,22 @@ class DeliveryGapService:
             completed.append("wechat_push_provider_ready")
         else:
             pending.append("wechat_push_provider_ready")
-        if bool(push_providers.get("apns", {}).get("ready")):
-            completed.append("apns_push_provider_ready")
-        else:
-            pending.append("apns_push_provider_ready")
 
         completed.append("advanced_dlp_and_watermark_forensics")
+        blockers = self._build_blockers(
+            tenant_id=effective_tenant,
+            pending=pending,
+            training_runtime=training_runtime,
+            publish_status=publish_status,
+            deployment_gate_status=deployment_gate_status,
+            approval_status=approval_status,
+            mobile_auth_status=mobile_auth_status,
+            push_status=push_status,
+        )
+        external_blockers = [item for item in blockers if item.get("scope") == "external"]
+        internal_blockers = [item for item in blockers if item.get("scope") != "external"]
+        total_items = len(completed) + len(in_progress) + len(pending)
+        completion_percent = round((len(completed) / total_items) * 100, 1) if total_items else 100.0
 
         return {
             "target_profile": profile or "enterprise",
@@ -130,13 +145,20 @@ class DeliveryGapService:
                 "completed_count": len(completed),
                 "in_progress_count": len(in_progress),
                 "pending_count": len(pending),
+                "internal_blocker_count": len(internal_blockers),
+                "external_blocker_count": len(external_blockers),
+                "completion_percent": completion_percent,
             },
+            "blockers": blockers,
+            "external_blockers": external_blockers,
+            "internal_blockers": internal_blockers,
             "notes": [
                 "当前已具备企业级可运行底座，但距离完整训练上线闭环仍有差距。",
                 ragas_status["note"],
                 self._build_training_runtime_note(training_runtime),
                 publish_status["note"],
                 deployment_gate_status["note"],
+                approval_status["note"],
                 self._build_mobile_runtime_note(mobile_auth_status),
                 self._build_push_runtime_note(push_status),
                 self._build_security_policy_note(policy_eval),
@@ -146,6 +168,7 @@ class DeliveryGapService:
             "training_runtime_status": training_runtime,
             "training_publish_status": publish_status,
             "training_deployment_gate_status": deployment_gate_status,
+            "training_manual_approval_status": approval_status,
             "mobile_auth_status": mobile_auth_status,
             "push_runtime_status": push_status,
         }
@@ -185,7 +208,7 @@ class DeliveryGapService:
         providers = status.get("providers") if isinstance(status.get("providers"), dict) else {}
         missing = [
             provider
-            for provider in ("apns", "wechat")
+            for provider in ("wechat",)
             if not bool(providers.get(provider, {}).get("ready"))
         ]
         if status.get("ready") and not missing:
@@ -194,6 +217,147 @@ class DeliveryGapService:
             return f"推送主链路已就绪，但以下 provider 仍待补齐: {', '.join(missing)}。"
         issues = status.get("issues") if isinstance(status.get("issues"), list) else []
         return f"推送运行态未完全就绪，问题: {', '.join(str(item) for item in issues) or 'unknown'}。"
+
+    def _build_blockers(
+        self,
+        *,
+        tenant_id: str,
+        pending: list[str],
+        training_runtime: dict[str, Any],
+        publish_status: dict[str, Any],
+        deployment_gate_status: dict[str, Any],
+        approval_status: dict[str, Any],
+        mobile_auth_status: dict[str, Any],
+        push_status: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        blockers: list[dict[str, Any]] = []
+        pending_set = set(pending)
+
+        if "training_executor_runtime_ready" in pending_set:
+            blockers.append(
+                {
+                    "id": "training_executor_runtime_ready",
+                    "title": "训练执行器运行时未就绪",
+                    "scope": "internal",
+                    "category": "training",
+                    "severity": "high",
+                    "tenant_id": tenant_id,
+                    "ready": bool(training_runtime.get("ready")),
+                    "reason": str(training_runtime.get("reason") or "training_runtime_not_ready"),
+                    "missing_dependencies": list(training_runtime.get("missing_dependencies") or []),
+                    "next_step": self._build_training_runtime_note(training_runtime),
+                }
+            )
+
+        if "training_artifact_publish_pipeline" in pending_set or "training_publishable_base_model_alignment" in pending_set:
+            blockers.append(
+                {
+                    "id": "training_publish_pipeline",
+                    "title": "训练产物发布链路未完全收口",
+                    "scope": "internal",
+                    "category": "training_publish",
+                    "severity": "high",
+                    "tenant_id": tenant_id,
+                    "publish_runtime_ready": bool(publish_status.get("publish_runtime_ready")),
+                    "publishable_base_aligned": bool(publish_status.get("publishable_base_aligned")),
+                    "evidence_ready": bool(publish_status.get("published_model_present")),
+                    "reason": str(publish_status.get("note") or "training_publish_pipeline_pending"),
+                    "next_step": str(publish_status.get("note") or "补齐训练发布运行条件与真实产物证据。"),
+                }
+            )
+
+        if "training_deployment_gate_ready" in pending_set:
+            blockers.append(
+                {
+                    "id": "training_deployment_gate_ready",
+                    "title": "训练部署门禁未满足",
+                    "scope": "internal",
+                    "category": "deployment_gate",
+                    "severity": "high",
+                    "tenant_id": tenant_id,
+                    "ready": bool(deployment_gate_status.get("ready_for_activation")),
+                    "reason": str(deployment_gate_status.get("note") or "deployment_gate_blocked"),
+                    "blocked_reason_samples": list(deployment_gate_status.get("blocked_reason_samples") or []),
+                    "next_step": str(deployment_gate_status.get("note") or "先修复评估或门禁阻断项。"),
+                }
+            )
+
+        if "training_manual_approval_gate" in pending_set:
+            blockers.append(
+                {
+                    "id": "training_manual_approval_gate",
+                    "title": "训练人工审批门未满足",
+                    "scope": "internal",
+                    "category": "approval",
+                    "severity": "high",
+                    "tenant_id": tenant_id,
+                    "ready": bool(approval_status.get("ready_for_activation")),
+                    "reason": str(approval_status.get("note") or "approval_pending"),
+                    "pending_reason_samples": list(approval_status.get("pending_reason_samples") or []),
+                    "next_step": str(approval_status.get("note") or "完成模型审批后再进入激活流程。"),
+                }
+            )
+
+        if "mobile_oauth_runtime_ready" in pending_set or "miniapp_oauth_bootstrap_ready" in pending_set:
+            blockers.append(
+                {
+                    "id": "mobile_oauth_runtime_ready",
+                    "title": "移动端 OAuth 或小程序引导未完成",
+                    "scope": "internal",
+                    "category": "mobile_auth",
+                    "severity": "medium",
+                    "tenant_id": tenant_id,
+                    "ready": bool(mobile_auth_status.get("ready")),
+                    "issues": list(mobile_auth_status.get("issues") or []),
+                    "miniapp_issues": list((mobile_auth_status.get("miniapp") or {}).get("issues") or []),
+                    "next_step": self._build_mobile_runtime_note(mobile_auth_status),
+                }
+            )
+
+        if "push_notification_runtime_ready" in pending_set:
+            blockers.append(
+                {
+                    "id": "push_notification_runtime_ready",
+                    "title": "推送运行态未完全就绪",
+                    "scope": "internal",
+                    "category": "push_runtime",
+                    "severity": "high",
+                    "tenant_id": tenant_id,
+                    "ready": bool(push_status.get("ready")),
+                    "issues": list(push_status.get("issues") or []),
+                    "next_step": self._build_push_runtime_note(push_status),
+                }
+            )
+
+        providers = push_status.get("providers") if isinstance(push_status.get("providers"), dict) else {}
+        config_sources = push_status.get("configuration_sources") if isinstance(push_status.get("configuration_sources"), dict) else {}
+        for provider_name in ("wechat",):
+            pending_id = f"{provider_name}_push_provider_ready"
+            if pending_id not in pending_set:
+                continue
+            provider_meta = providers.get(provider_name, {}) if isinstance(providers.get(provider_name), dict) else {}
+            source_meta = config_sources.get(provider_name, {}) if isinstance(config_sources.get(provider_name), dict) else {}
+            blockers.append(
+                {
+                    "id": pending_id,
+                    "title": f"{provider_name.upper()} 推送 provider 待补齐",
+                    "scope": "external",
+                    "category": "push_provider",
+                    "severity": "high",
+                    "tenant_id": tenant_id,
+                    "provider": provider_name,
+                    "configured": bool(provider_meta.get("configured")),
+                    "ready": bool(provider_meta.get("ready")),
+                    "missing_env_vars": list(provider_meta.get("missing_env_vars") or []),
+                    "required_env_vars": list(provider_meta.get("required_env_vars") or []),
+                    "auth_mode": provider_meta.get("auth_mode") or provider_meta.get("auth_token_source"),
+                    "configuration_source": source_meta.get("source"),
+                    "configuration_detail": source_meta.get("detail"),
+                    "next_step": str(provider_meta.get("next_step") or "补齐 provider 凭据并完成真机联调。"),
+                }
+            )
+
+        return blockers
 
     def _evaluate_ragas_status(self, tenant_id: str) -> dict[str, Any]:
         report_path = Path(settings.docmind_reports_dir) / f"evaluation_{tenant_id}.json"
@@ -323,10 +487,40 @@ class DeliveryGapService:
             return {
                 "tenant_id": tenant_id,
                 "deployment_gate_counts": {"passed": 0, "blocked": 0, "unknown": 0},
+                "approval_counts": {"approved": 0, "pending": 0, "rejected": 0, "not_required": 0},
                 "recent_failures": [],
             }
         service = LLMTrainingService(self.db, redis_client=self.redis, reports_dir=Path(settings.docmind_reports_dir))
         return await service.summarize_deployment(tenant_id, limit=20)
+
+    async def _evaluate_training_manual_approval_status(self, tenant_id: str) -> dict[str, Any]:
+        deployment_summary = await self._load_training_deployment_summary(tenant_id)
+        approval_counts = deployment_summary.get("approval_counts") if isinstance(deployment_summary.get("approval_counts"), dict) else {}
+        recent_failures = deployment_summary.get("recent_failures") if isinstance(deployment_summary.get("recent_failures"), list) else []
+        pending_reasons = [
+            str(item.get("approval_reason") or "")
+            for item in recent_failures
+            if item.get("approval_ready") is False and str(item.get("approval_reason") or "").strip()
+        ]
+        if not settings.llm_training_require_manual_approval:
+            return {
+                "required": False,
+                "ready_for_activation": True,
+                "approval_counts": approval_counts,
+                "note": "当前未启用人工审批门。",
+            }
+        ready = approval_counts.get("pending", 0) == 0 and approval_counts.get("rejected", 0) == 0
+        if ready:
+            note = "人工审批门已满足，当前模型已具备进入激活流程的审批条件。"
+        else:
+            note = f"人工审批门尚未满足，当前阻塞原因: {(pending_reasons[0] if pending_reasons else 'approval_pending')}。"
+        return {
+            "required": True,
+            "ready_for_activation": ready,
+            "approval_counts": approval_counts,
+            "pending_reason_samples": pending_reasons[:5],
+            "note": note,
+        }
 
     async def _load_training_publish_evidence(self, tenant_id: str) -> dict[str, Any]:
         evidence = {

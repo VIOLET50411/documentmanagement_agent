@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="tab-content animate-fade-in">
     <div class="stats-grid pipeline-grid">
       <div v-for="item in pipelineCards" :key="item.label" class="stat-card card">
@@ -11,15 +11,16 @@
       <div class="evaluation-header">
         <h2>最近任务</h2>
         <div class="action-group">
-          <button class="btn btn-ghost" @click="loadPipelineJobs">刷新任务</button>
-          <button class="btn btn-danger" :disabled="dashboard.retryingFailed" @click="retryFailedJobs">
-            {{ dashboard.retryingFailed ? '重试中...' : '一键重试失败任务' }}
+          <button class="btn btn-secondary btn-sm" @click="$router.push('/documents')">前往文档库排查</button>
+          <button class="btn btn-secondary btn-sm" @click="$router.push('/tasks?tab=pipeline')">前往任务中心轨迹</button>
+          <button class="btn btn-danger btn-sm" :disabled="state.retryingFailed" @click="retryFailedJobs">
+            {{ state.retryingFailed ? '重试中...' : '一键重试失败任务' }}
           </button>
         </div>
       </div>
 
       <div class="filters-grid">
-        <select v-model="dashboard.pipelineFilterStatus" class="input">
+        <select v-model="state.pipelineFilterStatus" class="input">
           <option value="">全部状态</option>
           <option value="failed_family">失败/部分失败</option>
           <option value="queued">queued</option>
@@ -33,12 +34,9 @@
         </select>
         <div></div>
         <div></div>
-        <button class="refresh-btn" :disabled="dashboard.loadingPipeline" @click="applyPipelineFilter">
-          {{ dashboard.loadingPipeline ? '加载中...' : '应用筛选' }}
-        </button>
       </div>
 
-      <table v-if="dashboard.pipelineJobs.length" class="data-table">
+      <table v-if="state.pipelineJobs.length" class="data-table">
         <thead>
           <tr>
             <th>文档</th>
@@ -51,7 +49,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="job in dashboard.pipelineJobs" :key="job.doc_id">
+          <tr v-for="job in state.pipelineJobs" :key="job.doc_id">
             <td>{{ job.title }}</td>
             <td>{{ job.status }}</td>
             <td>{{ job.percentage }}%</td>
@@ -69,15 +67,15 @@
       <p v-else class="empty-text">暂无任务数据。</p>
 
       <div class="pagination-row">
-        <span class="list-meta">共 {{ dashboard.pipelineTotal }} 条，当前第 {{ dashboard.pipelinePage + 1 }} 页</span>
+        <span class="list-meta">共 {{ state.pipelineTotal }} 条，当前第 {{ state.pipelinePage + 1 }} 页</span>
         <div class="action-group">
-          <button class="btn btn-ghost" :disabled="dashboard.pipelinePage === 0 || dashboard.loadingPipeline" @click="changePipelinePage(-1)">上一页</button>
-          <button class="btn btn-ghost" :disabled="(dashboard.pipelinePage + 1) * dashboard.pipelinePageSize >= dashboard.pipelineTotal || dashboard.loadingPipeline" @click="changePipelinePage(1)">下一页</button>
+          <button class="btn btn-ghost" :disabled="state.pipelinePage === 0 || state.loadingPipeline" @click="changePipelinePage(-1)">上一页</button>
+          <button class="btn btn-ghost" :disabled="(state.pipelinePage + 1) * state.pipelinePageSize >= state.pipelineTotal || state.loadingPipeline" @click="changePipelinePage(1)">下一页</button>
         </div>
       </div>
 
       <h2 class="sub-section-title">失败原因聚合</h2>
-      <table v-if="dashboard.pipelineFailureSummary.length" class="data-table">
+      <table v-if="state.pipelineFailureSummary.length" class="data-table">
         <thead>
           <tr>
             <th>错误签名</th>
@@ -89,15 +87,15 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="item in dashboard.pipelineFailureSummary" :key="item.signature">
+          <tr v-for="item in state.pipelineFailureSummary" :key="item.signature">
             <td><code>{{ item.signature }}</code></td>
             <td>{{ item.count }}</td>
             <td>failed: {{ item.status_breakdown?.failed || 0 }} / partial_failed: {{ item.status_breakdown?.partial_failed || 0 }}</td>
             <td>{{ formatDate(item.latest_at) }}</td>
             <td>{{ item.example_error || '-' }}</td>
             <td class="action-group">
-              <button class="btn btn-ghost" :disabled="dashboard.retryingSignature === item.signature" @click="retryBySignature(item.signature)">
-                {{ dashboard.retryingSignature === item.signature ? '重试中...' : '按此错误重试' }}
+              <button class="btn btn-ghost" :disabled="state.retryingSignature === item.signature" @click="retryBySignature(item.signature)">
+                {{ state.retryingSignature === item.signature ? '重试中...' : '按此错误重试' }}
               </button>
             </td>
           </tr>
@@ -109,15 +107,38 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{
-  dashboard: Record<string, any>
-  pipelineCards: Array<{ label: string; value: string | number }>
-  loadPipelineJobs: () => Promise<void>
-  applyPipelineFilter: () => Promise<void>
-  changePipelinePage: (delta: number) => Promise<void>
-  retryPipelineJob: (job: Record<string, any>) => Promise<void>
-  retryFailedJobs: () => Promise<void>
-  retryBySignature: (signature: string) => Promise<void>
-  formatDate: (value?: string | null) => string
-}>()
+import { onMounted, onUnmounted, watch } from 'vue'
+import { useAdminPipeline } from './composables/useAdminPipeline'
+
+const {
+  state,
+  pipelineCards,
+  loadPipelineStatus,
+  loadPipelineJobs,
+  applyPipelineFilter,
+  changePipelinePage,
+  retryPipelineJob,
+  retryFailedJobs,
+  retryBySignature,
+  formatDate
+} = useAdminPipeline()
+
+let timer: number
+
+onMounted(() => {
+  loadPipelineStatus()
+  loadPipelineJobs()
+  timer = window.setInterval(() => {
+    loadPipelineStatus()
+    loadPipelineJobs()
+  }, 10000)
+})
+
+watch(() => state.pipelineFilterStatus, () => {
+  applyPipelineFilter()
+})
+
+onUnmounted(() => {
+  if (timer) window.clearInterval(timer)
+})
 </script>

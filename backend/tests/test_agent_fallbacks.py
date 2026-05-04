@@ -117,8 +117,8 @@ async def test_compliance_agent_formats_answer_with_citations(monkeypatch):
         }
     )
 
-    assert "结论：" in state["answer"]
-    assert "依据：" in state["answer"]
+    assert "**结论**" in state["answer"]
+    assert "### 相关依据" in state["answer"]
     assert state["citations"][0]["doc_title"] == "员工手册"
 
 
@@ -198,7 +198,7 @@ async def test_compliance_agent_formats_compare_table(monkeypatch):
         }
     )
 
-    assert "主题 | 文档A | 文档B | 差异说明" in state["answer"]
+    assert "| 主题 | 文档A | 文档B | 差异说明 |" in state["answer"]
     assert "年假制度" in state["answer"]
     assert "差旅制度" in state["answer"]
 

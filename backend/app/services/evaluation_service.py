@@ -170,6 +170,7 @@ class EvaluationService:
                 "failure_reasons": {},
                 "metric_averages": {},
                 "trend": [],
+                "drift": {"available": False, "reason": "insufficient_history"},
             }
 
         passed_count = 0
@@ -217,6 +218,7 @@ class EvaluationService:
             for key, values in metric_buckets.items()
             if values
         }
+        drift = self._build_drift_summary(items)
         return {
             "tenant_id": tenant_id,
             "count": len(items),
@@ -226,6 +228,7 @@ class EvaluationService:
             "failure_reasons": dict(sorted(failure_reasons.items(), key=lambda item: (-item[1], item[0]))),
             "metric_averages": metric_averages,
             "trend": trend,
+            "drift": drift,
         }
 
     async def assess_deployment_readiness(self, tenant_id: str, *, max_age_hours: int | None = None) -> dict[str, Any]:
@@ -540,6 +543,69 @@ class EvaluationService:
             "generated_from": {"tenant_id": None, "sample_limit": None, "document_count": None, "legacy_report": True},
             "dataset_size": metrics.get("sample_count", 0),
         }
+
+    def _build_drift_summary(self, items: list[dict[str, Any]]) -> dict[str, Any]:
+        if len(items) < 2:
+            return {"available": False, "reason": "insufficient_history"}
+
+        latest = items[0] if isinstance(items[0], dict) else {}
+        previous = items[1] if isinstance(items[1], dict) else {}
+        latest_metrics = latest.get("metrics") if isinstance(latest.get("metrics"), dict) else {}
+        previous_metrics = previous.get("metrics") if isinstance(previous.get("metrics"), dict) else {}
+        latest_gate = latest.get("gate") if isinstance(latest.get("gate"), dict) else {}
+        previous_gate = previous.get("gate") if isinstance(previous.get("gate"), dict) else {}
+        latest_meta = latest_metrics.get("_meta") if isinstance(latest_metrics.get("_meta"), dict) else {}
+        previous_meta = previous_metrics.get("_meta") if isinstance(previous_metrics.get("_meta"), dict) else {}
+        latest_dataset_summary = (
+            latest_gate.get("dataset_summary") if isinstance(latest_gate.get("dataset_summary"), dict) else {}
+        )
+        previous_dataset_summary = (
+            previous_gate.get("dataset_summary") if isinstance(previous_gate.get("dataset_summary"), dict) else {}
+        )
+
+        metric_deltas: dict[str, float] = {}
+        for metric_name in ("faithfulness", "answer_relevancy", "context_precision", "context_recall"):
+            latest_value = self._coerce_float(latest_metrics.get(metric_name))
+            previous_value = self._coerce_float(previous_metrics.get(metric_name))
+            if latest_value is None or previous_value is None:
+                continue
+            metric_deltas[metric_name] = round(latest_value - previous_value, 4)
+
+        latest_dataset_size = self._coerce_int(latest.get("dataset_size"))
+        previous_dataset_size = self._coerce_int(previous.get("dataset_size"))
+        latest_unique_docs = self._coerce_int(latest_dataset_summary.get("unique_doc_count"))
+        previous_unique_docs = self._coerce_int(previous_dataset_summary.get("unique_doc_count"))
+
+        return {
+            "available": True,
+            "latest_generated_at": latest.get("generated_at"),
+            "previous_generated_at": previous.get("generated_at"),
+            "metrics": metric_deltas,
+            "gate_changed": bool(latest_gate.get("passed")) != bool(previous_gate.get("passed")),
+            "real_mode_changed": bool(latest_meta.get("real_mode")) != bool(previous_meta.get("real_mode")),
+            "dataset_size_delta": None
+            if latest_dataset_size is None or previous_dataset_size is None
+            else latest_dataset_size - previous_dataset_size,
+            "unique_doc_count_delta": None
+            if latest_unique_docs is None or previous_unique_docs is None
+            else latest_unique_docs - previous_unique_docs,
+        }
+
+    def _coerce_float(self, value: Any) -> float | None:
+        try:
+            if value is None:
+                return None
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _coerce_int(self, value: Any) -> int | None:
+        try:
+            if value is None:
+                return None
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
     def _parse_iso_datetime(self, value: Any) -> datetime | None:
         raw = str(value or "").strip()

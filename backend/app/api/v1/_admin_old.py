@@ -881,6 +881,76 @@ async def activate_llm_model(
     return {"ok": True, "item": _serialize_registry_model(model)}
 
 
+@router.post("/llm/models/{model_id}/approve")
+async def approve_llm_model(
+    model_id: str,
+    tenant_id: str | None = None,
+    reason: str | None = None,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.llm_training_service import LLMTrainingService
+    from app.services.security_audit_service import SecurityAuditService
+
+    effective_tenant = tenant_id or current_user.tenant_id
+    redis_client = get_redis()
+    service = LLMTrainingService(db, redis_client=redis_client, reports_dir=REPORTS_DIR)
+    approval = await service.record_model_approval(
+        tenant_id=effective_tenant,
+        model_id=model_id,
+        approved=True,
+        actor_id=current_user.id,
+        reason=reason,
+    )
+    model = await service.get_model(effective_tenant, model_id)
+    await SecurityAuditService(redis_client, db).log_event(
+        effective_tenant,
+        "llm_model_manual_approve",
+        "medium",
+        f"管理员审批通过模型 {model_id}",
+        user_id=current_user.id,
+        target=model_id,
+        result="ok",
+        metadata={"model_id": model_id, "approval": approval},
+    )
+    return {"ok": True, "approval": approval, "item": _serialize_registry_model(model)}
+
+
+@router.post("/llm/models/{model_id}/reject")
+async def reject_llm_model(
+    model_id: str,
+    tenant_id: str | None = None,
+    reason: str | None = None,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.llm_training_service import LLMTrainingService
+    from app.services.security_audit_service import SecurityAuditService
+
+    effective_tenant = tenant_id or current_user.tenant_id
+    redis_client = get_redis()
+    service = LLMTrainingService(db, redis_client=redis_client, reports_dir=REPORTS_DIR)
+    approval = await service.record_model_approval(
+        tenant_id=effective_tenant,
+        model_id=model_id,
+        approved=False,
+        actor_id=current_user.id,
+        reason=reason,
+    )
+    model = await service.get_model(effective_tenant, model_id)
+    await SecurityAuditService(redis_client, db).log_event(
+        effective_tenant,
+        "llm_model_manual_reject",
+        "high",
+        f"管理员拒绝模型 {model_id} 激活",
+        user_id=current_user.id,
+        target=model_id,
+        result="warning",
+        metadata={"model_id": model_id, "approval": approval},
+    )
+    return {"ok": True, "approval": approval, "item": _serialize_registry_model(model)}
+
+
 @router.post("/llm/models/{model_id}/canary")
 async def update_llm_model_canary(
     model_id: str,
@@ -958,33 +1028,39 @@ async def publish_llm_model(
         metadata={"model_id": model_id, "publish_result": publish_result},
     )
 
-    if activate and publish_result.get("publish_ready"):
-        model = await service.activate_model(tenant_id=effective_tenant, model_id=model_id, actor_id=current_user.id)
-        response["activated_model"] = _serialize_registry_model(model)
-        await SecurityAuditService(redis_client, db).log_event(
-            effective_tenant,
-            "llm_model_manual_activate",
-            "medium",
-            f"管理员激活模型 {model.model_name}",
-            user_id=current_user.id,
-            target=model_id,
-            result="ok",
-            metadata={"model_id": model_id, "model_name": model.model_name, "source": "publish_endpoint"},
-        )
-
-    if verify and publish_result.get("published"):
+    verify_before_activate = bool(verify) or (bool(activate) and bool(settings.llm_training_deploy_verify_enabled))
+    if verify_before_activate and publish_result.get("published"):
         response["verify_result"] = await service.verify_model_serving(tenant_id=effective_tenant, model_id=model_id)
         response["ok"] = bool(response["verify_result"].get("ok"))  # type: ignore[index]
         await SecurityAuditService(redis_client, db).log_event(
             effective_tenant,
             "llm_model_manual_verify",
             "low" if response["verify_result"].get("ok") else "high",  # type: ignore[index]
-            "管理员触发模型部署校验",
+            "admin triggered model deployment verification",
             user_id=current_user.id,
             target=model_id,
             result="ok" if response["verify_result"].get("ok") else "error",  # type: ignore[index]
             metadata={"model_id": model_id, "verify_result": response["verify_result"]},
         )
+
+    if activate and publish_result.get("publish_ready"):
+        verify_ok = True
+        if settings.llm_training_deploy_verify_enabled:
+            verify_payload = response.get("verify_result") if isinstance(response.get("verify_result"), dict) else {}
+            verify_ok = bool(verify_payload.get("ok"))
+        if verify_ok:
+            model = await service.activate_model(tenant_id=effective_tenant, model_id=model_id, actor_id=current_user.id)
+            response["activated_model"] = _serialize_registry_model(model)
+            await SecurityAuditService(redis_client, db).log_event(
+                effective_tenant,
+                "llm_model_manual_activate",
+                "medium",
+                f"admin activated model {model.model_name}",
+                user_id=current_user.id,
+                target=model_id,
+                result="ok",
+                metadata={"model_id": model_id, "model_name": model.model_name, "source": "publish_endpoint"},
+            )
 
     return response
 
@@ -1167,8 +1243,13 @@ async def get_runtime_tasks(
     from app.config import settings
 
     store = TaskStore(get_redis(), retention_seconds=settings.runtime_task_retention_seconds)
-    tasks = await store.list_tasks(current_user.tenant_id, limit=max(limit, 1), offset=max(offset, 0))
-    return {"items": tasks, "total": len(tasks), "limit": max(limit, 1), "offset": max(offset, 0)}
+    all_tasks = await store.list(current_user.tenant_id)
+    # Sort tasks by start_time or updated_at descending
+    all_tasks.sort(key=lambda t: t.updated_at or t.start_time or "", reverse=True)
+    limit_val = max(limit, 1)
+    offset_val = max(offset, 0)
+    tasks = all_tasks[offset_val : offset_val + limit_val]
+    return {"items": tasks, "total": len(all_tasks), "limit": limit_val, "offset": offset_val}
 
 
 @router.get("/runtime/metrics")

@@ -16,7 +16,7 @@
       <button class="ghost half" loading="{{configSaving}}" bindtap="saveApiBase">保存地址</button>
       <button class="ghost half" loading="{{bootstrapLoading}}" bindtap="bootstrapFromServer">自动探测</button>
     </view>
-    <view class="hint">请确保该域名已加入微信小程序 request 合法域名，且 WebSocket 域名也已同步配置。</view>
+    <view class="hint">请确认该域名已加入微信小程序 request 合法域名，且 WebSocket 域名也已同步配置。</view>
     <view wx:if="{{configMessage}}" class="hint success">{{configMessage}}</view>
     <view wx:if="{{bootstrapSummary}}" class="hint success">{{bootstrapSummary}}</view>
 

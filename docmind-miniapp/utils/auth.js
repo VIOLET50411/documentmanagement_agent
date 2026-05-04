@@ -10,6 +10,25 @@ function setStorage(key, value) {
   wx.setStorageSync(key, value)
 }
 
+function clearAuthState() {
+  try {
+    wx.removeStorageSync('access_token')
+    wx.removeStorageSync('refresh_token')
+  } catch (error) {
+    console.error('clear auth storage failed', error)
+  }
+}
+
+function redirectToLogin(reason) {
+  clearAuthState()
+  const message = encodeURIComponent(reason || '登录状态已失效，请重新登录。')
+  try {
+    wx.reLaunch({ url: `/pages/login/index?reason=${message}` })
+  } catch (error) {
+    console.error('redirectToLogin failed', error)
+  }
+}
+
 function getApiBase() {
   const app = getApp()
   return app.globalData.apiBase
@@ -19,9 +38,9 @@ function extractErrorMessage(payload, fallback) {
   if (!payload) return fallback
   if (typeof payload === 'string') return payload
   if (payload instanceof Error && payload.message) return payload.message
-  if (payload.errMsg) return payload.errMsg
+  if (typeof payload.statusCode === 'number') return `请求失败：${payload.statusCode}`
   if (payload.data && typeof payload.data.detail === 'string') return payload.data.detail
-  if (typeof payload.statusCode === 'number') return `请求失败（${payload.statusCode}）`
+  if (payload.errMsg) return payload.errMsg
   return fallback
 }
 
@@ -69,11 +88,15 @@ function requestWithAuth(options) {
             })
             .catch((refreshError) => {
               console.error('refreshAccessToken failed', refreshError)
+              redirectToLogin(extractErrorMessage(refreshError, '登录状态已失效，请重新登录。'))
               reject(new Error(extractErrorMessage(refreshError, '刷新登录状态失败')))
             })
           return
         }
         console.error('requestWithAuth failed', options.url, response)
+        if (response.statusCode === 401) {
+          redirectToLogin('登录状态已失效，请重新登录。')
+        }
         reject(new Error(extractErrorMessage(response, '请求失败')))
       },
       fail: (error) => {
@@ -175,4 +198,13 @@ function loginWithPkce({ username, password }) {
   })
 }
 
-module.exports = { getStorage, setStorage, requestWithAuth, loginWithPkce, refreshAccessToken, extractErrorMessage }
+module.exports = {
+  getStorage,
+  setStorage,
+  requestWithAuth,
+  loginWithPkce,
+  refreshAccessToken,
+  extractErrorMessage,
+  clearAuthState,
+  redirectToLogin,
+}

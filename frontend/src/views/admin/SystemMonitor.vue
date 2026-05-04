@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="tab-content animate-fade-in">
     <div class="stats-grid pipeline-grid">
       <div v-for="item in backendCards" :key="item.label" class="stat-card card compact">
@@ -11,45 +11,42 @@
       <div class="section-header">
         <h2>公开语料冷启动导出</h2>
         <div class="action-group">
-          <button class="refresh-btn" @click="loadPublicCorpusLatest" :disabled="dashboard.loadingPublicCorpusLatest">
-            {{ dashboard.loadingPublicCorpusLatest ? "加载中..." : "刷新摘要" }}
-          </button>
-          <button class="refresh-btn" @click="exportPublicCorpusAsync" :disabled="dashboard.exportingPublicCorpus">
-            {{ dashboard.exportingPublicCorpus ? "导出中..." : "启动异步导出" }}
+          <button class="refresh-btn" @click="exportPublicCorpusAsync" :disabled="state.exportingPublicCorpus">
+            {{ state.exportingPublicCorpus ? "导出中..." : "启动异步导出" }}
           </button>
         </div>
       </div>
       <div class="filters-grid public-corpus-grid">
-        <input v-model="dashboard.publicCorpusForm.dataset_name" class="input" type="text" placeholder="数据集名称" />
-        <input v-model="dashboard.publicCorpusForm.tenant_id" class="input" type="text" placeholder="租户 ID" />
-        <input v-model.number="dashboard.publicCorpusForm.train_ratio" class="input" type="number" min="0.5" max="0.98" step="0.01" />
+        <input v-model="state.publicCorpusForm.dataset_name" class="input" type="text" placeholder="数据集名称" />
+        <input v-model="state.publicCorpusForm.tenant_id" class="input" type="text" placeholder="租户 ID" />
+        <input v-model.number="state.publicCorpusForm.train_ratio" class="input" type="number" min="0.5" max="0.98" step="0.01" />
       </div>
       <div class="stats-grid pipeline-grid">
         <div class="stat-card card compact">
-          <span class="stat-value small">{{ dashboard.publicCorpusLatest?.record_count ?? 0 }}</span>
+          <span class="stat-value small">{{ state.publicCorpusLatest?.record_count ?? 0 }}</span>
           <span class="stat-label">原始记录数</span>
         </div>
         <div class="stat-card card compact">
-          <span class="stat-value small">{{ dashboard.publicCorpusLatest?.chunk_count ?? 0 }}</span>
+          <span class="stat-value small">{{ state.publicCorpusLatest?.chunk_count ?? 0 }}</span>
           <span class="stat-label">切块数</span>
         </div>
         <div class="stat-card card compact">
-          <span class="stat-value small">{{ dashboard.publicCorpusLatest?.training_readiness?.train_records ?? 0 }}</span>
+          <span class="stat-value small">{{ state.publicCorpusLatest?.training_readiness?.train_records ?? 0 }}</span>
           <span class="stat-label">训练集样本</span>
         </div>
         <div class="stat-card card compact">
-          <span class="stat-value small">{{ dashboard.publicCorpusLatest?.training_readiness?.ready_for_sft ? "READY" : "NOT READY" }}</span>
+          <span class="stat-value small">{{ state.publicCorpusLatest?.training_readiness?.ready_for_sft ? "READY" : "NOT READY" }}</span>
           <span class="stat-label">SFT 就绪</span>
         </div>
       </div>
-      <ul v-if="dashboard.publicCorpusLatest?.exists" class="list">
+      <ul v-if="state.publicCorpusLatest?.exists" class="list">
         <li class="list-item stacked">
           <span class="list-title">最近导出</span>
-          <span class="list-meta">数据集：{{ dashboard.publicCorpusLatest?.dataset_name || dashboard.publicCorpusForm.dataset_name }}</span>
-          <span class="list-meta">导出目录：{{ dashboard.publicCorpusLatest?.export_dir || "-" }}</span>
-          <span class="list-meta">Manifest：{{ dashboard.publicCorpusLatest?.manifest_path || "-" }}</span>
-          <span class="list-meta">生成时间：{{ formatDate(dashboard.publicCorpusLatest?.generated_at) }}</span>
-          <span class="list-meta">任务 ID：{{ dashboard.publicCorpusTaskId || "-" }}</span>
+          <span class="list-meta">数据集：{{ state.publicCorpusLatest?.dataset_name || state.publicCorpusForm.dataset_name }}</span>
+          <span class="list-meta">导出目录：{{ state.publicCorpusLatest?.export_dir || "-" }}</span>
+          <span class="list-meta">Manifest：{{ state.publicCorpusLatest?.manifest_path || "-" }}</span>
+          <span class="list-meta">生成时间：{{ formatDate(state.publicCorpusLatest?.generated_at) }}</span>
+          <span class="list-meta">任务 ID：{{ state.publicCorpusTaskId || "-" }}</span>
         </li>
       </ul>
       <p v-else class="empty-text">暂无公开语料导出结果。</p>
@@ -59,20 +56,20 @@
       <h2>平台就绪度</h2>
       <div class="stats-grid pipeline-grid">
         <div class="stat-card card compact">
-          <span class="stat-value small">{{ dashboard.readiness?.score ?? "-" }}</span>
+          <span class="stat-value small">{{ state.readiness?.score ?? "-" }}</span>
           <span class="stat-label">Readiness Score</span>
         </div>
         <div class="stat-card card compact">
-          <span class="stat-value small">{{ dashboard.readiness?.ready ? "READY" : "NOT READY" }}</span>
+          <span class="stat-value small">{{ state.readiness?.ready ? "READY" : "NOT READY" }}</span>
           <span class="stat-label">总体状态</span>
         </div>
         <div class="stat-card card compact">
-          <span class="stat-value small">{{ dashboard.readiness?.blockers?.length ?? 0 }}</span>
+          <span class="stat-value small">{{ state.readiness?.blockers?.length ?? 0 }}</span>
           <span class="stat-label">阻塞项</span>
         </div>
       </div>
-      <ul v-if="dashboard.readiness?.blockers?.length" class="list">
-        <li v-for="item in dashboard.readiness.blockers" :key="item.id" class="list-item">
+      <ul v-if="state.readiness?.blockers?.length" class="list">
+        <li v-for="item in state.readiness.blockers" :key="item.id" class="list-item">
           <span class="list-title">{{ item.id }}</span>
           <span class="list-meta">{{ item.message }}</span>
         </li>
@@ -81,27 +78,34 @@
     </div>
 
     <div class="card section-card">
-      <h2>检索一致性健康度</h2>
+      <div class="section-header">
+        <h2>检索一致性健康度</h2>
+        <div class="action-group">
+          <button class="btn btn-secondary btn-sm" v-if="!state.retrievalIntegrity?.healthy && state.retrievalIntegrity" @click="jumpToInspect">
+            前往运行检查追踪链路
+          </button>
+        </div>
+      </div>
       <div class="stats-grid pipeline-grid">
         <div class="stat-card card compact">
-          <span class="stat-value small">{{ dashboard.retrievalIntegrity?.score ?? "-" }}</span>
+          <span class="stat-value small">{{ state.retrievalIntegrity?.score ?? "-" }}</span>
           <span class="stat-label">Integrity Score</span>
         </div>
         <div class="stat-card card compact">
-          <span class="stat-value small">{{ dashboard.retrievalIntegrity?.healthy ? "HEALTHY" : "DEGRADED" }}</span>
+          <span class="stat-value small">{{ state.retrievalIntegrity?.healthy ? "HEALTHY" : "DEGRADED" }}</span>
           <span class="stat-label">总体状态</span>
         </div>
         <div class="stat-card card compact">
-          <span class="stat-value small">{{ dashboard.retrievalIntegrity?.stats?.sample_size ?? 0 }}</span>
+          <span class="stat-value small">{{ state.retrievalIntegrity?.stats?.sample_size ?? 0 }}</span>
           <span class="stat-label">抽样回查数</span>
         </div>
         <div class="stat-card card compact">
-          <span class="stat-value small">{{ formatPercent(dashboard.retrievalIntegrity?.stats?.milvus_sample_recall) }}</span>
+          <span class="stat-value small">{{ formatPercent(state.retrievalIntegrity?.stats?.milvus_sample_recall) }}</span>
           <span class="stat-label">Milvus 召回率</span>
         </div>
       </div>
-      <ul v-if="dashboard.retrievalIntegrity?.blockers?.length" class="list">
-        <li v-for="item in dashboard.retrievalIntegrity.blockers" :key="item.id" class="list-item">
+      <ul v-if="state.retrievalIntegrity?.blockers?.length" class="list">
+        <li v-for="item in state.retrievalIntegrity.blockers" :key="item.id" class="list-item">
           <span class="list-title">{{ item.id }}</span>
           <span class="list-meta">{{ item.message }}</span>
         </li>
@@ -141,9 +145,6 @@
     <div class="card section-card">
       <div class="section-header">
         <h2>Runtime 检查点恢复摘要</h2>
-        <button class="refresh-btn" @click="runtimeStore.loadCheckpointSummary()" :disabled="runtimeStore.loadingCheckpointSummary">
-          {{ runtimeStore.loadingCheckpointSummary ? "加载中..." : "刷新检查点" }}
-        </button>
       </div>
       <table v-if="runtimeStore.checkpointSummary.length" class="data-table">
         <thead>
@@ -191,9 +192,6 @@
           <option value="registry">registry</option>
         </select>
         <input v-model="runtimeStore.toolFilters.tool_name" class="input" type="text" placeholder="按工具名筛选（模糊）" />
-        <button class="refresh-btn" @click="runtimeStore.loadToolDecisionSummary()" :disabled="runtimeStore.loadingToolSummary">
-          {{ runtimeStore.loadingToolSummary ? "加载中..." : "应用筛选" }}
-        </button>
       </div>
       <div class="action-group">
         <button class="btn btn-ghost" @click="downloadRuntimeToolSummary">导出当前统计（JSON）</button>
@@ -262,28 +260,53 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from "vue"
+import { onMounted, onUnmounted, watch } from "vue"
+import { useRouter } from "vue-router"
 import { useRuntimeStore } from "@/stores/runtime"
 
-const runtimeStore = useRuntimeStore()
+const router = useRouter()
+function jumpToInspect() {
+  router.push({ query: { tab: 'inspect' } })
+}
 
-defineProps<{
-  dashboard: Record<string, any>
-  backendCards: Array<{ label: string; value: string | number }>
-  retrievalMetricsRows: Array<Record<string, any>>
-  formatDate: (value?: string | null) => string
-  formatPercent: (value?: number | null) => string
-  loadPublicCorpusLatest: () => Promise<void>
-  exportPublicCorpusAsync: () => Promise<void>
-  downloadRuntimeToolSummary: () => void
-}>()
+import { useAdminBackends } from './composables/useAdminBackends'
+
+const runtimeStore = useRuntimeStore()
+const {
+  state,
+  backendCards,
+  retrievalMetricsRows,
+  loadBackends,
+  loadPublicCorpusLatest,
+  exportPublicCorpusAsync,
+  downloadRuntimeToolSummary,
+  formatDate,
+  formatPercent
+} = useAdminBackends()
+
+let timer: number
 
 onMounted(async () => {
+  loadBackends()
   if (!runtimeStore.toolDecisionSummary) {
     await runtimeStore.loadToolDecisionSummary()
   }
   if (!runtimeStore.checkpointSummary.length) {
     await runtimeStore.loadCheckpointSummary()
   }
+
+  watch(() => runtimeStore.toolFilters, () => {
+    runtimeStore.loadToolDecisionSummary()
+  }, { deep: true })
+  
+  timer = window.setInterval(() => {
+    loadBackends()
+    runtimeStore.loadToolDecisionSummary()
+    runtimeStore.loadCheckpointSummary()
+  }, 10000)
+})
+
+onUnmounted(() => {
+  if (timer) window.clearInterval(timer)
 })
 </script>

@@ -65,6 +65,7 @@ async def test_verify_model_serving_persists_verify_result(monkeypatch):
 @pytest.mark.asyncio
 async def test_summarize_deployment_aggregates_publish_and_verify_states(monkeypatch):
     service = LLMTrainingService(FakeDB(), redis_client=None)
+    monkeypatch.setattr("app.services.llm_training_service.settings.llm_training_require_manual_approval", False)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     jobs = [
         SimpleNamespace(

@@ -1,8 +1,10 @@
-﻿"""Fallback multi-agent supervisor."""
+"""Fallback multi-agent supervisor."""
 
 from __future__ import annotations
 
 from typing import Optional, TypedDict
+
+import structlog
 
 from app.agent.agents.compliance_agent import ComplianceAgent
 from app.agent.agents.critic_agent import CriticAgent
@@ -12,6 +14,8 @@ from app.agent.agents.summary_agent import SummaryAgent
 from app.agent.nodes.intent_router import intent_router
 from app.agent.nodes.query_rewriter import query_rewriter
 from app.memory.long_term_memory import LongTermMemory
+
+logger = structlog.get_logger("docmind.supervisor")
 
 
 class AgentState(TypedDict, total=False):
@@ -88,10 +92,18 @@ class SupervisorAgent:
         }
 
         yield {"status": "thinking", "msg": "正在理解您的问题..."}
-        state = await self.route_intent(state)
+        try:
+            state = await self.route_intent(state)
+        except Exception as exc:
+            logger.error("supervisor.route_intent_failed", error=str(exc))
+            state["warnings"].append(f"route_intent_error: {exc}")
 
         yield {"status": "reading", "msg": "正在补全上下文并改写查询..."}
-        state = await query_rewriter(state)
+        try:
+            state = await query_rewriter(state)
+        except Exception as exc:
+            logger.error("supervisor.query_rewriter_failed", error=str(exc))
+            state["warnings"].append(f"query_rewriter_error: {exc}")
 
         specialist = await self.dispatch(state)
         status_map = {
@@ -104,10 +116,22 @@ class SupervisorAgent:
         status, message = status_map.get(state["intent"], ("searching", "正在检索相关文档..."))
         yield {"status": status, "msg": message}
 
-        state = await specialist.run(state)
+        try:
+            state = await specialist.run(state)
+        except Exception as exc:
+            logger.error("supervisor.specialist_failed", error=str(exc), intent=state["intent"])
+            state["answer"] = f"处理过程中出现异常，请稍后重试。（{type(exc).__name__}）"
+            state["agent_used"] = "error_fallback"
+            state["warnings"].append(f"specialist_error: {exc}")
+            yield {"status": "error", "msg": str(exc)[:200]}
 
         yield {"status": "reading", "msg": "正在检查答案与引用..."}
-        state = await CriticAgent().run(state)
+        try:
+            state = await CriticAgent().run(state)
+        except Exception as exc:
+            logger.error("supervisor.critic_failed", error=str(exc))
+            state["critic_approved"] = True
+            state["warnings"].append(f"critic_error: {exc}")
 
         if not state["critic_approved"]:
             state["answer"] = state.get("answer") or "当前无法生成满足要求的答案。"
@@ -119,3 +143,4 @@ class SupervisorAgent:
             "agent_used": state.get("agent_used"),
             "rewritten_query": state.get("rewritten_query"),
         }
+

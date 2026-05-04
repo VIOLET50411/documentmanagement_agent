@@ -288,6 +288,8 @@ class MobileOAuthService:
             "redirect_uris": miniapp_redirects,
             "recommended_api_base": f"{normalized_issuer}/api/v1",
             "recommended_ws_base": f"{ws_base}/api/v1/ws/chat",
+            "subscribe_template_id": settings.push_wechat_template_id or "",
+            "subscribe_page": settings.push_wechat_page or "pages/docs/index",
         }
 
     def _redirect_matches_client(self, redirect_uri: str, client_id: str) -> bool:

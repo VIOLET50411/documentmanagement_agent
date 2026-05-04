@@ -1,70 +1,83 @@
-﻿<template>
+<template>
   <div class="login-page">
-    <div class="login-bg">
-      <div class="bg-orb bg-orb-1"></div>
-      <div class="bg-orb bg-orb-2"></div>
-      <div class="bg-orb bg-orb-3"></div>
-    </div>
-
-    <div class="login-container card-glass animate-fade-in">
+    <div class="login-container animate-fade-in">
       <div class="login-header">
-        <span class="login-logo">DM</span>
-        <h1 class="login-title">DocMind Agent</h1>
+        <h1 class="login-logo-text">DocMind</h1>
         <p class="login-subtitle">企业管理文档智能问答平台</p>
       </div>
 
       <form class="login-form" @submit.prevent="handleSubmit">
-        <div class="form-group">
-          <label for="username">用户名</label>
-          <input id="username" v-model="form.username" type="text" class="input" placeholder="请输入用户名" required autocomplete="username" />
-        </div>
-
-        <div class="form-group" v-if="isRegister">
-          <label for="email">邮箱</label>
-          <input id="email" v-model="form.email" type="email" class="input" placeholder="请输入企业邮箱" />
-        </div>
-
-        <div class="form-row" v-if="isRegister">
-          <div class="form-group grow">
-            <label for="verifyCode">邮箱验证码</label>
-            <input id="verifyCode" v-model="form.verification_code" type="text" class="input" placeholder="请输入验证码" />
+        <!-- LOGIN MODE -->
+        <template v-if="mode === 'login'">
+          <div class="form-group">
+            <label for="username">用户名</label>
+            <input id="username" v-model="form.username" type="text" class="input" placeholder="请输入用户名" required autocomplete="username" />
           </div>
-          <button type="button" class="btn btn-outline code-btn" :disabled="sendingCode || !form.email" @click="sendCode">
-            {{ sendingCode ? '发送中...' : '发送验证码' }}
-          </button>
-        </div>
+          <div class="form-group">
+            <label for="password">密码</label>
+            <input id="password" v-model="form.password" type="password" class="input" placeholder="请输入密码" required autocomplete="current-password" />
+          </div>
+        </template>
 
-        <div class="form-group" v-if="isRegister">
-          <label for="inviteToken">邀请码</label>
-          <input id="inviteToken" v-model="form.invite_token" type="text" class="input" placeholder="企业内部注册请填写邀请码" />
-        </div>
+        <!-- REGISTER MODE -->
+        <template v-else-if="mode === 'register'">
+          <div class="form-group">
+            <label for="reg_username">用户名</label>
+            <input id="reg_username" v-model="form.username" type="text" class="input" placeholder="设置您的用户名" required autocomplete="username" />
+          </div>
+          <div class="form-group">
+            <label for="email">邮箱</label>
+            <input id="email" v-model="form.email" type="email" class="input" placeholder="请输入企业邮箱" required />
+          </div>
+          <div class="form-row">
+            <div class="form-group grow">
+              <label for="verifyCode">邮箱验证码</label>
+              <input id="verifyCode" v-model="form.verification_code" type="text" class="input" placeholder="请输入验证码" required />
+            </div>
+            <button type="button" class="btn btn-outline code-btn" :disabled="sendingCode || !form.email" @click="sendCode">
+              {{ sendingCode ? '发送中...' : '发送验证码' }}
+            </button>
+          </div>
+          <div class="form-group">
+            <label for="department">部门 (可选)</label>
+            <input id="department" v-model="form.department" type="text" class="input" placeholder="请输入所属部门" />
+          </div>
+          <div class="form-group">
+            <label for="inviteToken">邀请码 (内部注册必填)</label>
+            <input id="inviteToken" v-model="form.invite_token" type="text" class="input" placeholder="企业内部注册邀请码" />
+          </div>
+          <div class="form-group">
+            <label for="reg_password">密码</label>
+            <input id="reg_password" v-model="form.password" type="password" class="input" placeholder="设置密码 (至少 8 位)" required autocomplete="new-password" />
+          </div>
+        </template>
 
-        <div class="form-group" v-if="isRegister">
-          <label for="department">部门</label>
-          <input id="department" v-model="form.department" type="text" class="input" placeholder="请输入所属部门，可选" />
-        </div>
-
-        <div class="form-group">
-          <label for="password">密码</label>
-          <input id="password" v-model="form.password" type="password" class="input" placeholder="请输入密码" required autocomplete="current-password" />
-        </div>
+        <!-- RESET MODE -->
+        <template v-else-if="mode === 'reset'">
+          <div class="form-group">
+            <label for="reset_email">重置邮箱</label>
+            <input id="reset_email" v-model="form.email" type="email" class="input" placeholder="请输入需要重置密码的邮箱" required />
+          </div>
+        </template>
 
         <p v-if="message" class="success-msg">{{ message }}</p>
         <p v-if="errorMsg" class="error-msg">{{ errorMsg }}</p>
 
         <button type="submit" class="btn btn-primary btn-lg login-btn" :disabled="isLoading">
-          {{ isLoading ? '处理中...' : isRegister ? '注册账号' : '登录' }}
+          {{ submitButtonText }}
         </button>
 
         <div class="form-actions">
-          <p class="toggle-mode">
-            {{ isRegister ? '已有账号？' : '没有账号？' }}
-            <a href="#" @click.prevent="isRegister = !isRegister">{{ isRegister ? '返回登录' : '使用邀请注册' }}</a>
+          <p class="toggle-mode" v-if="mode === 'login'">
+            没有账号？<a href="#" @click.prevent="switchMode('register')">注册新账号</a>
           </p>
-          <a href="#" class="secondary-link" @click.prevent="requestReset">忘记密码</a>
+          <p class="toggle-mode" v-else>
+            已有账号？<a href="#" @click.prevent="switchMode('login')">返回登录</a>
+          </p>
+          <a href="#" class="secondary-link" v-if="mode === 'login'" @click.prevent="switchMode('reset')">忘记密码</a>
         </div>
 
-        <div class="demo-tip">
+        <div class="demo-tip" v-if="mode === 'login'">
           <p>首次进入可使用演示账号：</p>
           <p><code>admin_demo</code> / <code>Password123</code></p>
         </div>
@@ -73,66 +86,109 @@
   </div>
 </template>
 
-<script setup>
-import { reactive, ref } from 'vue'
+<script setup lang="ts">
+import { reactive, ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
+type ViewMode = 'login' | 'register' | 'reset';
+
 const router = useRouter()
 const authStore = useAuthStore()
-const isRegister = ref(false)
+
+const mode = ref<ViewMode>('login')
 const isLoading = ref(false)
 const sendingCode = ref(false)
 const errorMsg = ref('')
 const message = ref('')
-const form = reactive({ username: '', password: '', email: '', department: '', invite_token: '', verification_code: '' })
+
+const form = reactive({ 
+  username: '', 
+  password: '', 
+  email: '', 
+  department: '', 
+  invite_token: '', 
+  verification_code: '' 
+})
+
+const submitButtonText = computed(() => {
+  if (isLoading.value) return '处理中...'
+  if (mode.value === 'login') return '登录'
+  if (mode.value === 'register') return '注册账号'
+  return '发送重置邮件'
+})
+
+function switchMode(newMode: ViewMode) {
+  mode.value = newMode
+  errorMsg.value = ''
+  message.value = ''
+  // Keep form data between modes to save typing
+}
+
+function validateForm(): boolean {
+  errorMsg.value = ''
+  if (mode.value === 'login') {
+    if (!form.username.trim()) { errorMsg.value = '用户名不能为空'; return false; }
+    if (!form.password) { errorMsg.value = '密码不能为空'; return false; }
+  } else if (mode.value === 'register') {
+    if (!form.username.trim()) { errorMsg.value = '用户名不能为空'; return false; }
+    if (!form.email.includes('@')) { errorMsg.value = '请输入有效的邮箱地址'; return false; }
+    if (!form.verification_code) { errorMsg.value = '请填写邮箱收到的验证码'; return false; }
+    if (form.password.length < 8) { errorMsg.value = '密码长度不能少于 8 位'; return false; }
+  } else if (mode.value === 'reset') {
+    if (!form.email.includes('@')) { errorMsg.value = '请输入有效的邮箱地址'; return false; }
+  }
+  return true;
+}
 
 async function handleSubmit() {
+  if (!validateForm()) return;
+  
   isLoading.value = true
   errorMsg.value = ''
   message.value = ''
+  
   try {
-    if (isRegister.value) {
+    if (mode.value === 'register') {
       await authStore.register(form)
-      message.value = '注册成功。若邮箱尚未验证，请先完成验证码验证后登录。'
-      isRegister.value = false
-    } else {
+      message.value = '注册成功，即将跳转登录'
+      setTimeout(() => switchMode('login'), 1500)
+    } else if (mode.value === 'login') {
       await authStore.login(form.username, form.password)
       router.push('/chat')
+    } else if (mode.value === 'reset') {
+      const res = await authStore.requestPasswordReset(form.email)
+      message.value = res.message || '重置说明已发送至您的邮箱'
     }
-  } catch (error) {
-    errorMsg.value = error.response?.data?.detail || '操作失败，请重试'
+  } catch (error: any) {
+    const detail = error.response?.data?.detail
+    if (typeof detail === 'string') {
+      errorMsg.value = detail
+    } else if (Array.isArray(detail) && detail.length > 0 && detail[0].msg) {
+      errorMsg.value = detail[0].msg
+    } else {
+      errorMsg.value = mode.value === 'login' ? '账号或密码错误' : '请求失败，请稍后重试'
+    }
   } finally {
     isLoading.value = false
   }
 }
 
 async function sendCode() {
-  if (!form.email) return
+  if (!form.email.includes('@')) {
+    errorMsg.value = '请输入有效的邮箱地址后再发送验证码'
+    return
+  }
   sendingCode.value = true
   errorMsg.value = ''
   message.value = ''
   try {
     const res = await authStore.sendVerificationCode({ email: form.email, username: form.username || undefined })
-    message.value = res.message || '验证码已发送'
-  } catch (error) {
-    errorMsg.value = error.response?.data?.detail || '验证码发送失败'
+    message.value = res.message || '验证码已发送至邮箱，请查收'
+  } catch (error: any) {
+    errorMsg.value = error.response?.data?.detail || '验证码发送频繁或失败，请稍后重试'
   } finally {
     sendingCode.value = false
-  }
-}
-
-async function requestReset() {
-  if (!form.email) {
-    errorMsg.value = '请输入邮箱后再申请密码重置'
-    return
-  }
-  errorMsg.value = ''
-  try {
-    const res = await authStore.requestPasswordReset(form.email)
-    message.value = res.message || '如邮箱存在，已发送重置说明'
-  } catch (error) {
-    errorMsg.value = error.response?.data?.detail || '重置请求失败'
   }
 }
 </script>
@@ -143,98 +199,37 @@ async function requestReset() {
   display: flex;
   align-items: center;
   justify-content: center;
-  position: relative;
-  overflow: hidden;
   padding: 24px;
 }
 
-.login-bg {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  z-index: 0;
-}
-
-.bg-orb {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(96px);
-  opacity: 0.26;
-  animation: float 20s ease-in-out infinite;
-}
-
-.bg-orb-1 {
-  width: 420px;
-  height: 420px;
-  background: #c89a63;
-  top: -140px;
-  left: -120px;
-}
-
-.bg-orb-2 {
-  width: 340px;
-  height: 340px;
-  background: #5b4d3c;
-  bottom: -100px;
-  right: -80px;
-  animation-delay: 5s;
-}
-
-.bg-orb-3 {
-  width: 220px;
-  height: 220px;
-  background: #e5cfaf;
-  top: 44%;
-  left: 62%;
-  animation-delay: 10s;
-}
-
-@keyframes float {
-  0%, 100% { transform: translate(0, 0); }
-  25% { transform: translate(26px, -18px); }
-  50% { transform: translate(-18px, 28px); }
-  75% { transform: translate(20px, 18px); }
-}
-
 .login-container {
-  position: relative;
-  z-index: 1;
-  width: 480px;
-  max-width: 92vw;
-  padding: 36px;
-  border-radius: 32px;
+  width: 400px;
+  max-width: 100%;
+  padding: 40px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
 }
 
 .login-header {
   text-align: center;
-  margin-bottom: 28px;
+  margin-bottom: 32px;
 }
 
-.login-logo {
-  width: 60px;
-  height: 60px;
-  margin: 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 20px;
-  background: linear-gradient(135deg, #2b241b 0%, #5a4731 35%, #d09d5f 100%);
-  color: #fff5e7;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-}
-
-.login-title {
-  font-size: clamp(2rem, 5vw, 2.6rem);
-  line-height: 1.04;
-  letter-spacing: -0.03em;
-  margin-top: 16px;
+.login-logo-text {
+  font-family: var(--font-heading);
+  font-size: 2.5rem;
+  font-weight: 400;
+  color: var(--text-primary);
+  margin: 0;
+  letter-spacing: -0.02em;
 }
 
 .login-subtitle {
   color: var(--text-secondary);
   font-size: 0.95rem;
-  margin-top: 10px;
+  margin-top: 8px;
 }
 
 .login-form {
@@ -260,69 +255,75 @@ async function requestReset() {
 }
 
 .form-group label {
-  font-size: var(--text-sm);
-  font-weight: 600;
-  color: var(--text-secondary);
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-primary);
 }
 
 .login-btn,
 .code-btn {
-  width: 100%;
+  height: 44px;
+  border-radius: 12px;
 }
 
-.code-btn {
-  width: 152px;
+.login-btn {
+  margin-top: var(--space-2);
 }
 
 .form-actions {
   display: flex;
   justify-content: space-between;
-  gap: var(--space-4);
   align-items: center;
+  margin-top: var(--space-2);
+  font-size: 0.875rem;
 }
 
-.toggle-mode,
+.toggle-mode a,
 .secondary-link {
-  font-size: var(--text-sm);
-  color: var(--text-secondary);
+  color: var(--color-primary);
+  text-decoration: none;
+  font-weight: 500;
 }
 
-.success-msg {
-  color: var(--color-success);
-  font-size: var(--text-sm);
+.toggle-mode a:hover,
+.secondary-link:hover {
+  text-decoration: underline;
+}
+
+.demo-tip {
+  margin-top: var(--space-5);
+  padding: var(--space-3);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.demo-tip p {
+  margin: 4px 0;
+}
+
+.demo-tip code {
+  background: var(--bg-surface);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--text-primary);
 }
 
 .error-msg {
   color: var(--color-danger);
-  font-size: var(--text-sm);
+  font-size: 0.875rem;
+  background: rgba(220, 38, 38, 0.1);
+  padding: 10px;
+  border-radius: 8px;
 }
 
-.demo-tip {
-  padding: 16px 18px;
-  border-radius: 20px;
-  background: var(--bg-input);
-  color: var(--text-secondary);
-  font-size: var(--text-sm);
-  border: 1px solid var(--border-color);
-}
-
-@media (max-width: 720px) {
-  .login-container {
-    padding: 28px 22px;
-  }
-
-  .form-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .code-btn {
-    width: 100%;
-  }
-
-  .form-actions {
-    flex-direction: column;
-    align-items: flex-start;
-  }
+.success-msg {
+  color: var(--color-success);
+  font-size: 0.875rem;
+  background: rgba(16, 185, 129, 0.1);
+  padding: 10px;
+  border-radius: 8px;
 }
 </style>

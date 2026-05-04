@@ -76,10 +76,14 @@ async def test_retrieval_integrity_marks_warning_only_backends_as_non_blocking(m
 
     result = await service.evaluate("tenant-1", sample_size=2)
 
-    assert result["score"] == 66.67
+    assert result["score"] == 100.0
     assert result["healthy"] is True
     assert all(item["severity"] != "critical" for item in result["critical_blockers"])
+    assert result["blockers"] == []
+    neo4j_check = next(item for item in result["checks"] if item["id"] == "neo4j_available")
+    assert neo4j_check["applicable"] is False
     assert result["stats"]["backend_health"]["milvus"]["available"] is False
+    assert result["stats"]["graph_path_required"] is False
     assert result["mode"] == "keyword_graph_default"
 
 

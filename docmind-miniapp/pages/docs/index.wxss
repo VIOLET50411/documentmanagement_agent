@@ -4,6 +4,8 @@
 .toolbar { display: flex; gap: 16rpx; align-items: center; }
 .search { flex: 1; padding: 18rpx 22rpx; border-radius: 14rpx; border: 2rpx solid #cbd5e1; background: #fff; }
 .btn { background: #0f172a; color: #fff; border-radius: 14rpx; }
+.primary { background: #0f766e; color: #fff; border-radius: 14rpx; }
+.business { background: #1d4ed8; color: #fff; border-radius: 14rpx; }
 .actions { display: flex; gap: 16rpx; margin: 20rpx 0 12rpx; }
 .actions-compact { margin: 16rpx 0 0; }
 .ghost { background: #e2e8f0; color: #0f172a; border-radius: 14rpx; }

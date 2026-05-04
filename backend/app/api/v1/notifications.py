@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.middleware.auth import get_current_user
+from app.config import settings
 from app.dependencies import get_db, get_redis
 from app.models.db.user import User
 from app.models.schemas.push_device import (
@@ -13,6 +14,8 @@ from app.models.schemas.push_device import (
     PushDeviceRegisterRequest,
     PushDeviceResponse,
     PushNotificationTestRequest,
+    WechatMiniappSubscribeBindRequest,
+    WechatMiniappSubscribeBindResponse,
 )
 from app.services.push_notification_service import PushNotificationService
 from app.services.security_audit_service import SecurityAuditService
@@ -86,6 +89,48 @@ async def register_push_device(
         metadata={'platform': payload.platform},
     )
     return device
+
+
+@router.post('/wechat/subscribe-bind', response_model=WechatMiniappSubscribeBindResponse)
+async def bind_wechat_miniapp_subscription(
+    payload: WechatMiniappSubscribeBindRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    service = PushNotificationService(db, get_redis())
+    openid = await service.resolve_wechat_openid(payload.js_code)
+    device = await service.register_device(
+        tenant_id=current_user.tenant_id,
+        user_id=current_user.id,
+        platform='miniapp',
+        device_token=openid,
+        device_name=payload.device_name,
+        app_version=payload.app_version,
+    )
+    await SecurityAuditService(get_redis(), db).log_event(
+        current_user.tenant_id,
+        'wechat_miniapp_subscription_bound',
+        'low',
+        '已绑定微信小程序订阅消息设备',
+        user_id=current_user.id,
+        target=payload.device_name or 'wechat-miniapp',
+        result='ok',
+        metadata={
+            'platform': 'miniapp',
+            'subscription_result': payload.subscription_result,
+        },
+    )
+    return WechatMiniappSubscribeBindResponse(
+        success=True,
+        platform=device.platform,
+        device_token=device.device_token,
+        device_name=device.device_name,
+        app_version=device.app_version,
+        subscription_result=payload.subscription_result,
+        provider_ready=service._wechat_configured(),
+        template_id_configured=bool(settings.push_wechat_template_id),
+        message='微信订阅消息授权与设备绑定已完成，可直接发送测试通知。',
+    )
 
 
 @router.post('/devices/heartbeat')

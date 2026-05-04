@@ -35,11 +35,6 @@ const config: CapacitorConfig = {
     captureInput: true,
     webContentsDebuggingEnabled: true,
   },
-  ios: {
-    contentInset: 'automatic',
-    preferredContentMode: 'mobile',
-    scheme: 'DocMind',
-  },
 };
 
 export default config;

@@ -76,7 +76,7 @@ export const mobileAuthApi = {
 
 function currentMobilePlatform() {
   const current = platformName()
-  return current === "ios" || current === "android" ? "capacitor" : current
+  return current === "android" ? "capacitor" : current
 }
 
 export function resolveMobileAuthConfig(overrides: Partial<MobileAuthConfig> = {}): MobileAuthConfig {

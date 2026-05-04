@@ -273,7 +273,17 @@ async def _handle_chat_message(
         await db.commit()
 
     except (asyncio.TimeoutError, RuntimeError, TypeError, ValueError) as exc:
-        await websocket.send_json({"type": "error", "msg": f"处理失败：{str(exc)[:200]}"})
+        await audit.log_event(
+            current_user.tenant_id,
+            "ws_runtime_exception",
+            "medium",
+            "WebSocket 运行时处理失败，已返回统一错误提示。",
+            user_id=current_user.id,
+            target="ws.chat",
+            result="error",
+            metadata={"error_type": exc.__class__.__name__, "detail": str(exc)[:200]},
+        )
+        await websocket.send_json({"type": "error", "msg": "运行时处理失败，请稍后重试。"})
         await db.rollback()
 
 

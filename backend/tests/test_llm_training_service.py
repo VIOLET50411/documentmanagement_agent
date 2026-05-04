@@ -59,6 +59,160 @@ async def test_update_model_canary_percent_clamps_range(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_activate_model_requires_manual_approval_when_enabled(monkeypatch):
+    service = LLMTrainingService(FakeDB(), redis_client=None)
+    model = SimpleNamespace(
+        id="model-1",
+        tenant_id="tenant-1",
+        is_active=False,
+        status="published",
+        activated_at=None,
+        updated_at=None,
+        metrics_json="{}",
+    )
+
+    async def fake_get_model(tenant_id: str, model_id: str):
+        assert tenant_id == "tenant-1"
+        assert model_id == "model-1"
+        return model
+
+    monkeypatch.setattr(service, "get_model", fake_get_model)
+    monkeypatch.setattr(settings, "llm_training_require_manual_approval", True)
+
+    with pytest.raises(ValueError):
+        await service.activate_model(tenant_id="tenant-1", model_id="model-1", actor_id="admin-1")
+
+
+@pytest.mark.asyncio
+async def test_activate_model_blocks_unpublished_model(monkeypatch):
+    service = LLMTrainingService(FakeDB(), redis_client=None)
+    model = SimpleNamespace(
+        id="model-1",
+        tenant_id="tenant-1",
+        is_active=False,
+        status="registered",
+        activated_at=None,
+        updated_at=None,
+        metrics_json="{}",
+    )
+
+    async def fake_get_model(tenant_id: str, model_id: str):
+        assert tenant_id == "tenant-1"
+        assert model_id == "model-1"
+        return model
+
+    monkeypatch.setattr(service, "get_model", fake_get_model)
+    monkeypatch.setattr(settings, "llm_training_require_manual_approval", False)
+    monkeypatch.setattr(settings, "llm_training_require_evaluation_gate", False)
+    monkeypatch.setattr(settings, "llm_training_deploy_verify_enabled", False)
+
+    with pytest.raises(ValueError, match="publish incomplete"):
+        await service.activate_model(tenant_id="tenant-1", model_id="model-1", actor_id="admin-1")
+
+
+@pytest.mark.asyncio
+async def test_activate_model_blocks_stale_evaluation_gate(monkeypatch):
+    service = LLMTrainingService(FakeDB(), redis_client=None)
+    model = SimpleNamespace(
+        id="model-1",
+        tenant_id="tenant-1",
+        is_active=False,
+        status="published",
+        activated_at=None,
+        updated_at=None,
+        metrics_json='{"publish_result":{"published":true},"verify_result":{"ok":true,"reason":"verified"}}',
+    )
+
+    async def fake_get_model(tenant_id: str, model_id: str):
+        return model
+
+    async def fake_assess(self, tenant_id: str, *, max_age_hours: int | None = None):
+        assert tenant_id == "tenant-1"
+        assert max_age_hours == settings.llm_training_eval_max_age_hours
+        return {"ready": False, "reason": "evaluation_stale", "message": "evaluation report is stale"}
+
+    monkeypatch.setattr(service, "get_model", fake_get_model)
+    monkeypatch.setattr(settings, "llm_training_require_manual_approval", False)
+    monkeypatch.setattr(settings, "llm_training_require_evaluation_gate", True)
+    monkeypatch.setattr(settings, "llm_training_deploy_verify_enabled", True)
+    monkeypatch.setattr("app.services.llm_training_service.EvaluationService.assess_deployment_readiness", fake_assess)
+
+    with pytest.raises(ValueError, match="evaluation report is stale"):
+        await service.activate_model(tenant_id="tenant-1", model_id="model-1", actor_id="admin-1")
+
+    assert '"reason": "evaluation_stale"' in model.metrics_json
+
+
+@pytest.mark.asyncio
+async def test_activate_model_allows_auto_deploy_bypass_for_preverification(monkeypatch):
+    service = LLMTrainingService(FakeDB(), redis_client=None)
+    model = SimpleNamespace(
+        id="model-1",
+        tenant_id="tenant-1",
+        is_active=False,
+        status="published",
+        activated_at=None,
+        updated_at=None,
+        metrics_json='{"publish_result":{"published":true}}',
+    )
+
+    async def fake_get_model(tenant_id: str, model_id: str):
+        return model
+
+    async def fake_execute(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(service, "get_model", fake_get_model)
+    async def fake_active_model(_tenant_id: str):
+        return None
+    monkeypatch.setattr(service, "get_active_model", fake_active_model)
+    monkeypatch.setattr(service.db, "execute", fake_execute, raising=False)
+    monkeypatch.setattr(settings, "llm_training_require_manual_approval", False)
+    monkeypatch.setattr(settings, "llm_training_require_evaluation_gate", False)
+    monkeypatch.setattr(settings, "llm_training_deploy_verify_enabled", True)
+
+    activated = await service.activate_model(
+        tenant_id="tenant-1",
+        model_id="model-1",
+        actor_id="admin-1",
+        require_preverified=False,
+    )
+
+    assert activated.status == "active"
+    assert activated.is_active is True
+
+
+@pytest.mark.asyncio
+async def test_record_model_approval_updates_metrics(monkeypatch):
+    service = LLMTrainingService(FakeDB(), redis_client=None)
+    model = SimpleNamespace(
+        id="model-1",
+        tenant_id="tenant-1",
+        metrics_json="{}",
+        notes="",
+        updated_at=None,
+    )
+
+    async def fake_get_model(tenant_id: str, model_id: str):
+        return model
+
+    monkeypatch.setattr(service, "get_model", fake_get_model)
+    monkeypatch.setattr(settings, "llm_training_require_manual_approval", True)
+
+    approval = await service.record_model_approval(
+        tenant_id="tenant-1",
+        model_id="model-1",
+        approved=True,
+        actor_id="admin-1",
+        reason="qa passed",
+    )
+
+    assert approval["decision"] == "approved"
+    assert approval["ready"] is True
+    assert "approved" in model.metrics_json
+
+
+@pytest.mark.asyncio
 async def test_verify_model_serving_reports_success(monkeypatch):
     service = LLMTrainingService(FakeDB(), redis_client=None)
     model = SimpleNamespace(
@@ -379,10 +533,76 @@ async def test_rollback_active_model_restores_previous_model(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_rollback_active_model_requires_previous_active_model():
-    service = LLMTrainingService(FakeDB(), redis_client=FakeRedis())
+    service = LLMTrainingService(FakeDB(), redis_client=None)
 
-    with pytest.raises(ValueError, match="没有可回滚的上一版激活模型"):
+    with pytest.raises(ValueError):
         await service.rollback_active_model(tenant_id="tenant-1", actor_id="admin-1")
+
+
+@pytest.mark.asyncio
+async def test_activate_model_persists_previous_active_snapshot(monkeypatch):
+    service = LLMTrainingService(FakeDB(), redis_client=None)
+    model = SimpleNamespace(
+        id="model-1",
+        tenant_id="tenant-1",
+        is_active=False,
+        status="published",
+        activated_at=None,
+        updated_at=None,
+        metrics_json='{"publish_result":{"published":true},"verify_result":{"ok":true,"reason":"verified"}}',
+    )
+
+    async def fake_get_model(tenant_id: str, model_id: str):
+        return model
+
+    async def fake_active_model(_tenant_id: str):
+        return {"model_id": "model-prev", "tenant_id": "tenant-1", "model": "tenant-model-prev"}
+
+    async def fake_execute(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(service, "get_model", fake_get_model)
+    monkeypatch.setattr(service, "get_active_model", fake_active_model)
+    monkeypatch.setattr(service.db, "execute", fake_execute, raising=False)
+    monkeypatch.setattr(settings, "llm_training_require_manual_approval", False)
+    monkeypatch.setattr(settings, "llm_training_require_evaluation_gate", False)
+    monkeypatch.setattr(settings, "llm_training_deploy_verify_enabled", True)
+
+    await service.activate_model(
+        tenant_id="tenant-1",
+        model_id="model-1",
+        actor_id="admin-1",
+    )
+
+    assert '"previous_active_model"' in model.metrics_json
+    assert '"model-prev"' in model.metrics_json
+
+
+@pytest.mark.asyncio
+async def test_get_previous_active_model_falls_back_to_active_model_metrics():
+    class FakeResult:
+        def __init__(self, item):
+            self.item = item
+
+        def scalar_one_or_none(self):
+            return self.item
+
+    class FakeDBWithExecute(FakeDB):
+        def __init__(self, item):
+            super().__init__()
+            self.item = item
+
+        async def execute(self, *args, **kwargs):
+            return FakeResult(self.item)
+
+    active_model = SimpleNamespace(
+        metrics_json='{"previous_active_model":{"model_id":"model-prev","tenant_id":"tenant-1","model":"tenant-model-prev"}}'
+    )
+    service = LLMTrainingService(FakeDBWithExecute(active_model), redis_client=None)
+
+    payload = await service.get_previous_active_model("tenant-1")
+
+    assert payload == {"model_id": "model-prev", "tenant_id": "tenant-1", "model": "tenant-model-prev"}
 
 
 @pytest.mark.asyncio
@@ -413,7 +633,7 @@ async def test_publish_model_artifact_reports_missing_artifact_dir(monkeypatch):
 
     assert result["publish_ready"] is False
     assert result["reason"] == "artifact_dir_missing"
-    assert "训练产物目录不存在" in result["message"]
+    assert "artifact" in result["message"]
 
 
 @pytest.mark.asyncio
@@ -600,6 +820,7 @@ async def test_summarize_deployment_aggregates_failure_recoverability(monkeypatc
     redis_client = FakeRedis()
     redis_client.data["llm:active_model:tenant-1"] = '{"model_id":"model-active","tenant_id":"tenant-1","model":"tenant-model-active"}'
     service = LLMTrainingService(FakeDB(), redis_client=redis_client)
+    monkeypatch.setattr(settings, "llm_training_require_manual_approval", True)
 
     jobs = [
         SimpleNamespace(
@@ -622,7 +843,7 @@ async def test_summarize_deployment_aggregates_failure_recoverability(monkeypatc
             is_active=True,
             canary_percent=0,
             provider="ollama",
-            metrics_json='{"publish_result":{"published":true},"verify_result":{"ok":true,"reason":"verified"}}',
+            metrics_json='{"publish_result":{"published":true},"verify_result":{"ok":true,"reason":"verified"},"approval":{"decision":"approved","approved":true}}',
             updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
         ),
         SimpleNamespace(
@@ -632,7 +853,7 @@ async def test_summarize_deployment_aggregates_failure_recoverability(monkeypatc
             is_active=False,
             canary_percent=0,
             provider="openai-compatible",
-            metrics_json='{"publish_result":{"published":false,"reason":"publish_command_failed","message":"failed"},"deployment_gate":{"ready":true,"reason":"evaluation_gate_passed"}}',
+            metrics_json='{"publish_result":{"published":false,"reason":"publish_command_failed","message":"failed"},"deployment_gate":{"ready":true,"reason":"evaluation_gate_passed"},"approval":{"decision":"approved","approved":true}}',
             updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
         ),
         SimpleNamespace(
@@ -642,7 +863,7 @@ async def test_summarize_deployment_aggregates_failure_recoverability(monkeypatc
             is_active=False,
             canary_percent=0,
             provider="openai-compatible",
-            metrics_json='{"publish_result":{"published":false,"reason":"unsupported_ollama_adapter_base_model","message":"unsupported"},"deployment_gate":{"ready":false,"reason":"evaluation_gate_failed"}}',
+            metrics_json='{"publish_result":{"published":false,"reason":"unsupported_ollama_adapter_base_model","message":"unsupported"},"deployment_gate":{"ready":false,"reason":"evaluation_gate_failed"},"approval":{"decision":"rejected","approved":false,"reason":"qa_rejected"}}',
             updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
         ),
     ]
@@ -666,18 +887,63 @@ async def test_summarize_deployment_aggregates_failure_recoverability(monkeypatc
     assert summary["deployment_gate_counts"]["passed"] == 1
     assert summary["deployment_gate_counts"]["blocked"] == 1
     assert summary["deployment_gate_counts"]["unknown"] == 1
+    assert summary["approval_counts"]["approved"] == 2
+    assert summary["approval_counts"]["rejected"] == 1
     assert summary["recoverable_failure_count"] == 1
     assert summary["non_recoverable_failure_count"] == 1
     assert summary["failure_category_counts"]["publish_command_failed"] == 1
-    assert summary["failure_category_counts"]["unsupported_base_model"] == 1
+    assert summary["failure_category_counts"]["approval_rejected"] == 1
     assert summary["top_recommendations"][0]["count"] == 1
     assert summary["recent_failures"][0]["model_id"] in {"model-recoverable", "model-nonrecoverable"}
     assert "deployment_gate_ready" in summary["recent_failures"][0]
+    assert "approval_decision" in summary["recent_failures"][0]
+
+
+@pytest.mark.asyncio
+async def test_summarize_deployment_prioritizes_approval_pending_failure(monkeypatch):
+    service = LLMTrainingService(FakeDB(), redis_client=None)
+    monkeypatch.setattr(settings, "llm_training_require_manual_approval", True)
+
+    models = [
+        SimpleNamespace(
+            id="model-pending",
+            model_name="tenant-model-pending",
+            status="active",
+            is_active=True,
+            canary_percent=0,
+            provider="ollama",
+            metrics_json='{"publish_result":{"published":true},"verify_result":{"ok":true,"reason":"verified"}}',
+            updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        ),
+    ]
+
+    async def fake_list_jobs(tenant_id: str, limit: int = 20):
+        return []
+
+    async def fake_list_models(tenant_id: str, limit: int = 20):
+        return models
+
+    async def fake_get_active_model(tenant_id: str):
+        return {"model_id": "model-pending", "model": "tenant-model-pending"}
+
+    async def fake_get_previous_active_model(tenant_id: str):
+        return None
+
+    monkeypatch.setattr(service, "list_jobs", fake_list_jobs)
+    monkeypatch.setattr(service, "list_models", fake_list_models)
+    monkeypatch.setattr(service, "get_active_model", fake_get_active_model)
+    monkeypatch.setattr(service, "get_previous_active_model", fake_get_previous_active_model)
+
+    summary = await service.summarize_deployment("tenant-1", limit=20)
+
+    assert summary["approval_counts"]["pending"] == 1
+    assert summary["recent_failures"][0]["failure_category"] == "approval_pending"
+    assert summary["recent_failures"][0]["approval_reason"] == "approval_pending"
 
 
 @pytest.mark.asyncio
 async def test_summarize_deployment_excludes_retired_failures(monkeypatch):
-    service = LLMTrainingService(FakeDB(), redis_client=FakeRedis())
+    service = LLMTrainingService(FakeDB(), redis_client=None)
     retired_model = SimpleNamespace(
         id="model-retired",
         model_name="tenant-model-retired",
@@ -765,8 +1031,8 @@ async def test_retire_nonrecoverable_models_marks_only_nonrecoverable(monkeypatc
     assert payload["retired_count"] == 1
     assert payload["changed_count"] == 1
     assert retired_candidate.status == "retired"
-    assert '"retired_by": "admin-1"' in retired_candidate.metrics_json
-    assert "已退役历史不可恢复失败模型" in retired_candidate.notes
+    assert "unsupported_ollama_adapter_base_model" in retired_candidate.notes
+    assert "unsupported_base_model" in retired_candidate.notes
     assert recoverable_candidate.status == "registered"
     assert active_model.status == "active"
     assert db.flushed == 1

@@ -1,5 +1,6 @@
-﻿<template>
+<template>
   <div class="app-layout">
+    <div class="mobile-overlay" :class="{ visible: isSidebarOpen }" @click="isSidebarOpen = false"></div>
     <aside class="sidebar" :class="{ expanded: isSidebarOpen }">
       <div class="sidebar-inner">
         <div class="sidebar-top">
@@ -12,12 +13,8 @@
             <span></span>
             <span></span>
           </button>
-          <button v-if="isSidebarOpen" class="brand-button" @click="$router.push('/chat')">
-            <span class="brand-mark">D</span>
-            <span class="brand-copy">
-              <strong>DocMind</strong>
-              <small>企业文档智能工作台</small>
-            </span>
+          <button class="brand-button" @click="$router.push('/chat')">
+            <span class="brand-text">DocMind</span>
           </button>
         </div>
 
@@ -26,19 +23,16 @@
             v-for="item in visibleNavItems"
             :key="item.key"
             class="nav-item"
-            :class="{ current: isCurrent(item) }"
+            :class="{ current: isCurrent(item), 'icon-only': !isSidebarOpen }"
             :title="item.label"
             @click="handleNav(item)"
           >
-            <span class="nav-icon">{{ item.icon }}</span>
-            <span class="nav-copy">
-              <strong>{{ item.label }}</strong>
-              <small>{{ item.description }}</small>
-            </span>
+            <span class="nav-icon" v-html="item.icon"></span>
+            <span class="nav-label">{{ item.label }}</span>
           </button>
         </nav>
 
-        <section v-if="isSidebarOpen" class="sidebar-section">
+        <section class="sidebar-section">
           <div class="section-head">
             <p>最近会话</p>
             <button class="section-link" @click="startNewChat">新建</button>
@@ -64,57 +58,48 @@
           <div class="account-shell">
             <button class="account-trigger" :class="{ active: accountMenuOpen }" @click.stop="toggleAccountMenu">
               <div class="account-avatar">{{ initials }}</div>
-              <div v-if="isSidebarOpen" class="account-meta">
-                <strong>{{ user?.username || '演示用户' }}</strong>
+              <div class="account-meta">
+                <strong>{{ user?.username || 'admin_demo' }}</strong>
                 <span>{{ roleLabel(user?.role) }}</span>
               </div>
-              <span v-if="isSidebarOpen" class="account-caret">⌄</span>
             </button>
 
             <transition name="menu-pop">
               <div v-if="accountMenuOpen" class="account-menu" @click.stop>
-                <div class="menu-profile">
-                  <div class="menu-avatar">{{ initials }}</div>
-                  <div class="menu-profile-copy">
-                    <strong>{{ user?.username || '演示用户' }}</strong>
-                    <span>{{ user?.email || '未设置邮箱' }}</span>
-                  </div>
+                <div class="menu-email">
+                  {{ user?.email || user?.username || 'admin_demo@docmind.local' }}
                 </div>
 
                 <div class="menu-group">
                   <button class="menu-item" @click="openSettings('general')">
-                    <span>通用设置</span>
-                    <small>外观、资料与基础偏好</small>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                    <span>个人设置</span>
                   </button>
                   <button class="menu-item" @click="openSettings('preferences')">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
                     <span>回答偏好</span>
-                    <small>语言、风格与默认要求</small>
                   </button>
                   <button class="menu-item" @click="openSettings('devices')">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>
                     <span>推送设备</span>
-                    <small>移动端、网页端与小程序</small>
-                  </button>
-                </div>
-
-                <div class="menu-group menu-inline-group">
-                  <button class="menu-item menu-inline" @click="themeStore.setTheme('light')">
-                    <span>浅色模式</span>
-                    <small v-if="!themeStore.isDark">当前使用</small>
-                  </button>
-                  <button class="menu-item menu-inline" @click="themeStore.setTheme('dark')">
-                    <span>深色模式</span>
-                    <small v-if="themeStore.isDark">当前使用</small>
                   </button>
                 </div>
 
                 <div class="menu-group">
-                  <button v-if="user?.role === 'ADMIN'" class="menu-item" @click="$router.push('/admin')">
-                    <span>平台管理</span>
-                    <small>运行指标、任务与审计</small>
+                  <button class="menu-item" @click="themeStore.setTheme(themeStore.isDark ? 'light' : 'dark')">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+                    <span>切换主题</span>
                   </button>
-                  <button class="menu-item danger" @click="authStore.logout">
+                  <button v-if="user?.role === 'ADMIN'" class="menu-item" @click="$router.push('/admin')">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
+                    <span>平台管理</span>
+                  </button>
+                </div>
+
+                <div class="menu-group border-none">
+                  <button class="menu-item" @click="authStore.logout">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
                     <span>退出登录</span>
-                    <small>结束当前会话</small>
                   </button>
                 </div>
               </div>
@@ -126,8 +111,10 @@
 
     <main class="content-shell" @click="accountMenuOpen = false">
       <header class="topbar">
-        <div class="topbar-copy">
-          <p class="topbar-kicker">{{ pageKicker }}</p>
+        <div class="topbar-left">
+          <button class="mobile-menu-btn" @click="isSidebarOpen = true">
+             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+          </button>
           <h1>{{ pageTitle }}</h1>
         </div>
         <div class="topbar-actions">
@@ -139,7 +126,11 @@
       </header>
 
       <section class="content-body">
-        <router-view />
+        <router-view v-slot="{ Component }">
+          <transition name="page-fade" mode="out-in">
+            <component :is="Component" />
+          </transition>
+        </router-view>
       </section>
     </main>
   </div>
@@ -174,14 +165,22 @@ const recentSessions = computed(() => chatStore.sessions.slice(0, 8))
 const isSidebarOpen = ref(true)
 const accountMenuOpen = ref(false)
 
+const svgIcons = {
+  chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>',
+  new: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>',
+  tasks: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>',
+  search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>',
+  documents: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>',
+  settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-2.82.13 1.65 1.65 0 0 0-.13 2.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>',
+  admin: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"></path><path d="M22 12A10 10 0 0 0 12 2v10z"></path></svg>'
+}
+
 const navItems: NavItem[] = [
-  { key: 'new', label: '新建对话', description: '开始一轮新的问答', icon: '+', action: 'new' },
-  { key: 'chat', label: '会话记录', description: '查看与切换历史对话', icon: '◉', route: '/chat' },
-  { key: 'tasks', label: '任务中心', description: '查看运行、入库与训练任务', icon: '◌', route: '/tasks', adminOnly: true },
-  { key: 'search', label: '知识检索', description: '搜索索引、图谱与证据', icon: '⌕', route: '/search' },
-  { key: 'documents', label: '文档中心', description: '上传、解析与处理文档', icon: '▣', route: '/documents' },
-  { key: 'settings', label: '个人设置', description: '账号、主题与设备偏好', icon: '⚙', route: '/settings' },
-  { key: 'admin', label: '平台管理', description: '运行态、审计与任务看板', icon: '▤', route: '/admin', adminOnly: true },
+  { key: 'new', label: '新建对话', description: '开始一轮新的问答', icon: svgIcons.new, action: 'new' },
+  { key: 'chat', label: '会话记录', description: '查看与切换历史对话', icon: svgIcons.chat, route: '/chat' },
+  { key: 'tasks', label: '任务中心', description: '查看运行、入库与训练任务', icon: svgIcons.tasks, route: '/tasks', adminOnly: true },
+  { key: 'search', label: '知识检索', description: '搜索索引、图谱与证据', icon: svgIcons.search, route: '/search' },
+  { key: 'documents', label: '文档中心', description: '上传、解析与处理文档', icon: svgIcons.documents, route: '/documents' },
 ]
 
 const visibleNavItems = computed(() => navItems.filter((item) => !item.adminOnly || user.value?.role === 'ADMIN'))
@@ -190,20 +189,15 @@ const pageTitle = computed(() => {
   if (route.name === 'Chat' && chatStore.messages.length > 0) {
     return chatStore.activeSession?.title || '当前对话'
   }
+  const routeLabels: Record<string, string> = {
+    '/settings': '个人设置',
+    '/admin': '平台管理'
+  }
+  if (routeLabels[route.path]) {
+    return routeLabels[route.path]
+  }
   const current = visibleNavItems.value.find((item) => item.route === route.path)
   return current?.label || 'DocMind'
-})
-
-const pageKicker = computed(() => {
-  const map: Record<string, string> = {
-    Chat: '智能问答',
-    Tasks: '任务编排',
-    Documents: '文档处理',
-    Search: '证据检索',
-    Settings: '个人偏好',
-    Admin: '平台运营',
-  }
-  return map[String(route.name || '')] || 'DocMind'
 })
 
 watch(
@@ -313,17 +307,22 @@ onBeforeUnmount(() => {
 .sidebar {
   width: var(--sidebar-collapsed-width);
   min-width: var(--sidebar-collapsed-width);
-  border-right: 1px solid var(--border-color);
-  background: color-mix(in srgb, var(--bg-sidebar) 92%, transparent);
-  backdrop-filter: blur(22px);
-  -webkit-backdrop-filter: blur(22px);
-  transition: width var(--transition-slow), min-width var(--transition-slow), background-color var(--transition-base);
-  overflow: hidden;
+  height: 100vh;
+  position: sticky;
+  top: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.45);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  transition: width var(--transition-slow), min-width var(--transition-slow);
+  overflow-x: hidden;
+  overflow-y: auto;
+  z-index: 30;
 }
 
 .sidebar.expanded {
-  width: var(--sidebar-width);
-  min-width: var(--sidebar-width);
+  width: 260px;
+  min-width: 260px;
 }
 
 .sidebar-inner {
@@ -342,81 +341,71 @@ onBeforeUnmount(() => {
 }
 
 .sidebar-toggle {
-  width: 44px;
-  height: 44px;
-  border: 1px solid var(--border-color);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.36);
+  width: 32px;
+  height: 32px;
+  border: 0;
+  background: transparent;
   display: grid;
   place-items: center;
   gap: 4px;
-  transition: transform var(--transition-fast), border-color var(--transition-fast), background-color var(--transition-fast);
+  transition: opacity var(--transition-fast);
+  cursor: pointer;
+  color: var(--text-secondary);
 }
 
 .sidebar-toggle span {
   display: block;
-  width: 16px;
-  height: 2px;
+  width: 14px;
+  height: 1.5px;
   border-radius: 999px;
-  background: var(--text-primary);
+  background: currentColor;
   transition: transform var(--transition-fast), opacity var(--transition-fast);
 }
 
-.sidebar-toggle.active span:first-child { transform: translateY(3px) rotate(45deg); }
-.sidebar-toggle.active span:last-child { transform: translateY(-3px) rotate(-45deg); }
+.sidebar-toggle:hover {
+  color: var(--text-primary);
+}
 
 .brand-button {
   min-width: 0;
   flex: 1;
   display: flex;
   align-items: center;
-  gap: 12px;
   border: 0;
   background: transparent;
   text-align: left;
+  cursor: pointer;
 }
 
-.brand-mark,
+.brand-text {
+  font-family: var(--font-heading);
+  font-size: 1.25rem;
+  font-weight: 400;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+}
+
 .account-avatar,
 .menu-avatar {
-  width: 40px;
-  height: 40px;
-  border-radius: 14px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
   display: grid;
   place-items: center;
-  background: linear-gradient(135deg, rgba(36, 31, 23, 0.96), rgba(87, 71, 48, 0.84));
-  color: #fff8ef;
-  font-weight: 700;
+  background: var(--text-primary);
+  color: var(--bg-surface);
+  font-weight: 500;
+  font-size: 14px;
 }
 
-.brand-copy,
 .account-meta,
 .menu-profile-copy,
-.nav-copy {
+.nav-label,
+.brand-button,
+.sidebar-section {
   min-width: 0;
-}
-
-.brand-copy strong,
-.account-meta strong,
-.menu-profile-copy strong,
-.nav-copy strong {
-  display: block;
-  font-family: "Manrope", "PingFang SC", "Microsoft YaHei UI", sans-serif;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.brand-copy small,
-.account-meta span,
-.menu-profile-copy span,
-.nav-copy small {
-  display: block;
-  margin-top: 2px;
-  font-size: 12px;
-  color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .sidebar-nav,
@@ -441,11 +430,17 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px;
-  border-radius: 18px;
-  color: var(--text-secondary);
-  transition: background-color var(--transition-base), color var(--transition-fast), transform var(--transition-fast);
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  transition: background-color var(--transition-fast), padding var(--transition-fast);
+  cursor: pointer;
   overflow: hidden;
+}
+
+.nav-item.icon-only {
+  justify-content: center;
+  padding: 10px;
 }
 
 .nav-item:hover,
@@ -455,43 +450,80 @@ onBeforeUnmount(() => {
 .theme-chip:hover,
 .section-link:hover {
   background: var(--bg-surface-hover);
-  color: var(--text-primary);
 }
 
 .nav-item.current {
-  background: var(--bg-surface-strong);
-  color: var(--text-primary);
-  box-shadow: inset 0 0 0 1px var(--border-color-subtle), 0 12px 28px rgba(36, 31, 23, 0.06);
+  font-weight: 500;
+  background: var(--bg-surface-hover);
 }
 
 .nav-icon {
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
-  border-radius: 12px;
-  display: grid;
-  place-items: center;
-  background: rgba(255, 255, 255, 0.56);
-  font-size: 15px;
-  color: inherit;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  transition: transform var(--transition-fast) cubic-bezier(0.34, 1.56, 0.64, 1), color var(--transition-fast);
 }
 
-.sidebar:not(.expanded) .nav-copy,
+.nav-item:hover .nav-icon {
+  transform: scale(1.15);
+  color: var(--text-primary);
+}
+
+.nav-icon :deep(svg) {
+  width: 100%;
+  height: 100%;
+}
+
+.account-meta strong,
+.menu-profile-copy strong,
+.nav-label {
+  display: block;
+  font-weight: 400;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+}
+
+.account-meta span,
+.menu-profile-copy span {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nav-label,
+.brand-button,
+.sidebar-section,
+.account-meta {
+  transition: max-width var(--transition-slow), opacity var(--transition-slow), margin var(--transition-slow), padding var(--transition-slow);
+  max-width: 250px;
+  opacity: 1;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.sidebar:not(.expanded) .nav-label,
 .sidebar:not(.expanded) .brand-button,
 .sidebar:not(.expanded) .sidebar-section,
-.sidebar:not(.expanded) .account-meta,
-.sidebar:not(.expanded) .account-caret {
+.sidebar:not(.expanded) .account-meta {
+  max-width: 0;
   opacity: 0;
-  width: 0;
+  margin: 0;
+  padding: 0;
   pointer-events: none;
 }
 
 .sidebar-section {
-  padding: 12px;
-  border: 1px solid var(--border-color-subtle);
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.34);
-  transition: opacity var(--transition-base), transform var(--transition-base);
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-color-subtle);
 }
 
 .section-head {
@@ -515,10 +547,15 @@ onBeforeUnmount(() => {
 
 .recent-item {
   width: 100%;
-  padding: 10px 12px;
+  padding: 8px 12px;
   text-align: left;
-  border-radius: 16px;
+  border-radius: 8px;
   transition: background-color var(--transition-fast), transform var(--transition-fast);
+  cursor: pointer;
+}
+
+.recent-item:hover {
+  transform: translateX(4px);
 }
 
 .recent-item strong,
@@ -542,7 +579,79 @@ onBeforeUnmount(() => {
 }
 
 .recent-item.active {
+  background: var(--bg-surface-hover);
+  font-weight: 500;
+}
+
+.account-menu {
+  position: absolute;
+  left: 8px;
+  bottom: calc(100% + 12px);
+  width: 260px;
+  padding: 8px 0;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
   background: var(--bg-surface-strong);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.menu-email {
+  padding: 8px 16px 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid var(--border-color-subtle);
+  margin-bottom: 4px;
+}
+
+.menu-group {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-color-subtle);
+}
+
+.menu-group.border-none {
+  border-bottom: none;
+}
+
+.menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  color: var(--text-primary);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.menu-item svg {
+  color: var(--text-secondary);
+  transition: transform var(--transition-fast) cubic-bezier(0.34, 1.56, 0.64, 1), color var(--transition-fast);
+}
+
+.menu-item:hover svg {
+  transform: scale(1.15);
+  color: var(--text-primary);
+}
+
+.nav-item:active,
+.recent-item:active,
+.menu-item:active,
+.account-trigger:active,
+.section-link:active,
+.brand-button:active {
+  transform: scale(0.96);
+}
+
+.menu-item:hover {
+  background: var(--bg-surface-hover);
 }
 
 .sidebar-spacer { flex: 1; }
@@ -553,104 +662,58 @@ onBeforeUnmount(() => {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   padding: 8px;
-  border-radius: 20px;
-  transition: background-color var(--transition-base), box-shadow var(--transition-base);
+  border-radius: 8px;
+  transition: background-color var(--transition-fast);
+  cursor: pointer;
 }
 
 .account-trigger.active {
-  background: var(--bg-surface-strong);
-  box-shadow: inset 0 0 0 1px var(--border-color-subtle);
+  background: var(--bg-surface-hover);
 }
 
-.account-caret {
-  margin-left: auto;
-  color: var(--text-tertiary);
-}
 
-.account-menu {
-  position: absolute;
-  left: 0;
-  bottom: calc(100% + 12px);
-  width: min(320px, calc(100vw - 32px));
-  padding: 12px;
-  border: 1px solid var(--border-color);
-  border-radius: 24px;
-  background: var(--bg-surface-strong);
-  box-shadow: var(--shadow-md);
-  z-index: 50;
-}
-
-.menu-profile {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 8px 14px;
-}
-
-.menu-group {
-  display: grid;
-  gap: 6px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border-color-subtle);
-}
-
-.menu-inline-group {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.menu-item {
-  width: 100%;
-  display: block;
-  padding: 12px 14px;
-  text-align: left;
-  border-radius: 18px;
-  transition: background-color var(--transition-fast);
-}
-
-.menu-item span,
-.menu-item small {
-  display: block;
-}
-
-.menu-item span {
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
-.menu-item small {
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.menu-item.danger span { color: var(--color-danger); }
-.menu-item-inline { text-align: center; }
 
 .topbar {
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: 20;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 22px 28px 18px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-app) 88%, transparent), transparent);
-  backdrop-filter: blur(12px);
+  padding: 24px 28px 18px;
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.3);
 }
 
-.topbar-kicker {
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.mobile-menu-btn {
+  display: none;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  transition: background-color var(--transition-fast);
+}
+
+.mobile-menu-btn:active {
+  background-color: var(--bg-surface-hover);
 }
 
 .topbar h1 {
-  margin-top: 6px;
-  font-size: clamp(1.1rem, 1vw + 0.95rem, 1.55rem);
+  margin-top: 4px;
+  font-size: clamp(1.1rem, 1vw + 0.95rem, 1.45rem);
   line-height: 1.2;
 }
 
@@ -661,11 +724,23 @@ onBeforeUnmount(() => {
 }
 
 .theme-chip {
-  padding: 10px 14px;
+  padding: 8px 14px;
   border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
   color: var(--text-secondary);
-  background: rgba(255, 255, 255, 0.42);
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(12px);
+  cursor: pointer;
+  transition: all var(--transition-fast);
 }
+.theme-chip:hover {
+  background: rgba(255, 255, 255, 0.6);
+  color: var(--text-primary);
+}
+
+
+
+
 
 .content-shell {
   min-width: 0;
@@ -673,7 +748,10 @@ onBeforeUnmount(() => {
 }
 
 .content-body {
-  padding: 0 24px 24px;
+  padding: 32px 32px 64px;
+  max-width: 1300px;
+  margin: 0 auto;
+  width: 100%;
 }
 
 .menu-pop-enter-active,
@@ -687,6 +765,19 @@ onBeforeUnmount(() => {
   transform: translateY(10px);
 }
 
+.page-fade-enter-active,
+.page-fade-leave-active {
+  transition: opacity 250ms ease, transform 250ms ease;
+}
+.page-fade-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.page-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+
 @media (max-width: 1024px) {
   .app-layout {
     grid-template-columns: 1fr;
@@ -697,7 +788,7 @@ onBeforeUnmount(() => {
     top: 0;
     left: 0;
     height: 100vh;
-    z-index: 40;
+    z-index: 50;
   }
 
   .content-shell {
@@ -709,14 +800,37 @@ onBeforeUnmount(() => {
   }
 }
 
+.mobile-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+  z-index: 40;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 300ms;
+}
+
 @media (max-width: 768px) {
+  .mobile-overlay {
+    display: block;
+  }
+
+  .mobile-overlay.visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
   .content-shell,
   .sidebar.expanded + .content-shell {
     padding-left: 0;
   }
 
   .sidebar {
-    transform: translateX(calc(-100% + var(--sidebar-collapsed-width)));
+    transform: translateX(-100%);
+    width: 280px;
+    max-width: 85vw;
   }
 
   .sidebar.expanded {
@@ -724,12 +838,18 @@ onBeforeUnmount(() => {
     box-shadow: 0 18px 50px rgba(0, 0, 0, 0.18);
   }
 
+  .mobile-menu-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
   .topbar {
-    padding: 18px 18px 14px 88px;
+    padding: 16px 20px 14px;
   }
 
   .content-body {
-    padding: 0 14px 18px;
+    padding: 0 16px 24px;
   }
 }
 </style>

@@ -1,84 +1,26 @@
-﻿<template>
+<template>
   <div class="admin-page">
-    <header class="page-header">
-      <div>
-        <h1>系统管理</h1>
-        <p class="page-subtitle">查看租户用户、处理队列、检索后端、安全事件与评估结果。</p>
-      </div>
-      <button class="refresh-btn" @click="loadDashboard" :disabled="dashboard.loading">
-        {{ dashboard.loading ? "刷新中..." : "刷新数据" }}
-      </button>
-    </header>
+
 
     <div class="admin-tabs">
-      <button v-for="tab in dashboard.tabs" :key="tab.key" class="tab-btn" :class="{ active: dashboard.activeTab === tab.key }" @click="dashboard.activeTab = tab.key">
+      <button v-for="tab in tabs" :key="tab.key" class="tab-btn" :class="{ active: activeTab === tab.key }" @click="switchTab(tab.key)">
         {{ tab.label }}
       </button>
     </div>
 
-    <div v-if="dashboard.error" class="error-banner">{{ dashboard.error }}</div>
-
-    <AdminOverviewPanel
-      v-if="dashboard.activeTab === 'overview'"
-      :dashboard="dashboard"
-      :stat-cards="statCards"
-      :format-date="formatDate"
-    />
-    <UserManagement
-      v-else-if="dashboard.activeTab === 'users'"
-      :dashboard="dashboard"
-      :invite-user="inviteUser"
-      :resend-invitation="resendInvitation"
-      :revoke-invitation="revokeInvitation"
-      :invitation-status-label="invitationStatusLabel"
-      :format-date="formatDate"
-    />
-    <IngestionDashboard
-      v-else-if="dashboard.activeTab === 'pipeline'"
-      :dashboard="dashboard"
-      :pipeline-cards="pipelineCards"
-      :load-pipeline-jobs="loadPipelineJobs"
-      :apply-pipeline-filter="applyPipelineFilter"
-      :change-pipeline-page="changePipelinePage"
-      :retry-pipeline-job="retryPipelineJob"
-      :retry-failed-jobs="retryFailedJobs"
-      :retry-by-signature="retryBySignature"
-      :format-date="formatDate"
-    />
-    <SystemMonitor
-      v-else-if="dashboard.activeTab === 'backends'"
-      :dashboard="dashboard"
-      :backend-cards="backendCards"
-      :retrieval-metrics-rows="retrievalMetricsRows"
-      :format-date="formatDate"
-      :format-percent="formatPercent"
-      :load-public-corpus-latest="loadPublicCorpusLatest"
-      :export-public-corpus-async="exportPublicCorpusAsync"
-      :download-runtime-tool-summary="downloadRuntimeToolSummary"
-    />
-    <RuntimeInspect
-      v-else-if="dashboard.activeTab === 'inspect'"
-      :format-date="formatDate"
-    />
-    <SecurityAudit
-      v-else-if="dashboard.activeTab === 'security'"
-      :dashboard="dashboard"
-      :load-security-events="loadSecurityEvents"
-      :change-security-page="changeSecurityPage"
-      :format-date="formatDate"
-    />
-    <RuntimeEvaluation
-      v-else
-      :dashboard="dashboard"
-      :format-percent="formatPercent"
-      :run-evaluation="runEvaluation"
-      :download-runtime-metrics="downloadRuntimeMetrics"
-    />
+    <AdminOverviewPanel v-if="activeTab === 'overview'" />
+    <UserManagement v-else-if="activeTab === 'users'" />
+    <IngestionDashboard v-else-if="activeTab === 'pipeline'" />
+    <SystemMonitor v-else-if="activeTab === 'backends'" />
+    <RuntimeInspect v-else-if="activeTab === 'inspect'" :format-date="formatDate" />
+    <SecurityAudit v-else-if="activeTab === 'security'" />
+    <RuntimeEvaluation v-else />
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted } from "vue"
+import { ref, watch, onMounted } from "vue"
+import { useRoute, useRouter } from "vue-router"
 import AdminOverviewPanel from "./AdminOverviewPanel.vue"
 import IngestionDashboard from "./IngestionDashboard.vue"
 import RuntimeEvaluation from "./RuntimeEvaluation.vue"
@@ -86,37 +28,43 @@ import RuntimeInspect from "./RuntimeInspect.vue"
 import SecurityAudit from "./SecurityAudit.vue"
 import SystemMonitor from "./SystemMonitor.vue"
 import UserManagement from "./UserManagement.vue"
-import { useAdminDashboard } from "./useAdminDashboard"
 
-const {
-  dashboard,
-  statCards,
-  pipelineCards,
-  backendCards,
-  retrievalMetricsRows,
-  formatDate,
-  formatPercent,
-  invitationStatusLabel,
-  loadDashboard,
-  loadPipelineJobs,
-  applyPipelineFilter,
-  changePipelinePage,
-  retryPipelineJob,
-  retryFailedJobs,
-  retryBySignature,
-  loadPublicCorpusLatest,
-  exportPublicCorpusAsync,
-  downloadRuntimeToolSummary,
-  runEvaluation,
-  downloadRuntimeMetrics,
-  inviteUser,
-  resendInvitation,
-  revokeInvitation,
-  loadSecurityEvents,
-  changeSecurityPage,
-} = useAdminDashboard()
+const route = useRoute()
+const router = useRouter()
+const activeTab = ref("overview")
 
-onMounted(loadDashboard)
+onMounted(() => {
+  if (route.query.tab) {
+    activeTab.value = route.query.tab as string
+  }
+})
+
+watch(() => route.query.tab, (newTab) => {
+  if (newTab && typeof newTab === 'string') {
+    activeTab.value = newTab
+  }
+})
+
+function switchTab(key: string) {
+  activeTab.value = key
+  router.push({ query: { ...route.query, tab: key } })
+}
+
+const tabs = [
+  { key: "overview", label: "总览" },
+  { key: "users", label: "用户管理" },
+  { key: "pipeline", label: "数据管线" },
+  { key: "backends", label: "检索后端" },
+  { key: "inspect", label: "运行检查" },
+  { key: "security", label: "安全审计" },
+  { key: "evaluation", label: "评估报告" },
+]
+
+function formatDate(value: string | null | undefined) {
+  if (!value) return "-"
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
+}
 </script>
 
 <style scoped>
@@ -126,25 +74,7 @@ onMounted(loadDashboard)
   height: 100%;
 }
 
-.page-header {
-  max-width: 1240px;
-  margin: 0 auto 18px;
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: var(--space-4);
-}
 
-.page-header h1 {
-  font-size: clamp(1.8rem, 3vw, 2.6rem);
-  line-height: 1.08;
-}
-
-.page-subtitle {
-  color: var(--text-secondary);
-  font-size: 1rem;
-  margin-top: 10px;
-}
 
 .refresh-btn {
   border: 1px solid var(--border-color);
@@ -169,19 +99,22 @@ onMounted(loadDashboard)
 .admin-tabs {
   max-width: 1240px;
   margin: 0 auto var(--space-6);
-  display: flex;
-  gap: 8px;
+  display: inline-flex;
+  gap: 4px;
   flex-wrap: wrap;
+  background: var(--bg-surface-strong);
+  padding: 4px;
+  border-radius: 12px;
 }
 
 .tab-btn {
-  padding: 10px 14px;
+  padding: 8px 16px;
   font-size: var(--text-sm);
   font-weight: 600;
   color: var(--text-secondary);
-  background: var(--bg-surface);
-  border: 1px solid var(--border-color);
-  border-radius: 999px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
   cursor: pointer;
   transition: all var(--transition-fast);
   font-family: var(--font-family);
@@ -189,20 +122,17 @@ onMounted(loadDashboard)
 
 .tab-btn:hover {
   color: var(--text-primary);
-  background: var(--bg-surface-hover);
 }
 
 .tab-btn.active {
-  color: var(--text-primary);
-  background: var(--text-primary);
-  border-color: var(--text-primary);
-  box-shadow: 0 16px 28px rgba(36, 31, 23, 0.14);
+  color: var(--text-primary) !important;
+  background: var(--bg-surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .theme-dark .tab-btn.active {
-  color: #17130f;
-  background: #f5eee3;
-  border-color: #f5eee3;
+  color: var(--text-primary) !important;
+  background: var(--bg-surface);
 }
 
 .error-banner {
@@ -235,8 +165,7 @@ onMounted(loadDashboard)
 :deep(.severity.high) { color: #d64541; }
 :deep(.severity.medium) { color: #c87d0a; }
 :deep(.severity.low) { color: #3b82f6; }
-:deep(.data-table) { width: 100%; border-collapse: collapse; }
-:deep(.data-table th), :deep(.data-table td) { padding: var(--space-3); border-bottom: 1px solid var(--border-color); text-align: left; vertical-align: top; }
+
 :deep(.action-group) { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
 :deep(.filters-grid) { display: grid; grid-template-columns: 1fr 2fr 1fr auto; gap: var(--space-2); margin-bottom: var(--space-4); }
 :deep(.pagination-row) { display: flex; justify-content: space-between; align-items: center; margin-top: var(--space-4); gap: var(--space-2); }

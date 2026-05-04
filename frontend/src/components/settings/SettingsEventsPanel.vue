@@ -54,8 +54,8 @@ defineProps<{
 }
 
 .block-head h2 {
-  font-size: 2rem;
-  letter-spacing: -0.02em;
+  font-size: 1.25rem;
+  font-weight: 600;
 }
 
 .block-head p,
@@ -66,12 +66,19 @@ defineProps<{
 }
 
 .settings-panel {
-  border: 1px solid var(--border-color);
-  border-radius: 30px;
-  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
-  padding: 24px;
-  box-shadow: var(--shadow-sm);
-  backdrop-filter: blur(18px);
+  border: none;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  border-radius: 0;
+  margin-bottom: 32px;
+}
+
+.settings-panel h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 16px;
 }
 
 .event-list {

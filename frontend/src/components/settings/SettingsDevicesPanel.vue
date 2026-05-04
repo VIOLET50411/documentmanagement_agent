@@ -3,7 +3,6 @@
     <div class="block-head">
       <div>
         <h2>设备</h2>
-        <p>登记推送设备，用于移动端、桌面端或 Web 的状态提醒。</p>
       </div>
       <button class="btn btn-ghost btn-sm" @click="loadPushData" :disabled="loadingDevices || loadingEvents || loadingSummary">
         {{ loadingDevices || loadingEvents || loadingSummary ? '刷新中...' : '刷新' }}
@@ -67,7 +66,6 @@
           <span>平台</span>
           <select v-model="deviceForm.platform" class="input">
             <option value="android">Android</option>
-            <option value="ios">iOS</option>
             <option value="web">Web</option>
             <option value="wechat">微信小程序</option>
           </select>
@@ -182,8 +180,8 @@ defineProps<{
 }
 
 .block-head h2 {
-  font-size: 2rem;
-  letter-spacing: -0.02em;
+  font-size: 1.25rem;
+  font-weight: 600;
 }
 
 .block-head p,
@@ -192,17 +190,19 @@ defineProps<{
 }
 
 .settings-panel {
-  border: 1px solid var(--border-color);
-  border-radius: 30px;
-  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
-  padding: 24px;
-  box-shadow: var(--shadow-sm);
-  backdrop-filter: blur(18px);
+  border: none;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  border-radius: 0;
+  margin-bottom: 32px;
 }
 
 .settings-panel h3 {
-  font-size: 1.1rem;
-  margin-bottom: 18px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 16px;
 }
 
 .status-grid,

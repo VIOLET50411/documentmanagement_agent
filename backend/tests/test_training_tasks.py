@@ -135,3 +135,109 @@ async def test_evaluate_deployment_gate_skips_check_when_disabled(monkeypatch):
     assert gate["ready"] is True
     assert gate["reason"] == "evaluation_gate_disabled"
     assert recorded[0]["reason"] == "evaluation_gate_disabled"
+
+
+@pytest.mark.asyncio
+async def test_auto_publish_and_activation_verifies_before_activate(monkeypatch):
+    order: list[str] = []
+    persisted_stages: list[str] = []
+    runtime_stages: list[str] = []
+
+    class FakeService:
+        async def publish_model_artifact(self, *, tenant_id: str, model_id: str):
+            order.append("publish")
+            return {"ok": True, "publish_ready": True, "published": True, "serving_model_name": "tenant-model", "reason": "published"}
+
+        async def verify_model_serving(self, *, tenant_id: str, model_id: str):
+            order.append("verify")
+            return {"ok": True, "reason": "verified"}
+
+        async def activate_model(self, *, tenant_id: str, model_id: str, actor_id: str | None = None):
+            order.append("activate")
+            return SimpleNamespace(id=model_id)
+
+    async def fake_persist_job_stage(service, db, training_job_id: str, *, status: str, stage: str, **kwargs):
+        persisted_stages.append(stage)
+
+    async def fake_upsert_runtime_task(*, stage: str, **kwargs):
+        runtime_stages.append(stage)
+
+    async def fake_audit_training_event(_audit, **kwargs):
+        return None
+
+    monkeypatch.setattr(training_tasks, "_persist_job_stage", fake_persist_job_stage)
+    monkeypatch.setattr(training_tasks, "_upsert_runtime_task", fake_upsert_runtime_task)
+    monkeypatch.setattr(training_tasks, "_audit_training_event", fake_audit_training_event)
+    monkeypatch.setattr(settings, "llm_training_auto_activate", True)
+    monkeypatch.setattr(settings, "llm_training_require_evaluation_gate", False)
+    monkeypatch.setattr(settings, "llm_training_require_manual_approval", False)
+    monkeypatch.setattr(settings, "llm_training_deploy_verify_enabled", True)
+
+    publish_result, deployment_verification, auto_activated = await training_tasks._handle_auto_publish_and_activation(
+        service=FakeService(),
+        db=SimpleNamespace(),
+        audit=SimpleNamespace(),
+        job=SimpleNamespace(id="job-1", tenant_id="tenant-1", created_by="admin-1", activate_on_success=True),
+        model=SimpleNamespace(id="model-1", model_name="tenant-model"),
+        validated_result={"executor_metadata": {"publish_ready": True}, "serving_model_name": "tenant-model"},
+        evaluation_gate={"ready": True},
+        runtime_task_id="task-1",
+        training_job_id="job-1",
+    )
+
+    assert publish_result["published"] is True
+    assert deployment_verification == {"ok": True, "reason": "verified"}
+    assert auto_activated is True
+    assert order == ["publish", "verify", "activate"]
+    assert persisted_stages == ["verifying", "deploying"]
+    assert runtime_stages == ["verifying", "deploying"]
+
+
+@pytest.mark.asyncio
+async def test_auto_publish_and_activation_blocks_cutover_when_verify_fails(monkeypatch):
+    order: list[str] = []
+
+    class FakeService:
+        async def publish_model_artifact(self, *, tenant_id: str, model_id: str):
+            order.append("publish")
+            return {"ok": True, "publish_ready": True, "published": True, "serving_model_name": "tenant-model", "reason": "published"}
+
+        async def verify_model_serving(self, *, tenant_id: str, model_id: str):
+            order.append("verify")
+            return {"ok": False, "reason": "all_health_checks_failed"}
+
+        async def activate_model(self, *, tenant_id: str, model_id: str, actor_id: str | None = None):
+            order.append("activate")
+            raise AssertionError("activate_model should not run when verification fails")
+
+    async def fake_persist_job_stage(*args, **kwargs):
+        return None
+
+    async def fake_upsert_runtime_task(**kwargs):
+        return None
+
+    async def fake_audit_training_event(_audit, **kwargs):
+        return None
+
+    monkeypatch.setattr(training_tasks, "_persist_job_stage", fake_persist_job_stage)
+    monkeypatch.setattr(training_tasks, "_upsert_runtime_task", fake_upsert_runtime_task)
+    monkeypatch.setattr(training_tasks, "_audit_training_event", fake_audit_training_event)
+    monkeypatch.setattr(settings, "llm_training_auto_activate", True)
+    monkeypatch.setattr(settings, "llm_training_require_evaluation_gate", False)
+    monkeypatch.setattr(settings, "llm_training_require_manual_approval", False)
+    monkeypatch.setattr(settings, "llm_training_deploy_verify_enabled", True)
+
+    with pytest.raises(RuntimeError, match="部署校验失败"):
+        await training_tasks._handle_auto_publish_and_activation(
+            service=FakeService(),
+            db=SimpleNamespace(),
+            audit=SimpleNamespace(),
+            job=SimpleNamespace(id="job-1", tenant_id="tenant-1", created_by="admin-1", activate_on_success=True),
+            model=SimpleNamespace(id="model-1", model_name="tenant-model"),
+            validated_result={"executor_metadata": {"publish_ready": True}, "serving_model_name": "tenant-model"},
+            evaluation_gate={"ready": True},
+            runtime_task_id="task-1",
+            training_job_id="job-1",
+        )
+
+    assert order == ["publish", "verify"]

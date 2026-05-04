@@ -269,7 +269,10 @@ class LLMService:
             redis_client = Redis.from_url(settings.redis_url, encoding="utf-8", decode_responses=True)
             owns_client = True
         try:
-            raw = await redis_client.get(f"llm:active_model:{tenant_key}")
+            try:
+                raw = await redis_client.get(f"llm:active_model:{tenant_key}")
+            except Exception:
+                return None
             if not raw:
                 return None
             try:

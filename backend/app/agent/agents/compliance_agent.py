@@ -1,4 +1,4 @@
-﻿"""Compliance agent fallback implementation."""
+"""Compliance agent fallback implementation."""
 
 from __future__ import annotations
 
@@ -47,42 +47,56 @@ class ComplianceAgent:
     async def _try_llm_answer(self, state: dict, query: str, results: list[dict]) -> str | None:
         context_lines = []
         for idx, item in enumerate(results[:5], start=1):
+            title = item.get('document_title') or '未知文档'
+            section = item.get('section_title') or '未命名章节'
+            snippet = (item.get('snippet') or '').strip()[:300]
             context_lines.append(
-                f"[{idx}] 标题: {item.get('document_title') or '未知文档'} | 章节: {item.get('section_title') or '未命名章节'} | 页码: {item.get('page_number')}\n"
-                f"片段: {(item.get('snippet') or '').strip()[:400]}"
+                f"[证据{idx}] 《{title}》{section}\n{snippet}"
             )
         prompt = (
-            "用户问题：\n"
-            f"{query}\n\n"
-            "可用证据（仅可基于这些证据作答）：\n"
-            + "\n\n".join(context_lines)
-            + "\n\n输出要求：\n"
-            "1. 先给简洁结论；\n"
-            "2. 再给 2-4 条依据；\n"
-            "3. 不要编造证据外信息。"
+            f"## 用户问题\n{query}\n\n"
+            f"## 文档证据\n" + "\n\n".join(context_lines) + "\n\n"
+            f"## 回答要求\n"
+            "请用结构化的中文回答：\n"
+            "1. 先给出简明结论\n"
+            "2. 再用编号列表展开2-4条关键要点\n"
+            "3. 标注引用来源 [来源: 文档标题]\n"
+            "4. 不要编造证据外信息"
         )
         llm = LLMService()
-        return await llm.generate(
-            system_prompt="你是企业文档问答助手。严格依据提供证据回答，不得臆造。",
+        answer = await llm.generate(
+            system_prompt=(
+                "你是企业文档问答助手 DocMind。\n"
+                "严格依据提供的文档证据回答用户问题。\n"
+                "使用清晰、专业的简体中文，善用 Markdown 格式。\n"
+                "如果证据不足，明确说明。绝不编造。"
+            ),
             user_prompt=prompt,
             temperature=0.1,
-            max_tokens=700,
+            max_tokens=800,
             tenant_key=str(getattr(state.get("current_user"), "tenant_id", "default") or "default"),
         )
+        # Validate output quality — reject garbled text
+        if answer and len(answer.strip()) > 10:
+            chinese_chars = sum(1 for c in answer if '\u4e00' <= c <= '\u9fff')
+            non_space = len(answer.replace(" ", "").replace("\n", ""))
+            if non_space > 0 and chinese_chars / non_space > 0.08:
+                return answer.strip()
+        return None
 
     def _build_qa_answer(self, query: str, results: list[dict]) -> str:
         top = results[0]
         conclusion = self._extract_best_evidence(query, top.get("snippet", ""))
         lines = [
-            f"结论：根据当前检索结果，与“{query}”最相关的制度说明是：{conclusion}",
-            "",
-            "依据：",
+            f"## 关于「{query}」\n",
+            f"**结论**：{conclusion}\n",
+            "### 相关依据\n",
         ]
         for index, item in enumerate(results[:3], start=1):
             evidence = self._extract_best_evidence(query, item.get("snippet", ""))
-            lines.append(f"{index}. {self._format_source(item)}：{evidence}")
-        lines.append("")
-        lines.append("说明：当前为规则模式答案，请以原始制度正文为准。")
+            lines.append(f"{index}. **{self._format_source(item)}**\n   {evidence}\n")
+        lines.append("---")
+        lines.append("> 以上内容基于知识库检索结果整理，请以原始制度正文为准。如需更详细解读，请上传相关制度文件。")
         return "\n".join(lines)
 
     def _build_compare_answer(self, query: str, results: list[dict]) -> str:
@@ -98,11 +112,11 @@ class ComplianceAgent:
         right_diff = self._extract_keywords(right_text)
         diff = "文档A强调：{}；文档B强调：{}".format("、".join(left_diff[:3]) or "无", "、".join(right_diff[:3]) or "无")
         return "\n".join([
-            f"对比结论：已对《{left_title}》与《{right_title}》进行整理。",
-            "",
-            "主题 | 文档A | 文档B | 差异说明",
+            f"## 对比分析：《{left_title}》vs《{right_title}》\n",
+            "| 主题 | 文档A | 文档B | 差异说明 |",
+            "| --- | --- | --- | --- |",
             "--- | --- | --- | ---",
-            f"核心要求 | {left_text} | {right_text} | {diff}",
+            f"| 核心要求 | {left_text} | {right_text} | {diff} |",
         ])
 
     def _group_by_document(self, results: list[dict]) -> OrderedDict[str, list[dict]]:
