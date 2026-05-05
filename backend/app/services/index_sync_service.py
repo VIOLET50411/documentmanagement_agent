@@ -13,6 +13,7 @@ from app.ingestion.graph_extractor import GraphExtractor
 from app.models.db.document import Document, DocumentChunk
 from app.retrieval.es_client import ESClient
 from app.retrieval.milvus_client import MilvusClient
+from app.retrieval.neo4j_client import Neo4jClient
 
 try:
     from pymilvus.exceptions import MilvusException
@@ -60,6 +61,18 @@ class IndexSyncService:
             )
 
         es_count = milvus_count = graph_count = 0
+        try:
+            ESClient().delete_by_tenant(tenant_id)
+        except (ApiError, TransportError, ESConnectionError, NotFoundError, OSError, RuntimeError, TypeError, ValueError):
+            pass
+        try:
+            MilvusClient().delete_by_tenant(tenant_id)
+        except (MilvusException, OSError, RuntimeError, TypeError, ValueError):
+            pass
+        try:
+            Neo4jClient().delete_by_tenant(tenant_id)
+        except (OSError, RuntimeError, TypeError, ValueError):
+            pass
         if chunks:
             try:
                 es_count = ESClient().bulk_index(chunks)

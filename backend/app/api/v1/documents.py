@@ -20,7 +20,7 @@ from app.config import settings
 from app.dependencies import get_db, get_minio_client, get_redis
 from app.models.db.document import Document
 from app.models.db.user import User
-from app.models.schemas.document import DocumentListResponse, DocumentResponse
+from app.models.schemas.document import DocumentListResponse, DocumentResponse, UploadSessionRequest
 from app.services.document_service import DocumentService
 from app.services.security_audit_service import SecurityAuditService
 from app.security.file_scanner import FileScanner
@@ -90,20 +90,17 @@ async def upload_document(file: UploadFile = File(...), department: str | None =
 
 @router.post("/upload/session")
 async def create_upload_session(
-    file_name: str,
-    content_type: str,
-    file_size: int,
-    total_parts: int,
-    department: str | None = None,
-    access_level: int = 1,
+    payload: UploadSessionRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     await rate_limit_check(None, f"upload:{current_user.id}", limit=40, window=60)
+    if int(payload.total_parts or 0) < 1:
+        raise HTTPException(status_code=400, detail="分片总数必须大于 0")
     _validate_upload_constraints(
-        file_name=file_name,
-        content_type=content_type,
-        file_size=file_size,
+        file_name=payload.file_name,
+        content_type=payload.content_type,
+        file_size=payload.file_size,
         tenant_id=current_user.tenant_id,
         user_id=current_user.id,
         db=db,
@@ -118,12 +115,12 @@ async def create_upload_session(
 
     payload = {
         "upload_id": upload_id,
-        "file_name": file_name,
-        "content_type": content_type,
-        "file_size": int(file_size),
-        "total_parts": int(total_parts),
-        "department": department or current_user.department or "public",
-        "access_level": int(access_level or current_user.level),
+        "file_name": payload.file_name,
+        "content_type": payload.content_type,
+        "file_size": int(payload.file_size),
+        "total_parts": int(payload.total_parts),
+        "department": payload.department or current_user.department or "public",
+        "access_level": int(payload.access_level or current_user.level),
         "tenant_id": current_user.tenant_id,
         "uploader_id": current_user.id,
         "upload_dir": str(upload_dir),
@@ -179,36 +176,44 @@ async def complete_chunk_upload(
 
     upload_dir = Path(session["upload_dir"])
     merged_path = upload_dir / "merged.bin"
-    async with UPLOAD_COMPLETE_SEMAPHORE:
-        await asyncio.to_thread(_merge_uploaded_parts, upload_dir, merged_path, total_parts)
-        scan_result = await asyncio.to_thread(_scan_local_file_sample, merged_path)
-    if not scan_result.get("safe", True):
-        await SecurityAuditService(get_redis(), db).log_event(
-            current_user.tenant_id,
-            "upload_blocked",
-            "high",
-            "分片文件安全扫描未通过",
-            user_id=current_user.id,
-            target=session["file_name"],
-            result="blocked",
-            metadata={"file_name": session["file_name"], "reason": scan_result.get("reason"), "engine": scan_result.get("engine")},
-        )
-        raise HTTPException(status_code=400, detail=f"文件未通过安全扫描: {scan_result.get('reason')}")
+    try:
+        async with UPLOAD_COMPLETE_SEMAPHORE:
+            await asyncio.to_thread(_merge_uploaded_parts, upload_dir, merged_path, total_parts)
+            expected_size = int(session.get("file_size") or 0)
+            actual_size = merged_path.stat().st_size
+            if expected_size > 0 and actual_size != expected_size:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"合并后文件大小不匹配: expected={expected_size}, actual={actual_size}",
+                )
+            scan_result = await asyncio.to_thread(_scan_local_file_sample, merged_path)
+        if not scan_result.get("safe", True):
+            await SecurityAuditService(get_redis(), db).log_event(
+                current_user.tenant_id,
+                "upload_blocked",
+                "high",
+                "分片文件安全扫描未通过",
+                user_id=current_user.id,
+                target=session["file_name"],
+                result="blocked",
+                metadata={"file_name": session["file_name"], "reason": scan_result.get("reason"), "engine": scan_result.get("engine")},
+            )
+            raise HTTPException(status_code=400, detail=f"文件未通过安全扫描: {scan_result.get('reason')}")
 
-    doc_id = str(uuid.uuid4())
-    doc_service = DocumentService(db, get_minio_client())
-    result = await doc_service.store_local_file_and_enqueue(
-        doc_id=doc_id,
-        local_path=str(merged_path),
-        file_name=session["file_name"],
-        content_type=session["content_type"],
-        uploader_id=current_user.id,
-        tenant_id=current_user.tenant_id,
-        department=session["department"],
-        access_level=int(session["access_level"]),
-    )
-    await _cleanup_upload_session(redis, upload_id, upload_dir)
-    return result
+        doc_id = str(uuid.uuid4())
+        doc_service = DocumentService(db, get_minio_client())
+        return await doc_service.store_local_file_and_enqueue(
+            doc_id=doc_id,
+            local_path=str(merged_path),
+            file_name=session["file_name"],
+            content_type=session["content_type"],
+            uploader_id=current_user.id,
+            tenant_id=current_user.tenant_id,
+            department=session["department"],
+            access_level=int(session["access_level"]),
+        )
+    finally:
+        await _cleanup_upload_session(redis, upload_id, upload_dir)
 
 
 @router.get("/", response_model=DocumentListResponse)

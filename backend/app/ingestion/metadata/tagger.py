@@ -9,6 +9,8 @@ from pathlib import Path
 class MetadataTagger:
     """Tag chunks with department, document type, dates, and sensitivity."""
 
+    TEMP_SECTION_PATTERN = re.compile(r"^tmp[0-9a-z_-]{6,}$", re.IGNORECASE)
+
     def tag(self, chunks: list[dict], doc_metadata: dict) -> list[dict]:
         title = doc_metadata.get("title") or doc_metadata.get("file_name") or "未命名文档"
         inferred_doc_type = self._infer_doc_type(doc_metadata)
@@ -22,7 +24,7 @@ class MetadataTagger:
             chunk["department"] = inferred_department
             chunk["access_level"] = int(doc_metadata.get("access_level", 1) or 1)
             chunk["doc_id"] = doc_metadata.get("doc_id", "")
-            chunk["section_title"] = chunk.get("section_title") or title
+            chunk["section_title"] = self._normalize_section_title(chunk.get("section_title"), title)
             chunk["page_number"] = chunk.get("page_number")
             chunk["effective_date"] = effective_date
             chunk["file_type"] = doc_metadata.get("file_type")
@@ -78,3 +80,11 @@ class MetadataTagger:
                 seen.add(lowered)
                 ordered.append(term)
         return ordered
+
+    def _normalize_section_title(self, section_title: str | None, fallback_title: str) -> str:
+        normalized = str(section_title or "").strip()
+        if not normalized:
+            return fallback_title
+        if self.TEMP_SECTION_PATTERN.fullmatch(normalized):
+            return fallback_title
+        return normalized

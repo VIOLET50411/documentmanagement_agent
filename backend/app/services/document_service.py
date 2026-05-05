@@ -199,6 +199,7 @@ class DocumentService:
 
         await self.db.execute(delete(DocumentChunk).where(DocumentChunk.doc_id == doc_id))
         await self.db.execute(delete(Document).where(Document.id == doc_id))
+        self.db.info["has_writes"] = True
 
         try:
             self.minio.remove_object(settings.minio_bucket, document.minio_path)
@@ -214,6 +215,11 @@ class DocumentService:
         try:
             from app.retrieval.es_client import ESClient
             ESClient().delete_by_doc(doc_id)
+        except Exception:
+            pass
+        try:
+            from app.retrieval.neo4j_client import Neo4jClient
+            await asyncio.to_thread(Neo4jClient().delete_by_doc, doc_id)
         except Exception:
             pass
 

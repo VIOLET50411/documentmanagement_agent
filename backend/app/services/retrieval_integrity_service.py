@@ -19,6 +19,7 @@ from app.retrieval.neo4j_client import Neo4jClient
 class RetrievalIntegrityService:
     BACKEND_HEALTH_TIMEOUT_SECONDS = 3.0
     BACKEND_QUERY_TIMEOUT_SECONDS = 2.0
+    TEMP_SECTION_PATTERN = re.compile(r"^tmp[0-9a-z_-]{6,}$", re.IGNORECASE)
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -217,7 +218,10 @@ class RetrievalIntegrityService:
 
     def _build_probe_query(self, content: str | None, *, section_title: str | None = None, document_title: str | None = None) -> str:
         text = (content or "").strip()
-        prefix = " ".join(part.strip() for part in [document_title or "", section_title or ""] if part and part.strip())
+        normalized_section_title = ""
+        if section_title and not self.TEMP_SECTION_PATTERN.fullmatch(str(section_title).strip()):
+            normalized_section_title = str(section_title).strip()
+        prefix = " ".join(part.strip() for part in [document_title or "", normalized_section_title] if part and part.strip())
         if prefix:
             text = f"{prefix} {text}".strip()
         if not text:

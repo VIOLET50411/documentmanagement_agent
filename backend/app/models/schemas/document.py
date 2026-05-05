@@ -31,3 +31,12 @@ class DocumentListResponse(BaseModel):
     total: int
     page: int
     size: int
+
+
+class UploadSessionRequest(BaseModel):
+    file_name: str
+    content_type: str
+    file_size: int
+    total_parts: int
+    department: str | None = None
+    access_level: int | None = None

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -471,6 +472,152 @@ async def test_documents_upload_route_returns_queued_document(api_client: AsyncC
     payload = response.json()
     assert payload["status"] == "queued"
     assert payload["file_name"] == "policy.pdf"
+
+
+@pytest.mark.asyncio
+async def test_documents_upload_session_route_accepts_json_payload(api_client: AsyncClient, monkeypatch):
+    current_user = SimpleNamespace(
+        id="user-1",
+        username="admin_demo",
+        email="admin@example.com",
+        role="ADMIN",
+        department="operations",
+        tenant_id="tenant-1",
+        level=9,
+        email_verified=True,
+        created_at=datetime.now(timezone.utc),
+    )
+    fake_redis = FakeRedis()
+
+    async def override_current_user():
+        return current_user
+
+    async def override_db():
+        yield DummyDB()
+
+    from app.dependencies import get_db
+    from app.api.v1 import documents as documents_module
+    from app.api.middleware import rate_limit as rate_limit_module
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_db] = override_db
+    monkeypatch.setattr(documents_module, "get_redis", lambda: fake_redis)
+    monkeypatch.setattr(rate_limit_module, "get_redis", lambda: fake_redis)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        monkeypatch.setattr(documents_module, "UPLOAD_TMP_ROOT", Path(tmpdir))
+        response = await api_client.post(
+            "/api/v1/documents/upload/session",
+            json={
+                "file_name": "big.csv",
+                "content_type": "text/csv",
+                "file_size": 9 * 1024 * 1024,
+                "total_parts": 2,
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["file_name"] == "big.csv"
+    assert payload["total_parts"] == 2
+    assert payload["department"] == "operations"
+    assert payload["tenant_id"] == "tenant-1"
+
+
+@pytest.mark.asyncio
+async def test_documents_chunk_upload_flow_merges_and_enqueues(api_client: AsyncClient, monkeypatch):
+    current_user = SimpleNamespace(
+        id="user-1",
+        username="admin_demo",
+        email="admin@example.com",
+        role="ADMIN",
+        department="operations",
+        tenant_id="tenant-1",
+        level=9,
+        email_verified=True,
+        created_at=datetime.now(timezone.utc),
+    )
+    fake_redis = FakeRedis()
+    merged_payload = {}
+
+    async def override_current_user():
+        return current_user
+
+    async def override_db():
+        yield DummyDB()
+
+    async def fake_store_local_file_and_enqueue(self, **kwargs):
+        merged_payload["path"] = kwargs["local_path"]
+        merged_payload["bytes"] = Path(kwargs["local_path"]).read_bytes()
+        return {
+            "id": kwargs["doc_id"],
+            "title": kwargs["file_name"],
+            "file_name": kwargs["file_name"],
+            "file_type": kwargs["content_type"],
+            "status": "queued",
+            "task_id": "task-chunk-1",
+            "percentage": 0,
+            "file_size": len(merged_payload["bytes"]),
+            "department": kwargs["department"],
+            "access_level": kwargs["access_level"],
+            "chunk_count": 0,
+            "error_message": None,
+            "created_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(timezone.utc),
+        }
+
+    from app.dependencies import get_db
+    from app.api.v1 import documents as documents_module
+    from app.api.middleware import rate_limit as rate_limit_module
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_db] = override_db
+    monkeypatch.setattr("app.services.document_service.DocumentService.store_local_file_and_enqueue", fake_store_local_file_and_enqueue)
+    monkeypatch.setattr("app.security.file_scanner.FileScanner.scan_bytes", lambda self, content: {"safe": True, "reason": "ok", "engine": "test"})
+    monkeypatch.setattr(documents_module, "get_minio_client", lambda: object())
+    monkeypatch.setattr(documents_module, "get_redis", lambda: fake_redis)
+    monkeypatch.setattr(rate_limit_module, "get_redis", lambda: fake_redis)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        monkeypatch.setattr(documents_module, "UPLOAD_TMP_ROOT", Path(tmpdir))
+        session_response = await api_client.post(
+            "/api/v1/documents/upload/session",
+            json={
+                "file_name": "big.csv",
+                "content_type": "text/csv",
+                "file_size": 9 * 1024 * 1024,
+                "total_parts": 2,
+            },
+        )
+        assert session_response.status_code == 200
+        upload_id = session_response.json()["upload_id"]
+
+        part1 = await api_client.post(
+            "/api/v1/documents/upload/chunk",
+            files={"chunk": ("chunk-1", b"hello ", "application/octet-stream")},
+            data={"upload_id": upload_id, "part_number": "1", "total_parts": "2"},
+        )
+        assert part1.status_code == 200
+        assert part1.json()["percentage"] == 50
+
+        part2 = await api_client.post(
+            "/api/v1/documents/upload/chunk",
+            files={"chunk": ("chunk-2", b"world", "application/octet-stream")},
+            data={"upload_id": upload_id, "part_number": "2", "total_parts": "2"},
+        )
+        assert part2.status_code == 200
+        assert part2.json()["percentage"] == 100
+
+        complete = await api_client.post(
+            "/api/v1/documents/upload/complete",
+            params={"upload_id": upload_id},
+        )
+
+    assert complete.status_code == 202
+    payload = complete.json()
+    assert payload["status"] == "queued"
+    assert merged_payload["bytes"] == b"hello world"
+    assert fake_redis.values.get(f"upload:session:{upload_id}") is None
 
 
 @pytest.mark.asyncio

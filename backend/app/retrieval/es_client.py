@@ -87,7 +87,17 @@ class ESClient:
         self._ensure_index_sync()
         response = self.sync_client.delete_by_query(
             index=self.index,
-            query={"term": {"doc_id.keyword": doc_id}},
+            query={"term": {"doc_id": doc_id}},
+            refresh=True,
+            ignore_unavailable=True,
+        )
+        return int(response.get("deleted", 0))
+
+    def delete_by_tenant(self, tenant_id: str) -> int:
+        self._ensure_index_sync()
+        response = self.sync_client.delete_by_query(
+            index=self.index,
+            query={"term": {"tenant_id": tenant_id}},
             refresh=True,
             ignore_unavailable=True,
         )

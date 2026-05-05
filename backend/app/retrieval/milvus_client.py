@@ -107,6 +107,21 @@ class MilvusClient:
             collection = self._get_collection()
             response = collection.delete(expr=f'doc_id == "{doc_id}"')
             collection.flush(timeout=self._operation_timeout)
+            self._best_effort_compact(collection)
+            return getattr(response, "delete_count", 0)
+        except (MilvusException, OSError, RuntimeError):
+            self.available = False
+            self._degraded_until = time.monotonic() + float(self._degraded_retry_seconds)
+            return 0
+
+    def delete_by_tenant(self, tenant_id: str) -> int:
+        if not tenant_id or not self._ensure_available():
+            return 0
+        try:
+            collection = self._get_collection()
+            response = collection.delete(expr=f'tenant_id == "{tenant_id}"')
+            collection.flush(timeout=self._operation_timeout)
+            self._best_effort_compact(collection)
             return getattr(response, "delete_count", 0)
         except (MilvusException, OSError, RuntimeError):
             self.available = False
@@ -119,11 +134,14 @@ class MilvusClient:
         try:
             collection = self._get_collection()
             collection.load(timeout=self._operation_timeout)
+            live_entities = self._count_live_rows(collection)
+            raw_entities = int(collection.num_entities)
             self.available = True
             return {
                 "available": True,
                 "collection": self.collection_name,
-                "entities": int(collection.num_entities),
+                "entities": live_entities,
+                "raw_entities": raw_entities,
                 "status": "online",
             }
         except (MilvusException, OSError, RuntimeError) as exc:
@@ -282,6 +300,47 @@ class MilvusClient:
         except (OSError, RuntimeError, TypeError, ValueError):
             pass
         return 64
+
+    def _count_live_rows(self, collection) -> int:
+        iterator_factory = getattr(collection, "query_iterator", None)
+        if iterator_factory is None:
+            return int(collection.num_entities)
+
+        total = 0
+        iterator = None
+        try:
+            iterator = iterator_factory(
+                batch_size=1000,
+                limit=-1,
+                expr='chunk_id != ""',
+                output_fields=["chunk_id"],
+                timeout=self._operation_timeout,
+            )
+            while True:
+                batch = iterator.next()
+                if not batch:
+                    break
+                total += len(batch)
+            return total
+        except (MilvusException, OSError, RuntimeError, AttributeError, TypeError, ValueError):
+            return int(collection.num_entities)
+        finally:
+            if iterator is not None:
+                close = getattr(iterator, "close", None)
+                if callable(close):
+                    try:
+                        close()
+                    except (MilvusException, OSError, RuntimeError, AttributeError, TypeError, ValueError):
+                        pass
+
+    def _best_effort_compact(self, collection) -> None:
+        compact = getattr(collection, "compact", None)
+        if not callable(compact):
+            return
+        try:
+            compact()
+        except (MilvusException, OSError, RuntimeError, AttributeError, TypeError, ValueError):
+            return
 
     def _entity_value(self, entity, key: str, default=None):
         try:

@@ -43,6 +43,47 @@ def test_milvus_health_returns_degraded_on_runtime_error(monkeypatch):
     assert "milvus down" in result["error"]
 
 
+def test_milvus_health_prefers_live_row_count(monkeypatch):
+    client = MilvusClient(dim=8)
+    client.available = True
+
+    class FakeIterator:
+        def __init__(self):
+            self._batches = [[{"chunk_id": "a"}] * 2, [{"chunk_id": "b"}], []]
+            self.closed = False
+
+        def next(self):
+            return self._batches.pop(0)
+
+        def close(self):
+            self.closed = True
+
+    class FakeCollection:
+        num_entities = 9
+
+        def __init__(self):
+            self.iterator = FakeIterator()
+
+        def load(self, timeout=None):
+            self.timeout = timeout
+
+        def query_iterator(self, **kwargs):
+            self.kwargs = kwargs
+            return self.iterator
+
+    collection = FakeCollection()
+    monkeypatch.setattr(client, "_ensure_available", lambda: True)
+    monkeypatch.setattr(client, "_get_collection", lambda: collection)
+
+    result = client.health()
+
+    assert result["available"] is True
+    assert result["entities"] == 3
+    assert result["raw_entities"] == 9
+    assert collection.kwargs["expr"] == 'chunk_id != ""'
+    assert collection.iterator.closed is True
+
+
 def test_es_health_returns_degraded_on_transport_error(monkeypatch):
     client = ESClient()
     monkeypatch.setattr(client, "_ensure_index_sync", lambda: (_ for _ in ()).throw(RuntimeError("es down")))
@@ -52,6 +93,102 @@ def test_es_health_returns_degraded_on_transport_error(monkeypatch):
     assert result["available"] is False
     assert result["documents"] == 0
     assert "es down" in result["error"]
+
+
+def test_es_delete_by_doc_uses_keyword_field_directly(monkeypatch):
+    client = ESClient()
+    calls = {}
+
+    class FakeSyncClient:
+        def delete_by_query(self, **kwargs):
+            calls.update(kwargs)
+            return {"deleted": 3}
+
+    monkeypatch.setattr(client, "_ensure_index_sync", lambda: None)
+    client.sync_client = FakeSyncClient()
+
+    deleted = client.delete_by_doc("doc-1")
+
+    assert deleted == 3
+    assert calls["query"] == {"term": {"doc_id": "doc-1"}}
+
+
+def test_es_delete_by_tenant_uses_tenant_term(monkeypatch):
+    client = ESClient()
+    calls = {}
+
+    class FakeSyncClient:
+        def delete_by_query(self, **kwargs):
+            calls.update(kwargs)
+            return {"deleted": 7}
+
+    monkeypatch.setattr(client, "_ensure_index_sync", lambda: None)
+    client.sync_client = FakeSyncClient()
+
+    deleted = client.delete_by_tenant("tenant-1")
+
+    assert deleted == 7
+    assert calls["query"] == {"term": {"tenant_id": "tenant-1"}}
+
+
+def test_milvus_delete_by_tenant_uses_tenant_expr(monkeypatch):
+    client = MilvusClient(dim=8)
+    client.available = True
+    calls = {}
+
+    class FakeResponse:
+        delete_count = 5
+
+    class FakeCollection:
+        def delete(self, **kwargs):
+            calls.update(kwargs)
+            return FakeResponse()
+
+        def flush(self, timeout=None):
+            calls["flush_timeout"] = timeout
+
+        def compact(self):
+            calls["compact"] = True
+
+    monkeypatch.setattr(client, "_ensure_available", lambda: True)
+    monkeypatch.setattr(client, "_get_collection", lambda: FakeCollection())
+
+    deleted = client.delete_by_tenant("tenant-1")
+
+    assert deleted == 5
+    assert calls["expr"] == 'tenant_id == "tenant-1"'
+    assert calls["compact"] is True
+
+
+def test_neo4j_delete_by_tenant_removes_related_edges():
+    client = Neo4jClient.__new__(Neo4jClient)
+
+    class FakeResult:
+        def single(self):
+            return {"count": 11}
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def run(self, query, **kwargs):
+            self.query = query
+            self.kwargs = kwargs
+            return FakeResult()
+
+    fake_session = FakeSession()
+    driver = MagicMock()
+    driver.session.return_value = fake_session
+    client.driver = driver
+
+    deleted = client.delete_by_tenant("tenant-1")
+
+    assert deleted == 11
+    assert "tenant_id: $tenant_id" in fake_session.query
+    assert fake_session.kwargs == {"tenant_id": "tenant-1"}
 
 
 def test_neo4j_health_returns_degraded_on_runtime_error():

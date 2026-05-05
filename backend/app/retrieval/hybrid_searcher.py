@@ -53,6 +53,9 @@ class HybridSearcher:
     )
     SYNTHETIC_TITLE_PATTERNS = (
         re.compile(r"^smoke(?:[_-][a-z0-9]+)?\.csv$"),
+        re.compile(r"^loadtest(?:[_-][a-z0-9]+)?\.csv$"),
+        re.compile(r"^perf[_-][a-z0-9]+\.csv$"),
+        re.compile(r"^large\.csv$"),
         re.compile(r"^tmp[_a-z0-9-]*\.csv$"),
         re.compile(r"^push-test(?:-\d+)?\.csv$"),
         re.compile(r"^bad_upload\.txt$"),

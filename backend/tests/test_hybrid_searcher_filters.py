@@ -9,12 +9,15 @@ def test_filter_synthetic_results_removes_default_test_artifacts():
         {"document_title": "tmp_ui_upload.csv", "chunk_id": "2"},
         {"document_title": "smoke_1.csv", "chunk_id": "3"},
         {"document_title": "smoke.csv", "chunk_id": "4"},
-        {"document_title": "差旅审批制度.csv", "chunk_id": "5"},
+        {"document_title": "loadtest_4.csv", "chunk_id": "5"},
+        {"document_title": "perf_0.csv", "chunk_id": "6"},
+        {"document_title": "large.csv", "chunk_id": "7"},
+        {"document_title": "差旅审批制度.csv", "chunk_id": "8"},
     ]
 
     filtered = searcher._filter_synthetic_results(results, query="差旅审批")
 
-    assert [item["chunk_id"] for item in filtered] == ["5"]
+    assert [item["chunk_id"] for item in filtered] == ["8"]
 
 
 def test_filter_synthetic_results_keeps_explicit_title_lookup():

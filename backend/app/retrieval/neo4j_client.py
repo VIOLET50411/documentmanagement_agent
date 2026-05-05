@@ -58,6 +58,19 @@ class Neo4jClient:
             ).single()
             return int(result["count"]) if result else 0
 
+    def delete_by_tenant(self, tenant_id: str) -> int:
+        with self.driver.session() as session:
+            result = session.run(
+                """
+                MATCH ()-[r:RELATED {tenant_id: $tenant_id}]-()
+                WITH collect(r) AS rels
+                FOREACH (r IN rels | DELETE r)
+                RETURN size(rels) AS count
+                """,
+                tenant_id=tenant_id,
+            ).single()
+            return int(result["count"]) if result else 0
+
     def health(self) -> dict:
         try:
             with self.driver.session() as session:

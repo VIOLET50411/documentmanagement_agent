@@ -24,7 +24,8 @@ class GraphSearcher:
             client = Neo4jClient()
             live_results = await client.search(query=query, tenant_id=user.tenant_id, top_k=top_k)
             if live_results:
-                return live_results
+                hydrated = await self._hydrate_live_results(db=db, tenant_id=user.tenant_id, results=live_results)
+                return self._dedupe_results(hydrated)[:top_k]
         except (Neo4jError, ServiceUnavailable, OSError, RuntimeError):
             pass
         finally:
@@ -74,7 +75,7 @@ class GraphSearcher:
             .limit(top_k)
         )
 
-        return [
+        results = [
             {
                 "doc_id": chunk.doc_id,
                 "chunk_id": chunk.id,
@@ -88,6 +89,97 @@ class GraphSearcher:
             }
             for chunk, document, score in rows.all()
         ]
+        return self._dedupe_results(results)[:top_k]
+
+    async def _hydrate_live_results(self, db, tenant_id: str, results: list[dict]) -> list[dict]:
+        doc_ids = [str(item.get("doc_id") or "").strip() for item in results if str(item.get("doc_id") or "").strip()]
+        if not doc_ids:
+            return results
+
+        docs_rows = await db.execute(
+            select(Document.id, Document.title, Document.department)
+            .where(Document.tenant_id == tenant_id, Document.id.in_(doc_ids))
+        )
+        docs_by_id = {
+            str(row.id): {
+                "title": row.title,
+                "department": row.department,
+            }
+            for row in docs_rows.all()
+        }
+
+        chunk_rows = await db.execute(
+            select(
+                DocumentChunk.doc_id,
+                DocumentChunk.id,
+                DocumentChunk.content,
+                DocumentChunk.page_number,
+                DocumentChunk.section_title,
+                DocumentChunk.chunk_index,
+            )
+            .where(DocumentChunk.tenant_id == tenant_id, DocumentChunk.doc_id.in_(doc_ids))
+            .order_by(DocumentChunk.doc_id.asc(), DocumentChunk.chunk_index.asc())
+        )
+        chunks_by_doc: dict[str, list[dict]] = {}
+        for row in chunk_rows.all():
+            chunks_by_doc.setdefault(str(row.doc_id), []).append(
+                {
+                    "chunk_id": row.id,
+                    "content": row.content,
+                    "page_number": row.page_number,
+                    "section_title": row.section_title,
+                }
+            )
+
+        hydrated: list[dict] = []
+        for item in results:
+            doc_id = str(item.get("doc_id") or "").strip()
+            doc_meta = docs_by_id.get(doc_id)
+            chunk = self._pick_best_chunk(chunks_by_doc.get(doc_id, []), item.get("section_title"))
+            if doc_meta is None and chunk is None:
+                continue
+            snippet = (chunk or {}).get("content") or item.get("snippet")
+            hydrated.append(
+                {
+                    **item,
+                    "chunk_id": item.get("chunk_id") or (chunk or {}).get("chunk_id"),
+                    "document_title": (doc_meta or {}).get("title") or item.get("document_title"),
+                    "department": (doc_meta or {}).get("department"),
+                    "snippet": snippet[:300] if isinstance(snippet, str) else snippet,
+                    "page_number": item.get("page_number") or (chunk or {}).get("page_number"),
+                    "section_title": (chunk or {}).get("section_title") or item.get("section_title"),
+                    "graph_path": item.get("snippet"),
+                }
+            )
+        return hydrated
+
+    def _dedupe_results(self, results: list[dict]) -> list[dict]:
+        deduped: list[dict] = []
+        seen: set[tuple[str, str, int | None, str]] = set()
+        for item in results:
+            snippet = str(item.get("snippet") or "").strip()
+            key = (
+                str(item.get("doc_id") or "").strip(),
+                str(item.get("section_title") or "").strip(),
+                item.get("page_number"),
+                snippet[:160],
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(item)
+        return deduped
+
+    def _pick_best_chunk(self, chunks: list[dict], expected_section_title: str | None) -> dict | None:
+        if not chunks:
+            return None
+        normalized_expected = str(expected_section_title or "").strip().lower()
+        if normalized_expected:
+            for chunk in chunks:
+                normalized_section = str(chunk.get("section_title") or "").strip().lower()
+                if normalized_section == normalized_expected:
+                    return chunk
+        return chunks[0]
 
     def _extract_terms(self, query: str) -> list[str]:
         normalized = re.sub(r"[，。；：！？、]", " ", query)
