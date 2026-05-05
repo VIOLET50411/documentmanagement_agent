@@ -16,7 +16,13 @@ class ComplianceAgent:
 
         searcher = HybridSearcher()
         query = (state.get("rewritten_query") or state["query"]).strip()
-        results = await searcher.search(query=query, user=state["current_user"], top_k=5, search_type=state.get("search_type", "hybrid"), db=state["db"])
+        results = await searcher.search(
+            query=query,
+            user=state["current_user"],
+            top_k=5,
+            search_type=state.get("search_type", "hybrid"),
+            db=state["db"],
+        )
         state["retrieved_docs"] = results
         state["citations"] = [
             {
@@ -47,62 +53,62 @@ class ComplianceAgent:
     async def _try_llm_answer(self, state: dict, query: str, results: list[dict]) -> str | None:
         context_lines = []
         for idx, item in enumerate(results[:5], start=1):
-            title = item.get('document_title') or '未知文档'
-            section = item.get('section_title') or '未命名章节'
-            snippet = (item.get('snippet') or '').strip()[:300]
-            context_lines.append(
-                f"[证据{idx}] 《{title}》{section}\n{snippet}"
-            )
+            title = item.get("document_title") or "未知文档"
+            section = item.get("section_title") or "未命名章节"
+            snippet = (item.get("snippet") or "").strip()[:300]
+            context_lines.append(f"[证据{idx}] 《{title}》 / {section}\n{snippet}")
+
         prompt = (
             f"## 用户问题\n{query}\n\n"
             f"## 文档证据\n" + "\n\n".join(context_lines) + "\n\n"
-            f"## 回答要求\n"
-            "请用结构化的中文回答：\n"
-            "1. 先给出简明结论\n"
-            "2. 再用编号列表展开2-4条关键要点\n"
-            "3. 标注引用来源 [来源: 文档标题]\n"
-            "4. 不要编造证据外信息"
+            "## 回答要求\n"
+            "请用结构化简体中文回答：\n"
+            "1. 先给出简明结论；\n"
+            "2. 再用 2-4 条编号列表展开关键要点；\n"
+            "3. 在对应要点后标注引用来源，格式为 [来源: 文档标题]；\n"
+            "4. 不要编造证据之外的信息。"
         )
         llm = LLMService()
         answer = await llm.generate(
             system_prompt=(
-                "你是企业文档问答助手 DocMind。\n"
-                "严格依据提供的文档证据回答用户问题。\n"
-                "使用清晰、专业的简体中文，善用 Markdown 格式。\n"
-                "如果证据不足，明确说明。绝不编造。"
+                "你是企业制度问答助手 DocMind。\n"
+                "请严格依据提供的文档证据回答用户问题。\n"
+                "使用清晰、专业的简体中文，必要时用 Markdown 组织结构。\n"
+                "如果证据不足，要明确说明，不得虚构。"
             ),
             user_prompt=prompt,
             temperature=0.1,
             max_tokens=800,
             tenant_key=str(getattr(state.get("current_user"), "tenant_id", "default") or "default"),
         )
-        # Validate output quality — reject garbled text
-        if answer and len(answer.strip()) > 10:
-            chinese_chars = sum(1 for c in answer if '\u4e00' <= c <= '\u9fff')
-            non_space = len(answer.replace(" ", "").replace("\n", ""))
-            if non_space > 0 and chinese_chars / non_space > 0.08:
-                return answer.strip()
+        if self._is_valid_chinese_answer(answer):
+            return answer.strip()
         return None
 
     def _build_qa_answer(self, query: str, results: list[dict]) -> str:
         top = results[0]
         conclusion = self._extract_best_evidence(query, top.get("snippet", ""))
         lines = [
-            f"## 关于「{query}」\n",
-            f"**结论**：{conclusion}\n",
-            "### 相关依据\n",
+            f"## 关于「{query}」",
+            "",
+            f"**结论：** {conclusion}",
+            "",
+            "### 相关依据",
         ]
         for index, item in enumerate(results[:3], start=1):
             evidence = self._extract_best_evidence(query, item.get("snippet", ""))
-            lines.append(f"{index}. **{self._format_source(item)}**\n   {evidence}\n")
+            lines.append(f"{index}. **{self._format_source(item)}**")
+            lines.append(f"   {evidence}")
+            lines.append("")
         lines.append("---")
-        lines.append("> 以上内容基于知识库检索结果整理，请以原始制度正文为准。如需更详细解读，请上传相关制度文件。")
-        return "\n".join(lines)
+        lines.append("> 以上内容基于知识库检索结果整理，请以原始制度正文为准。")
+        return "\n".join(lines).strip()
 
     def _build_compare_answer(self, query: str, results: list[dict]) -> str:
         grouped = self._group_by_document(results)
         if len(grouped) < 2:
             return self._build_qa_answer(query, results)
+
         doc_items = list(grouped.items())[:2]
         left_title, left_results = doc_items[0]
         right_title, right_results = doc_items[1]
@@ -110,14 +116,19 @@ class ComplianceAgent:
         right_text = self._extract_best_evidence(query, right_results[0].get("snippet", ""))
         left_diff = self._extract_keywords(left_text)
         right_diff = self._extract_keywords(right_text)
-        diff = "文档A强调：{}；文档B强调：{}".format("、".join(left_diff[:3]) or "无", "、".join(right_diff[:3]) or "无")
-        return "\n".join([
-            f"## 对比分析：《{left_title}》vs《{right_title}》\n",
-            "| 主题 | 文档A | 文档B | 差异说明 |",
-            "| --- | --- | --- | --- |",
-            "--- | --- | --- | ---",
-            f"| 核心要求 | {left_text} | {right_text} | {diff} |",
-        ])
+        diff = "文档 A 强调：{}；文档 B 强调：{}".format(
+            "、".join(left_diff[:3]) or "暂无明显差异点",
+            "、".join(right_diff[:3]) or "暂无明显差异点",
+        )
+        return "\n".join(
+            [
+                f"## 对比分析：《{left_title}》 vs 《{right_title}》",
+                "",
+                "| 主题 | 文档 A | 文档 B | 差异说明 |",
+                "| --- | --- | --- | --- |",
+                f"| 核心要求 | {left_text} | {right_text} | {diff} |",
+            ]
+        )
 
     def _group_by_document(self, results: list[dict]) -> OrderedDict[str, list[dict]]:
         grouped: OrderedDict[str, list[dict]] = OrderedDict()
@@ -202,11 +213,23 @@ class ComplianceAgent:
         section = item.get("section_title") or "未命名章节"
         page = item.get("page_number")
         if page is None:
-            return f"《{title}》 {section}"
-        return f"《{title}》 第 {page} 页 / {section}"
+            return f"《{title}》 / {section}"
+        return f"《{title}》 / 第 {page} 页 / {section}"
 
     def _normalize_text(self, text: str) -> str:
         snippet = " ".join((text or "").split())
         if len(snippet) > 160:
             snippet = snippet[:157].rstrip() + "..."
         return snippet
+
+    def _is_valid_chinese_answer(self, answer: str | None) -> bool:
+        if not answer:
+            return False
+        text = answer.strip()
+        if len(text) <= 10:
+            return False
+        if text.count("?") >= 6 or "�" in text:
+            return False
+        chinese_chars = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
+        non_space = len(text.replace(" ", "").replace("\n", ""))
+        return non_space > 0 and chinese_chars / non_space > 0.08

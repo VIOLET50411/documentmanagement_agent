@@ -53,7 +53,7 @@ class LLMService:
             return {"enabled": False, "available": False, "provider": self.provider, "reason": "rule_mode"}
 
         try:
-            target = self._resolve_runtime_target("", "", "healthcheck")
+            target = await self._resolve_runtime_target_async("", "", "healthcheck")
             async with httpx.AsyncClient(timeout=5.0) as client:
                 if target["provider"] == "ollama":
                     resp = await client.get(target["base_url"].replace("/v1", "") + "/api/tags")
@@ -257,12 +257,22 @@ class LLMService:
 
     async def _resolve_runtime_target_async(self, system_prompt: str, user_prompt: str, tenant_key: str) -> dict[str, Any]:
         target = self._resolve_runtime_target(system_prompt, user_prompt, tenant_key)
-        active_override = await self._get_active_model_override(tenant_key)
+        active_override = await self._get_active_model_override(
+            tenant_key,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+        )
         if active_override:
             target.update(active_override)
         return target
 
-    async def _get_active_model_override(self, tenant_key: str) -> dict[str, Any] | None:
+    async def _get_active_model_override(
+        self,
+        tenant_key: str,
+        *,
+        system_prompt: str = "",
+        user_prompt: str = "",
+    ) -> dict[str, Any] | None:
         redis_client = get_redis()
         owns_client = False
         if redis_client is None:
@@ -279,20 +289,73 @@ class LLMService:
                 payload = json.loads(raw)
             except json.JSONDecodeError:
                 return None
-            base_url = str(payload.get("base_url") or "").rstrip("/")
-            model = str(payload.get("model") or "").strip()
-            if not base_url or not model:
+            if not isinstance(payload, dict):
                 return None
-            return {
-                "provider": str(payload.get("provider") or self.provider),
-                "base_url": base_url,
-                "model": model,
-                "api_key": str(payload.get("api_key") or ""),
-                "profile": str(payload.get("profile") or "registry_active"),
-            }
+
+            canary_percent = max(0, min(int(payload.get("canary_percent") or 0), 100))
+            if 0 < canary_percent < 100:
+                previous_payload = await self._get_previous_active_model(redis_client, tenant_key)
+                if previous_payload:
+                    bucket_key = self._registry_rollout_bucket_key(
+                        tenant_key=tenant_key,
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                    )
+                    if not in_canary_bucket(
+                        bucket_key,
+                        percent=canary_percent,
+                        seed=settings.llm_enterprise_canary_seed,
+                    ):
+                        resolved_previous = self._coerce_registry_target(previous_payload)
+                        if resolved_previous:
+                            resolved_previous["profile"] = "registry_previous_active"
+                            resolved_previous["rollout_origin_model_id"] = str(payload.get("model_id") or "")
+                            resolved_previous["rollout_canary_percent"] = canary_percent
+                            return resolved_previous
+
+            resolved_active = self._coerce_registry_target(payload)
+            if resolved_active is None:
+                return None
+            if 0 < canary_percent < 100:
+                resolved_active["profile"] = "registry_canary_active"
+                resolved_active["rollout_canary_percent"] = canary_percent
+            return resolved_active
         finally:
             if owns_client:
                 await redis_client.aclose()
+
+    async def _get_previous_active_model(self, redis_client: Redis, tenant_key: str) -> dict[str, Any] | None:
+        try:
+            raw = await redis_client.get(f"llm:previous_active_model:{tenant_key}")
+        except Exception:
+            return None
+        if not raw:
+            return None
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def _coerce_registry_target(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        base_url = str(payload.get("base_url") or "").rstrip("/")
+        model = str(payload.get("model") or "").strip()
+        if not base_url or not model:
+            return None
+        target = {
+            "provider": str(payload.get("provider") or self.provider),
+            "base_url": base_url,
+            "model": model,
+            "api_key": str(payload.get("api_key") or ""),
+            "profile": str(payload.get("profile") or "registry_active"),
+        }
+        model_id = str(payload.get("model_id") or "").strip()
+        if model_id:
+            target["model_id"] = model_id
+        return target
+
+    def _registry_rollout_bucket_key(self, *, tenant_key: str, system_prompt: str, user_prompt: str) -> str:
+        return f"{tenant_key}\n{system_prompt.strip()}\n{user_prompt.strip()}"
 
     def _estimate_usage(self, system_prompt: str, user_prompt: str, output: str) -> dict[str, int]:
         prompt_tokens = self._approx_token_count(system_prompt) + self._approx_token_count(user_prompt)

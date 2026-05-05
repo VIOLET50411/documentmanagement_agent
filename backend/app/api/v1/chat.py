@@ -276,7 +276,7 @@ async def chat_stream(
                             "status": "done",
                             "degraded": True,
                             "fallback_reason": "replay_window_miss",
-                            "msg": "未找到可续传事件，请重新发起请求。",
+                            "msg": "未找到可继续恢复的事件，请重新发起请求。",
                         }
                     )
 

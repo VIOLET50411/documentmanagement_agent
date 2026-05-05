@@ -33,7 +33,31 @@ except ImportError:  # pragma: no cover - optional dependency import fallback
 class HybridSearcher:
     """Orchestrates multi-path retrieval: keyword + vector + graph."""
 
-    GRAPH_HINTS = ("\u5173\u7cfb", "\u5173\u8054", "\u5f15\u7528", "\u4fee\u8ba2", "\u8d1f\u8d23", "\u4e0a\u7ea7", "\u4e0b\u7ea7", "\u5bf9\u6bd4", "\u6bd4\u8f83")
+    GRAPH_HINTS = (
+        "\u5173\u7cfb",
+        "\u5173\u8054",
+        "\u5f15\u7528",
+        "\u4fee\u8ba2",
+        "\u8d1f\u8d23",
+        "\u8d1f\u8d23\u4eba",
+        "\u5ba1\u6279\u4eba",
+        "\u7531\u8c01",
+        "\u8c01\u8d1f\u8d23",
+        "\u5f52\u8c01",
+        "\u4e0a\u7ea7",
+        "\u4e0b\u7ea7",
+        "\u5bf9\u6bd4",
+        "\u6bd4\u8f83",
+        "\u6d41\u7a0b",
+        "\u8282\u70b9",
+    )
+    SYNTHETIC_TITLE_PATTERNS = (
+        re.compile(r"^smoke(?:[_-][a-z0-9]+)?\.csv$"),
+        re.compile(r"^tmp[_a-z0-9-]*\.csv$"),
+        re.compile(r"^push-test(?:-\d+)?\.csv$"),
+        re.compile(r"^bad_upload\.txt$"),
+        re.compile(r"^blocked_chat\.json$"),
+    )
     KEYWORD_TIMEOUT_SECONDS = 2.0
     VECTOR_TIMEOUT_SECONDS = 0.35
     VECTOR_CONCURRENCY_LIMIT = 4
@@ -52,7 +76,8 @@ class HybridSearcher:
 
         filters = build_permission_filter(user)
         if search_type == "graph":
-            return await GraphSearcher().traverse(query=query, user=user, db=db, top_k=top_k)
+            results = await GraphSearcher().traverse(query=query, user=user, db=db, top_k=top_k)
+            return self._filter_synthetic_results(results, query=query)[:top_k]
 
         query_terms = self._extract_terms(query)
         weighted_lists: list[list[dict]] = []
@@ -83,16 +108,20 @@ class HybridSearcher:
 
         if keyword_task is not None and vector_task is not None:
             keyword_results, vector_results = await asyncio.gather(keyword_task, vector_task)
+            keyword_results = self._filter_synthetic_results(keyword_results, query=query)
+            vector_results = self._filter_synthetic_results(vector_results, query=query)
             weighted_lists.append(keyword_results)
             weights.append(1.15 if self._is_keyword_heavy(query) else 1.0)
             weighted_lists.append(vector_results)
             weights.append(1.2 if not self._is_keyword_heavy(query) else 0.9)
         elif keyword_task is not None:
             keyword_results = await keyword_task
+            keyword_results = self._filter_synthetic_results(keyword_results, query=query)
             weighted_lists.append(keyword_results)
             weights.append(1.15 if self._is_keyword_heavy(query) else 1.0)
         elif vector_task is not None:
             vector_results = await vector_task
+            vector_results = self._filter_synthetic_results(vector_results, query=query)
             weighted_lists.append(vector_results)
             weights.append(1.2 if not self._is_keyword_heavy(query) else 0.9)
 
@@ -107,6 +136,7 @@ class HybridSearcher:
                 timeout=False,
                 latency_ms=int((time.perf_counter() - graph_started) * 1000),
             )
+            graph_results = self._filter_synthetic_results(graph_results, query=query)
             weighted_lists.append(graph_results)
             weights.append(1.3)
 
@@ -306,7 +336,10 @@ class HybridSearcher:
                 return {}
 
     def _should_include_graph(self, query: str) -> bool:
-        return any(token in query for token in self.GRAPH_HINTS)
+        normalized = str(query or "").strip()
+        if any(token in normalized for token in self.GRAPH_HINTS):
+            return True
+        return bool(re.search(r"(谁.*负责|谁.*审批|由谁|归谁|上级|下级|关联关系)", normalized))
 
     def _is_keyword_heavy(self, query: str) -> bool:
         return bool(re.search(r"[A-Z]{2,}[-_]\d+|\d{4}", query)) or any(char in query for char in [":", "/", "_"])
@@ -326,6 +359,20 @@ class HybridSearcher:
                 seen.add(term)
                 ordered.append(term)
         return ordered or [query]
+
+    def _filter_synthetic_results(self, results: list[dict], *, query: str) -> list[dict]:
+        filtered = [item for item in results if not self._should_exclude_synthetic_result(item, query=query)]
+        return filtered
+
+    def _should_exclude_synthetic_result(self, item: dict, *, query: str) -> bool:
+        title = str(item.get("document_title") or "").strip()
+        if not title:
+            return False
+        normalized_title = title.lower()
+        normalized_query = str(query or "").strip().lower()
+        if normalized_title and normalized_title in normalized_query:
+            return False
+        return any(pattern.fullmatch(normalized_title) for pattern in self.SYNTHETIC_TITLE_PATTERNS)
 
 
     async def _run_with_timeout(self, awaitable, timeout_seconds: float) -> list[dict]:

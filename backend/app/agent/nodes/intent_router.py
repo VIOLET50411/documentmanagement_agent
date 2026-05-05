@@ -50,9 +50,12 @@ GRAPH_KEYWORDS = (
     "关联",
     "依赖",
     "链路",
+    "审批链",
+    "审批流程",
+    "谁负责",
     "负责人",
-    "上游",
-    "下游",
+    "角色职责",
+    "上下游",
     "影响",
     "graph",
     "relationship",
@@ -69,10 +72,10 @@ async def intent_router(state: dict) -> dict:
         intent = "compare"
     elif _looks_like_statistics(query, lowered):
         intent = "statistics"
-    elif _looks_like_summary(query, lowered):
-        intent = "summarize"
     elif _looks_like_graph(query, lowered):
         intent = "graph_query"
+    elif _looks_like_summary(query, lowered):
+        intent = "summarize"
     else:
         intent = "qa"
 

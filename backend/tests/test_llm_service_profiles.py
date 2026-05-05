@@ -58,3 +58,64 @@ async def test_llm_service_uses_active_registry_override(monkeypatch):
     assert target["model"] == "tenant-z-sft"
     assert target["base_url"] == "http://trained-llm:11434/v1"
     assert target["api_key"] == "secret"
+
+
+@pytest.mark.asyncio
+async def test_llm_service_routes_canary_traffic_to_active_model(monkeypatch):
+    class FakeRedis:
+        async def get(self, key):
+            payloads = {
+                "llm:active_model:tenant-z": (
+                    '{"model_id":"model-canary","provider":"openai-compatible","base_url":"http://trained-llm:11434/v1",'
+                    '"model":"tenant-z-sft","api_key":"secret","profile":"registry_active","canary_percent":20}'
+                ),
+                "llm:previous_active_model:tenant-z": (
+                    '{"model_id":"model-prev","provider":"openai-compatible","base_url":"http://baseline-llm:11434/v1",'
+                    '"model":"tenant-z-baseline","api_key":"secret-prev","profile":"registry_active"}'
+                ),
+            }
+            return payloads.get(key)
+
+    monkeypatch.setattr("app.services.llm_service.get_redis", lambda: FakeRedis())
+    monkeypatch.setattr(
+        "app.services.llm_service.in_canary_bucket",
+        lambda key, *, percent, seed: key.startswith("tenant-z\n命中灰度"),
+    )
+
+    service = LLMService()
+    target = await service._resolve_runtime_target_async("命中灰度", "这是一个新请求", "tenant-z")
+
+    assert target["profile"] == "registry_canary_active"
+    assert target["model"] == "tenant-z-sft"
+    assert target["base_url"] == "http://trained-llm:11434/v1"
+    assert target["rollout_canary_percent"] == 20
+
+
+@pytest.mark.asyncio
+async def test_llm_service_routes_non_canary_traffic_to_previous_model(monkeypatch):
+    class FakeRedis:
+        async def get(self, key):
+            payloads = {
+                "llm:active_model:tenant-z": (
+                    '{"model_id":"model-canary","provider":"openai-compatible","base_url":"http://trained-llm:11434/v1",'
+                    '"model":"tenant-z-sft","api_key":"secret","profile":"registry_active","canary_percent":20}'
+                ),
+                "llm:previous_active_model:tenant-z": (
+                    '{"model_id":"model-prev","provider":"openai-compatible","base_url":"http://baseline-llm:11434/v1",'
+                    '"model":"tenant-z-baseline","api_key":"secret-prev","profile":"registry_active"}'
+                ),
+            }
+            return payloads.get(key)
+
+    monkeypatch.setattr("app.services.llm_service.get_redis", lambda: FakeRedis())
+    monkeypatch.setattr("app.services.llm_service.in_canary_bucket", lambda key, *, percent, seed: False)
+
+    service = LLMService()
+    target = await service._resolve_runtime_target_async("普通流量", "这是一个旧请求", "tenant-z")
+
+    assert target["profile"] == "registry_previous_active"
+    assert target["model"] == "tenant-z-baseline"
+    assert target["base_url"] == "http://baseline-llm:11434/v1"
+    assert target["api_key"] == "secret-prev"
+    assert target["rollout_origin_model_id"] == "model-canary"
+    assert target["rollout_canary_percent"] == 20

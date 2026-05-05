@@ -97,8 +97,24 @@ export const adminApi = {
     return apiPost("/admin/evaluation/run", null, { params: { sample_limit: sampleLimit } })
   },
 
+  runEvaluationAsync(sampleLimit = 100) {
+    return apiPost("/admin/evaluation/run-async", null, { params: { sample_limit: sampleLimit } })
+  },
+
   getLatestEvaluation() {
     return apiGet("/admin/evaluation/latest")
+  },
+
+  getEvaluationHistory(limit = 30) {
+    return apiGet("/admin/evaluation/history", { params: { limit } })
+  },
+
+  getEvaluationGateSummary(limit = 30) {
+    return apiGet("/admin/evaluation/gate-summary", { params: { limit } })
+  },
+
+  getEvaluationTask(taskId: string) {
+    return apiGet(`/admin/evaluation/tasks/${taskId}`)
   },
 
   getRuntimeEvaluationMetrics() {
@@ -106,6 +122,10 @@ export const adminApi = {
   },
 
   getRuntimeEvaluationHistory(limit = 30) {
+    return apiGet("/admin/evaluation/runtime-metrics/history", { params: { limit } })
+  },
+
+  getRuntimeMetricsHistory(limit = 30) {
     return apiGet("/admin/evaluation/runtime-metrics/history", { params: { limit } })
   },
 

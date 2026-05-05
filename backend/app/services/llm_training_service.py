@@ -1416,6 +1416,7 @@ class LLMTrainingService:
             "model": model.serving_model_name,
             "api_key": model.api_key or "",
             "profile": "registry_active",
+            "canary_percent": int(getattr(model, "canary_percent", 0) or 0),
             "artifact_dir": model.artifact_dir,
             "activated_at": model.activated_at.isoformat() if model.activated_at else None,
         }
