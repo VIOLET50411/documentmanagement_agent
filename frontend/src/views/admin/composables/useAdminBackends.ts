@@ -1,4 +1,4 @@
-import { reactive, computed } from "vue"
+import { computed, reactive } from "vue"
 import { adminApi } from "@/api/admin"
 import { useRuntimeStore } from "@/stores/runtime"
 
@@ -65,23 +65,31 @@ export function useAdminBackends() {
   }
 
   async function loadBackends() {
+    if (state.loading) return
+
     state.loading = true
     state.error = ""
     try {
-      const [backendRes, retrievalMetricsRes, readinessRes, retrievalIntegrityRes] = await Promise.all([
+      const [backendRes, retrievalMetricsRes, readinessRes] = await Promise.all([
         adminApi.getBackendStatus(),
         adminApi.getRetrievalMetrics(),
         adminApi.getPlatformReadiness(),
-        adminApi.getRetrievalIntegrity(12),
       ])
       state.backends = backendRes || {}
       state.retrievalMetrics = retrievalMetricsRes || {}
       state.readiness = readinessRes || null
-      state.retrievalIntegrity = retrievalIntegrityRes || null
     } catch (err: any) {
       state.error = err?.response?.data?.detail || "加载后端状态失败。"
     } finally {
       state.loading = false
+    }
+  }
+
+  async function loadRetrievalIntegrity() {
+    try {
+      state.retrievalIntegrity = (await adminApi.getRetrievalIntegrity(12)) || null
+    } catch (err: any) {
+      state.error = err?.response?.data?.detail || "加载检索一致性健康度失败。"
     }
   }
 
@@ -173,10 +181,11 @@ export function useAdminBackends() {
     backendCards,
     retrievalMetricsRows,
     loadBackends,
+    loadRetrievalIntegrity,
     loadPublicCorpusLatest,
     exportPublicCorpusAsync,
     downloadRuntimeToolSummary,
     formatDate,
-    formatPercent
+    formatPercent,
   }
 }

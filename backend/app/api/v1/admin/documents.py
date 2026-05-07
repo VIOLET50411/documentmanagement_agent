@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import List
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,7 +12,7 @@ from app.api.middleware.rbac import require_role
 from app.dependencies import get_db, get_minio_client, get_redis
 from app.models.db.document import Document
 from app.models.db.user import User
-from app.models.schemas.user import UserResponse
+from app.models.schemas.user import AdminResetPasswordResponse, AdminUpdateUserRequest, UserResponse
 
 from app.api.v1.admin._helpers import _error_signature
 
@@ -24,6 +24,73 @@ async def list_users(current_user: User = Depends(require_role("ADMIN")), db: As
     from app.services.auth_service import AuthService
 
     return await AuthService(db).list_users(tenant_id=current_user.tenant_id)
+
+
+@router.patch("/users/{user_id}", response_model=UserResponse)
+async def update_user(
+    user_id: str,
+    payload: AdminUpdateUserRequest,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.auth_service import AuthService
+
+    try:
+        return await AuthService(db).admin_update_user(
+            tenant_id=current_user.tenant_id,
+            actor_id=current_user.id,
+            user_id=user_id,
+            username=payload.username,
+            role=payload.role,
+            department=payload.department,
+            level=payload.level,
+            is_active=payload.is_active,
+            email_verified=payload.email_verified,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/users/{user_id}/reset-password", response_model=AdminResetPasswordResponse)
+async def reset_user_password(
+    user_id: str,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.auth_service import AuthService
+
+    try:
+        user, temporary_password = await AuthService(db).admin_reset_password(
+            tenant_id=current_user.tenant_id,
+            actor_id=current_user.id,
+            user_id=user_id,
+        )
+        return AdminResetPasswordResponse(
+            user_id=user.id,
+            username=user.username,
+            temporary_password=temporary_password,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: str,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.auth_service import AuthService
+
+    try:
+        user = await AuthService(db).admin_delete_user(
+            tenant_id=current_user.tenant_id,
+            actor_id=current_user.id,
+            user_id=user_id,
+        )
+        return {"ok": True, "deleted_user_id": user.id, "deleted_username": user.username}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/analytics/overview")

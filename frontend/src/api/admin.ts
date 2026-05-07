@@ -1,10 +1,22 @@
-import { apiGet, apiPost } from "./http"
+import { apiDelete, apiGet, apiPatch, apiPost } from "./http"
 
 type QueryParams = Record<string, string | number | boolean | null | undefined>
 
 export const adminApi = {
   listUsers() {
     return apiGet("/admin/users")
+  },
+
+  updateUser(userId: string, payload: Record<string, unknown>) {
+    return apiPatch(`/admin/users/${userId}`, payload)
+  },
+
+  resetUserPassword(userId: string) {
+    return apiPost(`/admin/users/${userId}/reset-password`)
+  },
+
+  deleteUser(userId: string) {
+    return apiDelete(`/admin/users/${userId}`)
   },
 
   inviteUser(payload: Record<string, unknown>) {
@@ -51,6 +63,10 @@ export const adminApi = {
 
   retryPipelineBySignature(signature: string, limit = 20) {
     return apiPost("/admin/pipeline/retry-by-signature", null, { params: { signature, limit } })
+  },
+
+  reindexDocuments(limit?: number) {
+    return apiPost("/admin/reindex", null, { params: { limit } })
   },
 
   getSecurityEvents(params: QueryParams = {}) {

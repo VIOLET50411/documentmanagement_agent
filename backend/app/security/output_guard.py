@@ -51,6 +51,17 @@ class OutputGuard:
                 degraded=mode in {"degraded", "fail_closed"},
             )
 
+        if self._is_garbled(output):
+            return self._build_result(
+                safe=False,
+                issues=["garbled_output"],
+                reason="模型输出异常，已自动切换到规则化降级回答。请重新提问或继续细化问题。",
+                severity="medium",
+                mode="garbled_detection",
+                decision_source="local_heuristic",
+                degraded=True,
+            )
+
         if self.PHONE_RE.search(output):
             issues.append("Possible phone number in output")
         if self.ID_RE.search(output):
@@ -97,3 +108,53 @@ class OutputGuard:
             "decision_source": decision_source,
             "degraded": degraded,
         }
+
+    def _is_garbled(self, text: str) -> bool:
+        """Detect garbled/garbage LLM output using multiple heuristics."""
+        if not text or len(text.strip()) < 30:
+            return False
+
+        cleaned = text.replace(" ", "").replace("\n", "").replace("\r", "")
+        total = len(cleaned)
+        if total == 0:
+            return False
+
+        chinese_chars = sum(1 for c in cleaned if "\u4e00" <= c <= "\u9fff")
+        latin_chars = sum(1 for c in cleaned if ("a" <= c <= "z") or ("A" <= c <= "Z"))
+
+        chinese_ratio = chinese_chars / total
+        latin_ratio = latin_chars / total
+
+        if total < 100 and chinese_ratio > 0.3:
+            return False
+
+        if chinese_ratio < 0.10 and latin_ratio > 0.30:
+            return True
+
+        script_flags = set()
+        for c in cleaned[:500]:
+            cp = ord(c)
+            if 0x0400 <= cp <= 0x04FF:
+                script_flags.add("cyrillic")
+            elif 0x0E00 <= cp <= 0x0E7F:
+                script_flags.add("thai")
+            elif 0x0600 <= cp <= 0x06FF:
+                script_flags.add("arabic")
+            elif 0x0370 <= cp <= 0x03FF:
+                script_flags.add("greek")
+            elif 0x1000 <= cp <= 0x109F:
+                script_flags.add("myanmar")
+        if len(script_flags) >= 2:
+            return True
+
+        code_markers = ["()", "{}", "[];", ");", "=>", "</>", "def ", "class ", "import ", "async ", "await ", "console.", "self."]
+        if sum(1 for marker in code_markers if marker in text) >= 4:
+            return True
+
+        words = text.split()
+        if len(words) > 50:
+            avg_len = sum(len(w) for w in words) / len(words)
+            if avg_len < 3.5 and latin_ratio > 0.20:
+                return True
+
+        return False

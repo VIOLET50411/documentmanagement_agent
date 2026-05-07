@@ -4,9 +4,9 @@ import { getAbsoluteApiBaseUrl } from "@/mobile/capacitor"
 import { useAuthStore } from "@/stores/auth"
 
 export const chatApi = {
-  streamChat(message: string, threadId: string | null = null) {
+  streamChat(message: string, threadId: string | null = null, selectedModel: string | null = null) {
     const authStore = useAuthStore()
-    const body = JSON.stringify({ message, thread_id: threadId })
+    const body = JSON.stringify({ message, thread_id: threadId, selected_model: selectedModel })
     const base = getAbsoluteApiBaseUrl()
 
     return fetch(`${base}/chat/stream`, {

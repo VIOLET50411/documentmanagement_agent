@@ -49,6 +49,15 @@ class InviteUserRequest(BaseModel):
         return _normalize_email(value)
 
 
+class AdminUpdateUserRequest(BaseModel):
+    username: str | None = Field(default=None, min_length=3, max_length=100)
+    role: str | None = None
+    department: str | None = Field(default=None, max_length=100)
+    level: int | None = Field(default=None, ge=1, le=9)
+    is_active: bool | None = None
+    email_verified: bool | None = None
+
+
 class VerifyEmailRequest(BaseModel):
     email: str
     code: str = Field(min_length=4, max_length=12)
@@ -94,6 +103,7 @@ class UserResponse(BaseModel):
     department: str | None
     tenant_id: str
     level: int | None = None
+    is_active: bool = True
     email_verified: bool = False
     created_at: datetime
 
@@ -131,3 +141,9 @@ class RefreshTokenRequest(BaseModel):
 
 class GenericMessage(BaseModel):
     message: str
+
+
+class AdminResetPasswordResponse(BaseModel):
+    user_id: str
+    username: str
+    temporary_password: str

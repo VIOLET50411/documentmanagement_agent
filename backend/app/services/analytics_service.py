@@ -10,6 +10,7 @@ from app.models.db.document import Document
 from app.models.db.feedback import Feedback
 from app.models.db.security_audit import SecurityAuditEvent
 from app.models.db.session import ChatMessage, ChatSession
+from app.models.db.user import User
 
 
 class AnalyticsService:
@@ -84,6 +85,31 @@ class AnalyticsService:
             if redis is not None:
                 security_events = await redis.llen(f"security_audit:{tenant_id}")
 
+        document_status_rows = await self.db.execute(
+            select(Document.status, func.count(Document.id))
+            .where(Document.tenant_id == tenant_id)
+            .group_by(Document.status)
+        )
+        role_distribution_rows = await self.db.execute(
+            select(User.role, func.count(User.id))
+            .where(User.tenant_id == tenant_id)
+            .group_by(User.role)
+        )
+        query_trend_rows = await self.db.execute(
+            select(func.date(ChatMessage.created_at).label("day"), func.count(ChatMessage.id))
+            .join(ChatSession, ChatSession.id == ChatMessage.session_id)
+            .where(ChatMessage.role == "user", ChatSession.tenant_id == tenant_id)
+            .group_by(func.date(ChatMessage.created_at))
+            .order_by(func.date(ChatMessage.created_at).desc())
+            .limit(7)
+        )
+        feedback_distribution_rows = await self.db.execute(
+            select(Feedback.rating, func.count(Feedback.id))
+            .where(Feedback.tenant_id == tenant_id)
+            .group_by(Feedback.rating)
+            .order_by(Feedback.rating.desc())
+        )
+
         return {
             "total_queries": int(total_queries or 0),
             "total_documents": int(total_documents or 0),
@@ -98,5 +124,21 @@ class AnalyticsService:
             "recent_feedback": [
                 {"rating": row[0], "correction": row[1], "created_at": row[2].isoformat()}
                 for row in recent_feedback_rows
+            ],
+            "document_status_distribution": [
+                {"status": row[0] or "unknown", "count": int(row[1] or 0)}
+                for row in document_status_rows
+            ],
+            "role_distribution": [
+                {"role": row[0] or "unknown", "count": int(row[1] or 0)}
+                for row in role_distribution_rows
+            ],
+            "query_trend_7d": [
+                {"day": str(row[0]), "count": int(row[1] or 0)}
+                for row in reversed(query_trend_rows.all())
+            ],
+            "feedback_distribution": [
+                {"rating": int(row[0]), "count": int(row[1] or 0)}
+                for row in feedback_distribution_rows
             ],
         }

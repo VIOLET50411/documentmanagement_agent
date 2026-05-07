@@ -1,4 +1,4 @@
-﻿"""Documents API - upload, manage, and track processing status."""
+"""Documents API - upload, manage, and track processing status."""
 
 from __future__ import annotations
 
@@ -8,9 +8,11 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
+from urllib.parse import quote
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,7 +40,9 @@ async def upload_document(file: UploadFile = File(...), department: str | None =
         "application/pdf",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "text/csv",
+        "text/html",
         "image/png",
         "image/jpeg",
     }
@@ -182,9 +186,20 @@ async def complete_chunk_upload(
             expected_size = int(session.get("file_size") or 0)
             actual_size = merged_path.stat().st_size
             if expected_size > 0 and actual_size != expected_size:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"合并后文件大小不匹配: expected={expected_size}, actual={actual_size}",
+                await SecurityAuditService(get_redis(), db).log_event(
+                    current_user.tenant_id,
+                    "upload_size_mismatch",
+                    "medium",
+                    f"分片合并后的文件大小与会话声明不一致: expected={expected_size}, actual={actual_size}",
+                    user_id=current_user.id,
+                    target=session["file_name"],
+                    result="warning",
+                    metadata={
+                        "file_name": session["file_name"],
+                        "expected_size": expected_size,
+                        "actual_size": actual_size,
+                        "upload_id": upload_id,
+                    },
                 )
             scan_result = await asyncio.to_thread(_scan_local_file_sample, merged_path)
         if not scan_result.get("safe", True):
@@ -264,6 +279,49 @@ async def get_processing_events(doc_id: str, current_user: User = Depends(get_cu
     return {"doc_id": doc_id, "events": events}
 
 
+@router.get("/{doc_id}/original")
+async def get_original_document_access(doc_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    query = select(Document).where(Document.id == doc_id, Document.tenant_id == current_user.tenant_id)
+    if current_user.role != "ADMIN":
+        query = query.where(Document.access_level <= current_user.level)
+        if current_user.department:
+            query = query.where(Document.department.in_([current_user.department, "public"]))
+
+    document = (await db.execute(query)).scalar_one_or_none()
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    try:
+        minio_response = await asyncio.to_thread(
+            get_minio_client().get_object,
+            settings.minio_bucket,
+            document.minio_path,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to load original document") from exc
+
+    async def file_iterator():
+        try:
+            while True:
+                chunk = await asyncio.to_thread(minio_response.read, 1024 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            await asyncio.to_thread(minio_response.close)
+            await asyncio.to_thread(minio_response.release_conn)
+
+    return StreamingResponse(
+        file_iterator(),
+        media_type=document.file_type or "application/octet-stream",
+        headers={
+            "Content-Disposition": (
+                f"inline; filename=document; filename*=UTF-8''{quote(document.file_name)}"
+            )
+        },
+    )
+
+
 @router.post("/{doc_id}/retry")
 async def retry_document(doc_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     try:
@@ -287,7 +345,9 @@ def _validate_upload_constraints(*, file_name: str, content_type: str, file_size
         "application/pdf",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "text/csv",
+        "text/html",
         "image/png",
         "image/jpeg",
     }

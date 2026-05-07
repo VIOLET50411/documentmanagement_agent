@@ -37,17 +37,18 @@ const router = createRouter({
 
 router.beforeEach((to, _from, next) => {
   const authStore = useAuthStore()
+  const hasToken = Boolean(authStore.token)
   const title = typeof to.meta.title === "string" ? to.meta.title : ""
   if (title) {
     document.title = `${title} - DocMind`
   }
-  if (to.meta.requiresAuth && !authStore.isAuthenticated) {
+  if (to.meta.requiresAuth && !hasToken) {
     return next({ name: "Login", query: { redirect: to.fullPath } })
   }
-  if (to.meta.guest && authStore.isAuthenticated) {
+  if (to.meta.guest && hasToken) {
     return next({ name: "Chat" })
   }
-  if (to.meta.role && authStore.user?.role !== to.meta.role) {
+  if (to.meta.role && authStore.user && authStore.user.role !== to.meta.role) {
     return next({ name: "Chat" })
   }
   next()

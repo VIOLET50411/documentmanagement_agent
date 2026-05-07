@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 import secrets
+import string
 from datetime import datetime, timedelta, timezone
 
 from jose import JWTError, jwt
@@ -140,6 +141,93 @@ class AuthService:
     async def list_users(self, tenant_id: str):
         result = await self.db.execute(select(User).where(User.tenant_id == tenant_id).order_by(User.created_at.desc()))
         return result.scalars().all()
+
+    async def admin_update_user(
+        self,
+        *,
+        tenant_id: str,
+        actor_id: str,
+        user_id: str,
+        username: str | None = None,
+        role: str | None = None,
+        department: str | None = None,
+        level: int | None = None,
+        is_active: bool | None = None,
+        email_verified: bool | None = None,
+    ) -> User:
+        result = await self.db.execute(select(User).where(User.id == user_id, User.tenant_id == tenant_id))
+        user = result.scalar_one_or_none()
+        if user is None:
+            raise ValueError("用户不存在")
+
+        normalized_role = str(role or user.role).upper()
+        if normalized_role not in ROLE_DEFAULT_LEVEL:
+            raise ValueError("角色不合法")
+
+        normalized_username = str(username or user.username).strip()
+        if len(normalized_username) < 3:
+            raise ValueError("用户名至少需要 3 个字符")
+
+        if actor_id == user.id:
+            if is_active is False:
+                raise ValueError("不能停用当前管理员账号")
+            if normalized_role != "ADMIN":
+                raise ValueError("不能移除当前管理员的管理员角色")
+
+        if normalized_username != user.username:
+            duplicate = await self.db.execute(select(User).where(User.username == normalized_username, User.id != user.id))
+            if duplicate.scalar_one_or_none() is not None:
+                raise ValueError("用户名已存在")
+            user.username = normalized_username
+
+        user.role = normalized_role
+        user.level = int(level if level is not None else ROLE_DEFAULT_LEVEL.get(normalized_role, user.level or 2))
+        user.department = (department or "").strip() or None
+        if is_active is not None:
+            user.is_active = bool(is_active)
+        if email_verified is not None:
+            user.email_verified = bool(email_verified)
+        await self.db.flush()
+        return user
+
+    async def admin_reset_password(
+        self,
+        *,
+        tenant_id: str,
+        actor_id: str,
+        user_id: str,
+    ) -> tuple[User, str]:
+        result = await self.db.execute(select(User).where(User.id == user_id, User.tenant_id == tenant_id))
+        user = result.scalar_one_or_none()
+        if user is None:
+            raise ValueError("用户不存在")
+        if actor_id == user.id:
+            raise ValueError("不能重置当前管理员自己的密码")
+        if not user.is_active:
+            raise ValueError("停用用户不能直接重置密码")
+
+        alphabet = string.ascii_letters + string.digits
+        temporary_password = "".join(secrets.choice(alphabet) for _ in range(12))
+        user.hashed_password = pwd_context.hash(temporary_password)
+        await self.db.flush()
+        return user, temporary_password
+
+    async def admin_delete_user(
+        self,
+        *,
+        tenant_id: str,
+        actor_id: str,
+        user_id: str,
+    ) -> User:
+        result = await self.db.execute(select(User).where(User.id == user_id, User.tenant_id == tenant_id))
+        user = result.scalar_one_or_none()
+        if user is None:
+            raise ValueError("用户不存在")
+        if actor_id == user.id:
+            raise ValueError("不能删除当前管理员自己")
+        await self.db.delete(user)
+        await self.db.flush()
+        return user
 
     async def invite_user(self, *, current_user: User, payload) -> UserInvitation:
         self._validate_email_domain(payload.email)

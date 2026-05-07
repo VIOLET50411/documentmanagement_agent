@@ -26,6 +26,8 @@ export const useRuntimeStore = defineStore("runtime", () => {
   const trendRows = computed(() => toolDecisionSummary.value?.trend_by_hour || [])
 
   async function loadToolDecisionSummary() {
+    if (loadingToolSummary.value) return
+
     loadingToolSummary.value = true
     error.value = ""
     try {
@@ -38,6 +40,8 @@ export const useRuntimeStore = defineStore("runtime", () => {
   }
 
   async function loadCheckpointSummary(limit = 50) {
+    if (loadingCheckpointSummary.value) return
+
     loadingCheckpointSummary.value = true
     error.value = ""
     try {

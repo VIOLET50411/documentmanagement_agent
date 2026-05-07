@@ -38,7 +38,6 @@ async function bootstrap() {
 
   const authStore = useAuthStore(pinia)
   setBootMessage("正在恢复登录状态…")
-  await authStore.hydrateUser()
 
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && authStore.isAuthenticated) {
@@ -54,7 +53,15 @@ async function bootstrap() {
 
   setBootMessage("正在渲染界面…")
   app.mount("#app")
-  setBootMessage("启动完成", "ready")
+  void authStore
+    .hydrateUser()
+    .then(() => {
+      setBootMessage("启动完成", "ready")
+    })
+    .catch((error) => {
+      console.error("[DocMind] delayed hydrate failed", error)
+      setBootMessage("已进入应用，登录状态恢复失败。", "error")
+    })
 }
 
 bootstrap().catch((error) => {

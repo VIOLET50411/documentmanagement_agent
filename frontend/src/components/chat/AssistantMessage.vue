@@ -8,19 +8,23 @@
         </span>
       </div>
 
+      <details v-if="message.citations?.length" class="thought-process">
+        <summary>显示思路</summary>
+        <div class="thought-content">
+          <div class="thought-title">引用依据</div>
+          <div
+            v-for="(cite, index) in message.citations"
+            :key="`${cite.doc_id}-${cite.page_number}-${index}`"
+            class="thought-cite-item"
+          >
+            《{{ cite.doc_title || "未命名文档" }}》 / {{ cite.section_title || "未命名章节" }} | 页码：{{ cite.page_number ?? "-" }}
+          </div>
+        </div>
+      </details>
+
       <div v-if="message.content" class="assistant-body">
         <div class="assistant-copy markdown-body" v-html="rendered"></div>
         <span v-if="isStreaming" class="streaming-cursor" aria-hidden="true"></span>
-      </div>
-
-      <div v-if="message.citations?.length" class="citation-row">
-        <span
-          v-for="cite in message.citations"
-          :key="`${cite.doc_id}-${cite.page_number}-${cite.section_title}`"
-          class="citation-pill"
-        >
-          {{ cite.doc_title || "未命名文档" }} / P{{ cite.page_number ?? "-" }}
-        </span>
       </div>
 
       <div class="assistant-actions">
@@ -74,17 +78,11 @@ const documentLayout = computed(() => {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  width: min(100%, 760px);
-  padding: 20px 22px;
-  border-radius: 28px 28px 28px 12px;
-  border: 1px solid color-mix(in srgb, var(--border-color) 85%, transparent);
-  background: color-mix(in srgb, var(--bg-surface) 95%, rgba(255, 255, 255, 0.42));
-  box-shadow: var(--shadow-sm);
+  width: 100%;
 }
 
 .assistant-shell[data-layout="document"] {
   width: 100%;
-  border-radius: 28px;
 }
 
 .assistant-head,
@@ -118,21 +116,51 @@ const documentLayout = computed(() => {
   position: relative;
 }
 
-.citation-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.thought-process {
+  border-left: 2px solid var(--border-color);
+  padding-left: 16px;
+  margin: 4px 0 12px 4px;
 }
 
-.citation-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 8px 12px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.4);
-  border: 1px solid var(--border-color-subtle);
+.thought-process summary {
+  cursor: pointer;
   color: var(--text-secondary);
   font-size: 13px;
+  font-weight: 500;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.thought-process summary:hover {
+  color: var(--text-primary);
+}
+
+.thought-content {
+  margin-top: 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.thought-title {
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.thought-cite-item {
+  margin-bottom: 6px;
+  padding-left: 12px;
+  position: relative;
+}
+
+.thought-cite-item::before {
+  content: "•";
+  position: absolute;
+  left: 0;
+  color: var(--text-tertiary);
 }
 
 .assistant-actions {

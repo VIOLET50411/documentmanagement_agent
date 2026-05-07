@@ -58,6 +58,10 @@ export function apiPost<T = any>(url: string, data?: unknown, config?: AxiosRequ
   return http.post<T, ApiResponse<T>>(url, data, config)
 }
 
+export function apiPatch<T = any>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<ApiResponse<T>> {
+  return http.patch<T, ApiResponse<T>>(url, data, config)
+}
+
 export function apiDelete<T = any>(url: string, config?: AxiosRequestConfig): Promise<ApiResponse<T>> {
   return http.delete<T, ApiResponse<T>>(url, config)
 }

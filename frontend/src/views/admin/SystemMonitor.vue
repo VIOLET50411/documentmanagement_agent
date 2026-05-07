@@ -277,6 +277,7 @@ const {
   backendCards,
   retrievalMetricsRows,
   loadBackends,
+  loadRetrievalIntegrity,
   loadPublicCorpusLatest,
   exportPublicCorpusAsync,
   downloadRuntimeToolSummary,
@@ -288,6 +289,7 @@ let timer: number
 
 onMounted(async () => {
   loadBackends()
+  void loadRetrievalIntegrity()
   if (!runtimeStore.toolDecisionSummary) {
     await runtimeStore.loadToolDecisionSummary()
   }
@@ -303,7 +305,7 @@ onMounted(async () => {
     loadBackends()
     runtimeStore.loadToolDecisionSummary()
     runtimeStore.loadCheckpointSummary()
-  }, 10000)
+  }, 30000)
 })
 
 onUnmounted(() => {

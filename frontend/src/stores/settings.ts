@@ -68,12 +68,12 @@ export const useSettingsStore = defineStore("settings", () => {
 
   async function loadAdminDiagnostics(isAdmin: boolean) {
     if (!isAdmin) return
+
     loadingAdminDiagnostics.value = true
     try {
       const [
         llmDomainResponse,
         runtimeMetricsResponse,
-        retrievalIntegrityResponse,
         securityPolicyResponse,
         mobileAuthResponse,
         pushProviderResponse,
@@ -81,7 +81,6 @@ export const useSettingsStore = defineStore("settings", () => {
       ] = await Promise.all([
         adminApi.getLLMDomainConfig(),
         adminApi.getRuntimeMetrics(120),
-        adminApi.getRetrievalIntegrity(12),
         adminApi.getSecurityPolicy(),
         adminApi.getMobileAuthStatus(),
         adminApi.getPushNotificationStatus(),
@@ -90,13 +89,18 @@ export const useSettingsStore = defineStore("settings", () => {
 
       llmDomainConfig.value = llmDomainResponse
       runtimeMetrics.value = runtimeMetricsResponse
-      retrievalIntegrity.value = retrievalIntegrityResponse
       securityPolicy.value = securityPolicyResponse
       mobileAuthStatus.value = mobileAuthResponse
       pushProviderStatus.value = pushProviderResponse
       backendStatus.value = backendStatusResponse
     } finally {
       loadingAdminDiagnostics.value = false
+    }
+
+    try {
+      retrievalIntegrity.value = await adminApi.getRetrievalIntegrity(12)
+    } catch {
+      // Keep the settings page responsive even if integrity sampling is slow.
     }
   }
 

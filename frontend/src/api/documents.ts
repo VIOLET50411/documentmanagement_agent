@@ -57,6 +57,12 @@ export const documentsApi = {
     return apiGet(`/documents/${docId}/events`)
   },
 
+  getOriginal(docId: string) {
+    return http.get<Blob, Blob>(`/documents/${docId}/original`, {
+      responseType: "blob",
+    })
+  },
+
   retry(docId: string) {
     return http.post(`/documents/${docId}/retry`)
   },

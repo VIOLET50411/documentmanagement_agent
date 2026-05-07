@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 import json
 import time
 from typing import Any, AsyncIterator
@@ -16,6 +18,19 @@ from app.observability.langfuse_client import LangfuseObserver
 from app.services.canary_router import in_canary_bucket
 
 logger = structlog.get_logger("docmind.llm")
+
+REQUEST_MODEL_NAME: ContextVar[str | None] = ContextVar("docmind_request_model_name", default=None)
+ALLOWED_USER_SELECTED_MODELS = {"qwen2.5:1.5b", "qwen2.5:7b"}
+
+
+@contextmanager
+def use_request_model_name(model_name: str | None):
+    normalized = str(model_name or "").strip()
+    token = REQUEST_MODEL_NAME.set(normalized if normalized in ALLOWED_USER_SELECTED_MODELS else None)
+    try:
+        yield
+    finally:
+        REQUEST_MODEL_NAME.reset(token)
 
 
 class LLMService:
@@ -257,6 +272,16 @@ class LLMService:
 
     async def _resolve_runtime_target_async(self, system_prompt: str, user_prompt: str, tenant_key: str) -> dict[str, Any]:
         target = self._resolve_runtime_target(system_prompt, user_prompt, tenant_key)
+        request_model = REQUEST_MODEL_NAME.get()
+        if request_model in ALLOWED_USER_SELECTED_MODELS:
+            target.update({
+                "provider": self.provider,
+                "base_url": self.base_url,
+                "model": request_model,
+                "api_key": self.api_key,
+                "profile": "user_selected_model",
+            })
+            return target
         active_override = await self._get_active_model_override(
             tenant_key,
             system_prompt=system_prompt,

@@ -280,6 +280,13 @@
                 详情
               </button>
               <button
+                class="btn btn-ghost btn-sm"
+                :disabled="openingOriginalDocId === doc.id"
+                @click="openOriginalDocument(doc)"
+              >
+                {{ openingOriginalDocId === doc.id ? "打开中..." : "查看原文" }}
+              </button>
+              <button
                 v-if="
                   ['failed', 'partial_failed', 'retrying'].includes(doc.status)
                 "
@@ -400,6 +407,13 @@
 
         <div class="drawer-footer">
           <button
+            class="btn btn-secondary"
+            :disabled="openingOriginalDocId === selectedDocForDetails.id"
+            @click="openOriginalDocument(selectedDocForDetails)"
+          >
+            {{ openingOriginalDocId === selectedDocForDetails.id ? "打开中..." : "查看原文" }}
+          </button>
+          <button
             v-if="selectedDocStatus === 'ready'"
             class="btn btn-primary"
             @click="$router.push('/search')"
@@ -430,6 +444,7 @@ import { useDocumentStore } from "@/stores/documents";
 interface DocumentItem {
   id: string;
   title: string;
+  file_name?: string;
   file_type: string;
   department?: string;
   status: string;
@@ -472,6 +487,7 @@ const selectedEvents = ref<DocEvent[]>([]);
 const selectedDocStatus = ref("unknown");
 const selectedDocError = ref("");
 const batchFailures = ref<string[]>([]);
+const openingOriginalDocId = ref("");
 
 // Computed
 const readyCount = computed(
@@ -587,6 +603,24 @@ async function fetchDocuments() {
     documents.value = [];
   } finally {
     loading.value = false;
+  }
+}
+
+async function openOriginalDocument(doc: DocumentItem) {
+  openingOriginalDocId.value = doc.id;
+  try {
+    const blob = await documentsApi.getOriginal(doc.id);
+    const objectUrl = URL.createObjectURL(blob);
+    const win = window.open(objectUrl, "_blank", "noopener,noreferrer");
+    if (!win) {
+      window.location.href = objectUrl;
+    }
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+  } catch (err) {
+    console.error("Failed to open original document", err);
+    alert("打开原文失败，请稍后重试。");
+  } finally {
+    openingOriginalDocId.value = "";
   }
 }
 

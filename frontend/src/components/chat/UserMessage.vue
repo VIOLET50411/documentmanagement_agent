@@ -21,17 +21,17 @@ defineProps<{
 }
 
 .user-bubble {
-  max-width: min(720px, 88%);
-  padding: 16px 20px;
-  border-radius: 24px;
-  background: rgba(36, 31, 23, 0.95);
-  color: #fffaf3;
-  box-shadow: 0 18px 40px rgba(41, 32, 15, 0.18);
+  max-width: min(1200px, 88%);
+  padding: 12px 18px;
+  border-radius: 20px;
+  background: var(--bg-surface-strong);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
 }
 
 .theme-dark .user-bubble {
-  background: rgba(245, 238, 227, 0.96);
-  color: #17130f;
+  background: var(--bg-surface-strong);
+  color: var(--text-primary);
 }
 
 .user-bubble p {

@@ -57,7 +57,8 @@ async def test_generator_builds_fallback_answer(monkeypatch):
             ]
         }
     )
-    assert "\u68c0\u7d22\u7ed3\u679c" in state["answer"]
+    assert "\u5173\u4e8e" in state["answer"]
+    assert "\u5f15\u7528\u4f9d\u636e" in state["answer"]
     assert state["citations"][0]["doc_title"] == "\u5dee\u65c5\u5236\u5ea6"
 
 

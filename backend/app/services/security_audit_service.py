@@ -62,11 +62,11 @@ class SecurityAuditService:
 
         if self.redis is not None:
             key = f"security_audit:{tenant_id}"
-            await self.redis.lpush(key, json.dumps(payload, ensure_ascii=False))
+            await self._push_left(key, json.dumps(payload, ensure_ascii=False))
             await self.redis.ltrim(key, 0, 199)
             await self.redis.expire(key, 14 * 24 * 3600)
             if severity in {"high", "critical"} or result in {"blocked", "error", "warning"}:
-                await self.redis.lpush(f"security_alerts:{tenant_id}", json.dumps(payload, ensure_ascii=False))
+                await self._push_left(f"security_alerts:{tenant_id}", json.dumps(payload, ensure_ascii=False))
                 await self.redis.ltrim(f"security_alerts:{tenant_id}", 0, 499)
                 await self.redis.expire(f"security_alerts:{tenant_id}", 14 * 24 * 3600)
 
@@ -240,3 +240,9 @@ class SecurityAuditService:
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=timezone.utc)
         return parsed.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0).isoformat()
+
+    async def _push_left(self, key: str, payload: str) -> None:
+        if hasattr(self.redis, "lpush"):
+            await self.redis.lpush(key, payload)
+            return
+        await self.redis.rpush(key, payload)

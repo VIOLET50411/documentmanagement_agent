@@ -92,14 +92,7 @@ class ComplianceAgent:
             f"## 关于「{query}」",
             "",
             f"**结论：** {conclusion}",
-            "",
-            "### 相关依据",
         ]
-        for index, item in enumerate(results[:3], start=1):
-            evidence = self._extract_best_evidence(query, item.get("snippet", ""))
-            lines.append(f"{index}. **{self._format_source(item)}**")
-            lines.append(f"   {evidence}")
-            lines.append("")
         lines.append("---")
         lines.append("> 以上内容基于知识库检索结果整理，请以原始制度正文为准。")
         return "\n".join(lines).strip()

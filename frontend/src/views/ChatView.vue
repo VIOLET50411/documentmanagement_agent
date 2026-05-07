@@ -1,46 +1,8 @@
 <template>
   <div class="chat-page">
-    <section v-if="showHistoryList" class="history-state card-shell">
-      <div class="history-header">
-        <div>
-          <p class="section-kicker">历史会话</p>
-          <h2>继续上一次工作</h2>
-          <p class="section-copy">你可以快速回到之前的问答、引用和检索结果。</p>
-        </div>
-        <button class="btn btn-primary btn-lg" @click="startFreshChat">新建对话</button>
-      </div>
-
-      <div class="history-toolbar">
-        <label class="history-search">
-          <span>⌕</span>
-          <input v-model="sessionSearch" class="input history-search-input" placeholder="搜索会话标题" />
-        </label>
-        <span class="history-summary">共 {{ filteredSessions.length }} 个会话</span>
-      </div>
-
-      <div class="history-list">
-        <button
-          v-for="session in filteredSessions"
-          :key="session.id"
-          class="history-item"
-          @click="openSession(session.id)"
-        >
-          <div>
-            <strong>{{ session.title }}</strong>
-            <span>{{ formatRelativeTime(session.updatedAt) }}</span>
-          </div>
-          <small>打开</small>
-        </button>
-        <div v-if="filteredSessions.length === 0" class="empty-panel">
-          <p>没有匹配的会话记录。</p>
-          <span>可以直接新建一轮问答，或更换关键词继续检索。</span>
-        </div>
-      </div>
-    </section>
-
-    <section v-else-if="showHeroState" class="hero-state">
+    <section v-if="showHeroState" class="hero-state">
       <div class="hero-intro">
-        <h2><span class="star-icon" style="color: var(--color-primary)">✺</span> 您好，今天想了解什么？</h2>
+        <h2>您好，今天想了解什么？</h2>
       </div>
 
       <ChatComposer
@@ -61,7 +23,7 @@
     </section>
 
     <section v-else class="conversation-state">
-      <div class="conversation-stream card-shell" ref="messagesRef">
+      <div class="conversation-stream" ref="messagesRef">
         <MessageList
           :messages="chatStore.messages"
           :runtime-events="chatStore.runtimeEvents"
@@ -73,8 +35,6 @@
           @retry="retryLastPrompt"
         />
       </div>
-
-      <SessionTaskBar />
 
       <div class="floating-composer">
         <ChatComposer
@@ -101,14 +61,13 @@ import { useAutoScroll } from '@/composables/useAutoScroll'
 import { chatApi } from '@/api/chat'
 import MessageList from '@/components/chat/MessageList.vue'
 import ChatComposer from '@/components/chat/ChatComposer.vue'
-import SessionTaskBar from '@/components/chat/SessionTaskBar.vue'
 
 const chatStore = useChatStore()
 const { sendMessage } = useSSE()
 const messagesRef = ref<HTMLElement | null>(null)
 const inputMessage = ref('')
 const sessionSearch = ref('')
-const selectedModel = ref('docmind-smart')
+const selectedModel = ref('qwen2.5:1.5b')
 const { scrollToBottom } = useAutoScroll(messagesRef)
 
 const quickPrompts = [
@@ -130,8 +89,7 @@ const onboardingItems = [
 const hasMessages = computed(() => chatStore.messages.length > 0)
 const hasSessions = computed(() => chatStore.sessions.length > 0)
 const activeSessionIsDraft = computed(() => chatStore.activeSession?.title === '新对话')
-const showHistoryList = computed(() => !hasMessages.value && hasSessions.value && !activeSessionIsDraft.value)
-const showHeroState = computed(() => !hasMessages.value && (!hasSessions.value || activeSessionIsDraft.value))
+const showHeroState = computed(() => !hasMessages.value)
 const filteredSessions = computed(() => {
   const keyword = sessionSearch.value.trim().toLowerCase()
   if (!keyword) return chatStore.sessions
@@ -145,7 +103,7 @@ watch(() => chatStore.messages[chatStore.messages.length - 1]?.content, () => ne
 function handleSend() {
   const msg = inputMessage.value.trim()
   if (!msg || chatStore.isStreaming) return
-  sendMessage(msg, chatStore.activeSessionId)
+  sendMessage(msg, chatStore.activeSessionId, selectedModel.value)
   inputMessage.value = ''
 }
 
@@ -176,7 +134,7 @@ function copyMessage(content: string) {
 
 function retryLastPrompt() {
   if (lastUserPrompt.value && !chatStore.isStreaming) {
-    sendMessage(lastUserPrompt.value, chatStore.activeSessionId)
+    sendMessage(lastUserPrompt.value, chatStore.activeSessionId, selectedModel.value)
   }
 }
 
@@ -339,7 +297,7 @@ function formatRelativeTime(value: string) {
 }
 
 .hero-state {
-  max-width: 780px;
+  max-width: 900px;
   margin: 0 auto;
   padding: 10vh 0 24px;
   display: flex;
@@ -386,15 +344,16 @@ function formatRelativeTime(value: string) {
 }
 
 .conversation-stream {
-  max-width: 920px;
+  max-width: 900px;
+  width: 100%;
   margin: 0 auto;
-  padding: 28px 28px 22px;
+  padding: 28px 0 22px;
 }
 
 .floating-composer {
   position: sticky;
   bottom: 0;
-  max-width: 920px;
+  max-width: 900px;
   width: 100%;
   margin: 0 auto;
   padding-bottom: 24px;

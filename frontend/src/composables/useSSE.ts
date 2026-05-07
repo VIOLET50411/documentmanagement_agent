@@ -28,14 +28,14 @@ export function useSSE() {
   const error: Ref<string | null> = ref(null)
   const chatStore = useChatStore()
 
-  async function sendMessage(message: string, threadId: string | null = null) {
+  async function sendMessage(message: string, threadId: string | null = null, modelName: string | null = null) {
     error.value = null
     chatStore.setStreamState("thinking", "正在理解您的问题...")
     chatStore.addMessage({ role: "user", content: message, citations: [] })
     chatStore.addMessage({ role: "assistant", content: "", citations: [] })
 
     try {
-      const response = await chatApi.streamChat(message, threadId)
+      const response = await chatApi.streamChat(message, threadId, modelName)
       if (!response.ok || !response.body) throw new Error(`SSE request failed: ${response.status}`)
 
       const reader = response.body.getReader()

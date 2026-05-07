@@ -10,8 +10,10 @@
             aria-label="切换侧边栏"
             @click="toggleSidebar"
           >
-            <span></span>
-            <span></span>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <line x1="9" y1="3" x2="9" y2="21"></line>
+            </svg>
           </button>
           <button class="brand-button" @click="$router.push('/chat')">
             <span class="brand-text">DocMind</span>
@@ -38,16 +40,35 @@
             <button class="section-link" @click="startNewChat">新建</button>
           </div>
           <div class="recent-list">
-            <button
+            <div
               v-for="session in recentSessions"
               :key="session.id"
-              class="recent-item"
-              :class="{ active: route.name === 'Chat' && chatStore.activeSessionId === session.id }"
-              @click="openRecentSession(session.id)"
+              class="recent-item-wrapper"
+              style="display: flex; gap: 4px; align-items: center;"
             >
-              <strong>{{ session.title }}</strong>
-              <span>{{ formatTime(session.updatedAt) }}</span>
-            </button>
+              <button
+                class="recent-item"
+                :class="{ active: route.name === 'Chat' && chatStore.activeSessionId === session.id }"
+                @click="openRecentSession(session.id)"
+                style="flex: 1; min-width: 0;"
+              >
+                <strong>{{ session.title }}</strong>
+                <span>{{ formatTime(session.updatedAt) }}</span>
+              </button>
+              <button
+                class="delete-session-btn"
+                @click.stop="chatStore.deleteSession(session.id)"
+                style="padding: 6px; background: transparent; border: none; cursor: pointer; color: var(--text-secondary); transition: color var(--transition-fast);"
+                onmouseover="this.style.color='var(--text-primary)'"
+                onmouseout="this.style.color='var(--text-secondary)'"
+                title="删除会话"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="3 6 5 6 21 6"></polyline>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                </svg>
+              </button>
+            </div>
             <p v-if="recentSessions.length === 0" class="empty-copy">还没有历史会话</p>
           </div>
         </section>
@@ -64,46 +85,48 @@
               </div>
             </button>
 
-            <transition name="menu-pop">
-              <div v-if="accountMenuOpen" class="account-menu" @click.stop>
-                <div class="menu-email">
-                  {{ user?.email || user?.username || 'admin_demo@docmind.local' }}
-                </div>
+            <teleport to="body">
+              <transition name="menu-pop">
+                <div v-if="accountMenuOpen" class="account-menu" :style="{ left: isSidebarOpen ? '20px' : '10px' }" @click.stop>
+                  <div class="menu-email">
+                    {{ user?.email || user?.username || 'admin_demo@docmind.local' }}
+                  </div>
 
-                <div class="menu-group">
-                  <button class="menu-item" @click="openSettings('general')">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-                    <span>个人设置</span>
-                  </button>
-                  <button class="menu-item" @click="openSettings('preferences')">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
-                    <span>回答偏好</span>
-                  </button>
-                  <button class="menu-item" @click="openSettings('devices')">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>
-                    <span>推送设备</span>
-                  </button>
-                </div>
+                  <div class="menu-group">
+                    <button class="menu-item" @click="openSettings('general')">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                      <span>个人设置</span>
+                    </button>
+                    <button class="menu-item" @click="openSettings('preferences')">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+                      <span>回答偏好</span>
+                    </button>
+                    <button class="menu-item" @click="openSettings('devices')">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>
+                      <span>推送设备</span>
+                    </button>
+                  </div>
 
-                <div class="menu-group">
-                  <button class="menu-item" @click="themeStore.setTheme(themeStore.isDark ? 'light' : 'dark')">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
-                    <span>切换主题</span>
-                  </button>
-                  <button v-if="user?.role === 'ADMIN'" class="menu-item" @click="$router.push('/admin')">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
-                    <span>平台管理</span>
-                  </button>
-                </div>
+                  <div class="menu-group">
+                    <button class="menu-item" @click="themeStore.setTheme(themeStore.isDark ? 'light' : 'dark')">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+                      <span>切换主题</span>
+                    </button>
+                    <button v-if="user?.role === 'ADMIN'" class="menu-item" @click="$router.push('/admin')">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
+                      <span>平台管理</span>
+                    </button>
+                  </div>
 
-                <div class="menu-group border-none">
-                  <button class="menu-item" @click="authStore.logout">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
-                    <span>退出登录</span>
-                  </button>
+                  <div class="menu-group border-none">
+                    <button class="menu-item" @click="authStore.logout">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+                      <span>退出登录</span>
+                    </button>
+                  </div>
                 </div>
-              </div>
-            </transition>
+              </transition>
+            </teleport>
           </div>
         </div>
       </div>
@@ -177,7 +200,6 @@ const svgIcons = {
 
 const navItems: NavItem[] = [
   { key: 'new', label: '新建对话', description: '开始一轮新的问答', icon: svgIcons.new, action: 'new' },
-  { key: 'chat', label: '会话记录', description: '查看与切换历史对话', icon: svgIcons.chat, route: '/chat' },
   { key: 'tasks', label: '任务中心', description: '查看运行、入库与训练任务', icon: svgIcons.tasks, route: '/tasks', adminOnly: true },
   { key: 'search', label: '知识检索', description: '搜索索引、图谱与证据', icon: svgIcons.search, route: '/search' },
   { key: 'documents', label: '文档中心', description: '上传、解析与处理文档', icon: svgIcons.documents, route: '/documents' },
@@ -389,6 +411,8 @@ onBeforeUnmount(() => {
 .menu-avatar {
   width: 32px;
   height: 32px;
+  min-width: 32px;
+  flex-shrink: 0;
   border-radius: 50%;
   display: grid;
   place-items: center;
@@ -584,9 +608,9 @@ onBeforeUnmount(() => {
 }
 
 .account-menu {
-  position: absolute;
-  left: 8px;
-  bottom: calc(100% + 12px);
+  position: fixed;
+  left: 16px;
+  bottom: 80px;
   width: 260px;
   padding: 8px 0;
   border: 1px solid var(--border-color);
@@ -595,6 +619,7 @@ onBeforeUnmount(() => {
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
+  z-index: 1000;
 }
 
 .menu-email {
@@ -749,8 +774,6 @@ onBeforeUnmount(() => {
 
 .content-body {
   padding: 32px 32px 64px;
-  max-width: 1300px;
-  margin: 0 auto;
   width: 100%;
 }
 

@@ -344,10 +344,11 @@ async function unregisterDevice(device: any) {
 }
 
 onMounted(async () => {
-  await loadPushData()
+  const jobs = [loadPushData()]
   if (isAdmin.value) {
-    await loadAdminDiagnostics()
+    jobs.push(loadAdminDiagnostics())
   }
+  await Promise.allSettled(jobs)
 })
 </script>
 

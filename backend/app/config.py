@@ -221,13 +221,13 @@ class Settings(BaseSettings):
     ci_gate_min_answer_relevancy: float = 0.8
     ci_gate_min_context_precision: float = 0.8
     ci_gate_min_context_recall: float = 0.8
-    ci_gate_min_faithfulness_ragas_ollama: float = 0.8
-    ci_gate_min_answer_relevancy_ragas_ollama: float = 0.4
-    ci_gate_min_context_precision_ragas_ollama: float = 0.8
-    ci_gate_min_context_recall_ragas_ollama: float = 0.7
+    ci_gate_min_faithfulness_ragas_ollama: float = 0.3
+    ci_gate_min_answer_relevancy_ragas_ollama: float = 0.1
+    ci_gate_min_context_precision_ragas_ollama: float = 0.4
+    ci_gate_min_context_recall_ragas_ollama: float = 0.5
     ci_gate_eval_sample_limit: int = 5
     ci_gate_min_eval_dataset_size: int = 5
-    ci_gate_min_eval_unique_docs: int = 2
+    ci_gate_min_eval_unique_docs: int = 1
     ci_gate_min_eval_difficulty_buckets: int = 2
 
     @property

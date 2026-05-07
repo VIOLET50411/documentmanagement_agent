@@ -7,6 +7,7 @@ class ChatRequest(BaseModel):
     message: str
     thread_id: Optional[str] = None
     search_type: str = "hybrid"  # hybrid, vector, keyword, graph
+    selected_model: Optional[str] = None
 
 
 class Citation(BaseModel):

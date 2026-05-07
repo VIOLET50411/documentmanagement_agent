@@ -552,7 +552,7 @@ onMounted(() => {
   handleRefresh()
   refreshTimer = window.setInterval(() => {
     handleRefresh()
-  }, 5000)
+  }, 15000)
 })
 
 onUnmounted(() => {

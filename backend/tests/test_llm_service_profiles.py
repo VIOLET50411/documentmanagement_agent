@@ -1,7 +1,7 @@
 import pytest
 
 from app.config import settings
-from app.services.llm_service import LLMService
+from app.services.llm_service import LLMService, use_request_model_name
 
 
 def test_llm_service_uses_enterprise_profile_for_keyword_hit(monkeypatch):
@@ -119,3 +119,27 @@ async def test_llm_service_routes_non_canary_traffic_to_previous_model(monkeypat
     assert target["api_key"] == "secret-prev"
     assert target["rollout_origin_model_id"] == "model-canary"
     assert target["rollout_canary_percent"] == 20
+
+
+@pytest.mark.asyncio
+async def test_llm_service_honors_user_selected_model(monkeypatch):
+    class FakeRedis:
+        async def get(self, key):
+            payloads = {
+                "llm:active_model:tenant-z": (
+                    '{"provider":"openai-compatible","base_url":"http://trained-llm:11434/v1",'
+                    '"model":"tenant-z-sft","api_key":"secret","profile":"registry_active"}'
+                ),
+            }
+            return payloads.get(key)
+
+    monkeypatch.setattr("app.services.llm_service.get_redis", lambda: FakeRedis())
+
+    service = LLMService()
+    with use_request_model_name("qwen2.5:7b"):
+        target = await service._resolve_runtime_target_async("你是助手", "请总结当前制度", "tenant-z")
+
+    assert target["profile"] == "user_selected_model"
+    assert target["model"] == "qwen2.5:7b"
+    assert target["base_url"] == service.base_url
+    assert target["api_key"] == service.api_key

@@ -27,6 +27,7 @@ export const useAuthStore = defineStore("auth", () => {
   const refreshToken = ref(localStorage.getItem(REFRESH_TOKEN_KEY) || "")
   const user: Ref<UserPayload | null> = ref(readStoredUser())
   const refreshInFlight = ref<Promise<boolean> | null>(null)
+  const hydrateInFlight = ref<Promise<void> | null>(null)
 
   const isAuthenticated = computed(() => !!token.value)
 
@@ -77,24 +78,33 @@ export const useAuthStore = defineStore("auth", () => {
 
   async function hydrateUser() {
     if (!token.value) return
-    try {
-      user.value = await authApi.me()
-      localStorage.setItem(USER_KEY, JSON.stringify(user.value))
-      await ensureNativePushRegistration()
-    } catch {
-      const refreshed = await refreshSession()
-      if (!refreshed) {
-        logout()
-        return
-      }
+    if (hydrateInFlight.value) return hydrateInFlight.value
+
+    const pending = (async () => {
       try {
         user.value = await authApi.me()
         localStorage.setItem(USER_KEY, JSON.stringify(user.value))
         await ensureNativePushRegistration()
       } catch {
-        logout()
+        const refreshed = await refreshSession()
+        if (!refreshed) {
+          logout()
+          return
+        }
+        try {
+          user.value = await authApi.me()
+          localStorage.setItem(USER_KEY, JSON.stringify(user.value))
+          await ensureNativePushRegistration()
+        } catch {
+          logout()
+        }
+      } finally {
+        hydrateInFlight.value = null
       }
-    }
+    })()
+
+    hydrateInFlight.value = pending
+    return pending
   }
 
   async function refreshSession(): Promise<boolean> {
@@ -153,6 +163,7 @@ export const useAuthStore = defineStore("auth", () => {
     refreshToken,
     user,
     isAuthenticated,
+    hydrateInFlight,
     login,
     register,
     sendVerificationCode,

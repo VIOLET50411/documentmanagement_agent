@@ -54,13 +54,15 @@ def _load_manifest(dataset_name: str) -> list[dict]:
     return json.loads(manifest_path.read_text(encoding="utf-8"))
 
 
-def _iter_pdf_entries(dataset_name: str) -> list[dict]:
+def _iter_document_entries(dataset_name: str) -> list[dict]:
+    """Iterate all ingestible documents (PDF + HTML) from the dataset manifest."""
+    supported_suffixes = {".pdf", ".html", ".htm"}
     entries = []
     for item in _load_manifest(dataset_name):
         saved_path = Path(str(item.get("saved_path") or ""))
         if not saved_path.exists():
             continue
-        if saved_path.suffix.lower() != ".pdf":
+        if saved_path.suffix.lower() not in supported_suffixes:
             continue
         title = str(item.get("title") or saved_path.stem).strip()
         entries.append({"title": title, "path": saved_path})
@@ -110,7 +112,7 @@ async def main() -> None:
     )
     args = parser.parse_args()
 
-    entries = _iter_pdf_entries(args.dataset)
+    entries = _iter_document_entries(args.dataset)
     entries = _filter_entries(entries, args.include_pattern)
     if args.limit > 0:
         entries = entries[: args.limit]
