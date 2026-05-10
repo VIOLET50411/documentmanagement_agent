@@ -48,13 +48,23 @@ class GoldenDatasetGenerator:
             snippets = document.get("snippets") or document.get("chunks") or []
             normalized_title = self._humanize_title(title)
             candidates: list[dict] = []
+            snippet_signatures: set[str] = set()
+            logical_index = 0
 
-            for index, snippet in enumerate(snippets[:8]):
+            for snippet in snippets[:12]:
                 text = (snippet.get("content") or snippet.get("snippet") or "").strip()
                 if not text:
                     continue
+                normalized_text = re.sub(r"\s+", " ", text)
+                signature = normalized_text[:240]
+                if signature in snippet_signatures:
+                    continue
+                snippet_signatures.add(signature)
+                if not self._is_eval_worthy_snippet(normalized_text):
+                    continue
+                logical_index += 1
                 table_pairs = self._build_table_pairs(normalized_title, text, document, limit=max(count, 1))
-                sentence_pairs = self._build_sentence_pairs(normalized_title, text, document, index)
+                sentence_pairs = self._build_sentence_pairs(normalized_title, text, document, logical_index - 1)
                 candidates.extend(table_pairs)
                 candidates.extend(sentence_pairs)
                 if len(candidates) >= count:
@@ -394,6 +404,29 @@ class GoldenDatasetGenerator:
         sentences = [part.strip() for part in self.SENTENCE_SPLIT_RE.split(cleaned) if part.strip()]
         answer = "".join(sentences[:2]).strip()
         return (answer or cleaned)[:220]
+
+    def _is_eval_worthy_snippet(self, text: str) -> bool:
+        compact = re.sub(r"\s+", " ", text or "").strip()
+        if not compact:
+            return False
+        table_rows = [line for line in compact.splitlines() if line.strip().startswith("|")]
+        if len(table_rows) >= 3:
+            return True
+        if len(compact) < 80:
+            return False
+        if "目录" in compact[:80]:
+            return False
+        if compact.count(".") >= 20 or "................................" in compact:
+            return False
+        noise_markers = ("附件", "已下载", "当前位置", "版权所有", "访问者", "发布日期")
+        if sum(1 for marker in noise_markers if marker in compact) >= 2:
+            return False
+        if "学校概况" in compact and not any(marker in compact for marker in ("预算", "收入", "支出", "报表", "情况说明")):
+            return False
+        priority_markers = ("预算", "收入", "支出", "财政", "报表", "情况说明", "金额", "单位：万元", "项目支出")
+        if any(marker in compact for marker in priority_markers):
+            return True
+        return True
 
     def _select_grounded_answer(self, sentences: list[str], cleaned: str) -> str:
         preferred_keywords = (

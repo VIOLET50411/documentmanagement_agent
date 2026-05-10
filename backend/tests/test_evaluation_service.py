@@ -169,6 +169,76 @@ def test_summarize_dataset_tracks_grounded_samples_and_task_types():
     assert summary["avg_context_length"] >= 10
 
 
+def test_group_documents_prioritizes_business_chunks_and_multiple_docs():
+    service = EvaluationService(None, None, reports_dir=Path("."))
+
+    rows = [
+        (
+            "doc-budget",
+            "西南大学2024年度部门预算.html",
+            "2 目 录 一、学校基本情况 ................................ 3",
+            "swu 2024 department budget",
+            2,
+        ),
+        (
+            "doc-budget",
+            "西南大学2024年度部门预算.html",
+            "三、部门预算情况说明 我校2024年收支总预算582,276.35万元，其中本年收入预算445,059.97万元。",
+            "三、部门预算情况说明",
+            22,
+        ),
+        (
+            "doc-budget",
+            "西南大学2024年度部门预算.html",
+            "二、部门预算报表 西南大学收支预算总表 单位：万元 收入 支出 项目 预算数 项目 预算数。",
+            "二、部门预算报表",
+            14,
+        ),
+        (
+            "doc-travel",
+            "西南大学国内差旅费管理办法.html",
+            "第三条 差旅费报销应当提供审批单、行程单和合法票据，经部门负责人审核后报销。",
+            "第三条 差旅费报销要求",
+            5,
+        ),
+        (
+            "doc-travel",
+            "西南大学国内差旅费管理办法.html",
+            "学校概况 西南大学位于重庆市北碚区。",
+            "学校概况",
+            1,
+        ),
+    ]
+
+    grouped = service._group_documents(rows, sample_limit=4, exclude_synthetic=True)
+
+    assert len(grouped) == 2
+    budget_doc = next(item for item in grouped if item["id"] == "doc-budget")
+    travel_doc = next(item for item in grouped if item["id"] == "doc-travel")
+    assert "预算情况说明" in budget_doc["chunks"][0]["content"] or "预算总表" in budget_doc["chunks"][0]["content"]
+    assert "差旅费报销" in travel_doc["chunks"][0]["content"]
+    assert all("目录" not in chunk["content"] for chunk in budget_doc["chunks"][:1])
+
+
+def test_score_eval_chunk_penalizes_toc_and_rewards_budget_evidence():
+    service = EvaluationService(None, None, reports_dir=Path("."))
+
+    toc_score = service._score_eval_chunk(
+        title="西南大学2024年度部门预算.html",
+        section_title="swu 2024 department budget",
+        content="2 目 录 一、学校基本情况 ................................ 3",
+        chunk_index=2,
+    )
+    budget_score = service._score_eval_chunk(
+        title="西南大学2024年度部门预算.html",
+        section_title="三、部门预算情况说明",
+        content="我校2024年收支总预算582,276.35万元，其中本年收入预算445,059.97万元。",
+        chunk_index=22,
+    )
+
+    assert budget_score > toc_score
+
+
 @pytest.mark.asyncio
 async def test_latest_reads_new_payload_shape(tmp_path: Path):
     tenant_id = "tenant-test"

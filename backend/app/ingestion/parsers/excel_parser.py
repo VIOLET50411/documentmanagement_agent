@@ -5,6 +5,19 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
+MOJIBAKE_MARKERS = (
+    "\u951f",
+    "\u9359",
+    "\u7487",
+    "\u9200\u20ac",
+    "\ufffd",
+    "\u00c3",
+    "\u00e6",
+    "\u00e7",
+    "\u00b5\u00c4",
+    "\u00c9\u00e8\u00b1\u00b8",
+)
+
 
 class ExcelParser:
     """Parse CSV or spreadsheet files into structured markdown-like elements."""
@@ -128,8 +141,7 @@ class ExcelParser:
     def _score_decoded_text(self, text: str) -> float:
         if not text:
             return float("-inf")
-        mojibake_markers = ("锟", "鍙", "璇", "鈥", "�", "Ã", "æ", "ç", "µÄ", "Éè±¸")
-        penalty = sum(text.count(marker) for marker in mojibake_markers)
+        penalty = sum(text.count(marker) for marker in MOJIBAKE_MARKERS)
         cjk = sum(1 for char in text if "\u4e00" <= char <= "\u9fff")
         printable = sum(1 for char in text if char.isprintable())
         return cjk * 4 + printable - penalty * 10

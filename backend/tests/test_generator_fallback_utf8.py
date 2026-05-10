@@ -3,6 +3,8 @@ import pytest
 from app.agent.nodes.generator import _build_rule_fallback
 from app.security.output_guard import OutputGuard
 
+BAD_MOJIBAKE_MARKER = "\u9359"
+
 
 def test_rule_fallback_returns_readable_structured_answer():
     answer = _build_rule_fallback(
@@ -23,7 +25,7 @@ def test_rule_fallback_returns_readable_structured_answer():
     assert "文档上传后会先进入解析任务" in answer
     assert "引用依据" in answer
     assert "系统架构说明" in answer
-    assert "鍙" not in answer
+    assert BAD_MOJIBAKE_MARKER not in answer
 
 
 @pytest.mark.asyncio
@@ -40,4 +42,4 @@ async def test_output_guard_returns_clean_garbled_reason(monkeypatch):
     assert result["safe"] is False
     assert result["mode"] == "garbled_detection"
     assert "模型输出异常" in result["reason"]
-    assert "鍙" not in result["reason"]
+    assert BAD_MOJIBAKE_MARKER not in result["reason"]

@@ -7,6 +7,10 @@ from collections import OrderedDict
 
 from app.services.llm_service import LLMService
 
+LEAVE_ALIAS_MARKERS = ("年假", "请假", "休假")
+TRAVEL_ALIAS_MARKERS = ("报销", "差旅", "出差")
+GARBLED_MARKERS = ("\u951f",)
+
 
 class ComplianceAgent:
     """Specialist agent for regulatory and policy document Q&A."""
@@ -206,10 +210,10 @@ class ComplianceAgent:
 
     def _build_aliases(self, query: str) -> list[str]:
         aliases = []
-        if any(token in query for token in ("年假", "请假", "休假")):
-            aliases.extend(["leave", "vacation", "holiday", "年假", "请假", "休假"])
-        if any(token in query for token in ("报销", "差旅", "出差")):
-            aliases.extend(["travel", "expense", "reimburse", "报销", "差旅", "出差"])
+        if any(token in query for token in LEAVE_ALIAS_MARKERS):
+            aliases.extend(["leave", "vacation", "holiday", *LEAVE_ALIAS_MARKERS])
+        if any(token in query for token in TRAVEL_ALIAS_MARKERS):
+            aliases.extend(["travel", "expense", "reimburse", *TRAVEL_ALIAS_MARKERS])
         if not aliases:
             aliases.extend(self._extract_keywords(query))
         deduped = []
@@ -298,7 +302,7 @@ class ComplianceAgent:
         text = answer.strip()
         if len(text) <= 10:
             return False
-        if text.count("?") >= 6 or "锟" in text:
+        if text.count("?") >= 6 or any(marker in text for marker in GARBLED_MARKERS):
             return False
         chinese_chars = sum(1 for char in text if "\u4e00" <= char <= "\u9fff")
         non_space = len(text.replace(" ", "").replace("\n", ""))

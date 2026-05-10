@@ -298,23 +298,46 @@ class EvaluationService:
         }
 
     async def _load_documents(self, tenant_id: str, *, sample_limit: int) -> list[dict[str, Any]]:
-        primary_rows = await self.db.execute(
-            select(Document.id, Document.title, DocumentChunk.content)
-            .join(DocumentChunk, DocumentChunk.doc_id == Document.id)
+        document_limit = max(sample_limit, settings.ci_gate_min_eval_unique_docs, 8)
+        primary_docs = await self.db.execute(
+            select(Document.id, Document.title)
             .where(Document.tenant_id == tenant_id, Document.status == "ready")
+            .order_by(Document.updated_at.desc())
+            .limit(document_limit)
+        )
+        primary_rows = await self.db.execute(
+            select(
+                Document.id,
+                Document.title,
+                DocumentChunk.content,
+                DocumentChunk.section_title,
+                DocumentChunk.chunk_index,
+            )
+            .join(DocumentChunk, DocumentChunk.doc_id == Document.id)
+            .where(Document.id.in_([row[0] for row in primary_docs.all()]))
             .order_by(Document.updated_at.desc(), DocumentChunk.chunk_index.asc())
-            .limit(max(sample_limit * 8, 50))
         )
         primary_grouped = self._group_documents(primary_rows.all(), sample_limit=sample_limit, exclude_synthetic=True)
         if primary_grouped:
             return primary_grouped
 
-        fallback_rows = await self.db.execute(
-            select(Document.id, Document.title, DocumentChunk.content)
-            .join(DocumentChunk, DocumentChunk.doc_id == Document.id)
+        fallback_docs = await self.db.execute(
+            select(Document.id, Document.title)
             .where(Document.tenant_id == tenant_id, Document.status == "ready")
+            .order_by(Document.updated_at.desc())
+            .limit(max(sample_limit, 6))
+        )
+        fallback_rows = await self.db.execute(
+            select(
+                Document.id,
+                Document.title,
+                DocumentChunk.content,
+                DocumentChunk.section_title,
+                DocumentChunk.chunk_index,
+            )
+            .join(DocumentChunk, DocumentChunk.doc_id == Document.id)
+            .where(Document.id.in_([row[0] for row in fallback_docs.all()]))
             .order_by(Document.updated_at.desc(), DocumentChunk.chunk_index.asc())
-            .limit(max(sample_limit * 4, 20))
         )
         fallback_grouped = self._group_documents(fallback_rows.all(), sample_limit=sample_limit, exclude_synthetic=False)
         if fallback_grouped and any(not self._is_synthetic_eval_title(item.get("title")) for item in fallback_grouped):
@@ -323,14 +346,148 @@ class EvaluationService:
 
     def _group_documents(self, rows: list[tuple], *, sample_limit: int, exclude_synthetic: bool) -> list[dict[str, Any]]:
         grouped: dict[str, dict[str, Any]] = {}
-        for doc_id, title, content in rows:
+        for row in rows:
+            if len(row) >= 5:
+                doc_id, title, content, section_title, chunk_index = row[:5]
+            else:
+                doc_id, title, content = row[:3]
+                section_title = None
+                chunk_index = 0
             if exclude_synthetic and self._is_synthetic_eval_title(title):
                 continue
             item = grouped.setdefault(doc_id, {"id": doc_id, "title": title, "chunks": []})
-            item["chunks"].append({"content": content})
-            if len(grouped) >= sample_limit and len(item["chunks"]) >= 1:
-                continue
-        return list(grouped.values())[: max(sample_limit, 1)]
+            score = self._score_eval_chunk(title=title, section_title=section_title, content=content, chunk_index=chunk_index)
+            item["chunks"].append(
+                {
+                    "content": content,
+                    "section_title": section_title,
+                    "chunk_index": chunk_index,
+                    "_eval_score": score,
+                }
+            )
+
+        documents: list[dict[str, Any]] = []
+        max_chunks_per_doc = 6
+        for item in grouped.values():
+            ranked_chunks = sorted(
+                item["chunks"],
+                key=lambda chunk: (
+                    -int(chunk.get("_eval_score", 0) or 0),
+                    int(chunk.get("chunk_index", 0) or 0),
+                ),
+            )
+            deduped_chunks: list[dict[str, Any]] = []
+            seen_snippets: set[str] = set()
+            for chunk in ranked_chunks:
+                snippet = re.sub(r"\s+", " ", str(chunk.get("content") or "")).strip()[:240]
+                if not snippet or snippet in seen_snippets:
+                    continue
+                seen_snippets.add(snippet)
+                deduped_chunks.append({"content": chunk.get("content"), "section_title": chunk.get("section_title")})
+                if len(deduped_chunks) >= max_chunks_per_doc:
+                    break
+            if deduped_chunks:
+                documents.append(
+                    {
+                        "id": item["id"],
+                        "title": item["title"],
+                        "chunks": deduped_chunks,
+                        "_best_score": max(int(chunk.get("_eval_score", 0) or 0) for chunk in ranked_chunks),
+                    }
+                )
+
+        documents.sort(key=lambda doc: (-int(doc.get("_best_score", 0) or 0), str(doc.get("title") or "")))
+        return [
+            {"id": doc["id"], "title": doc["title"], "chunks": doc["chunks"]}
+            for doc in documents[: max(sample_limit, 1)]
+        ]
+
+    def _score_eval_chunk(
+        self,
+        *,
+        title: str | None,
+        section_title: str | None,
+        content: str | None,
+        chunk_index: int | None,
+    ) -> int:
+        normalized_title = str(title or "").strip()
+        normalized_section = str(section_title or "").strip()
+        normalized_content = re.sub(r"\s+", " ", str(content or "")).strip()
+        normalized_all = " ".join(part for part in (normalized_title, normalized_section, normalized_content) if part)
+        if not normalized_all:
+            return -100
+
+        score = 0
+        strong_positive_markers = (
+            "预算",
+            "决算",
+            "报销",
+            "差旅",
+            "采购",
+            "合同",
+            "审核",
+            "审批",
+            "流程",
+            "金额",
+            "财政",
+            "支出",
+            "收入",
+            "资金",
+            "管理办法",
+            "实施细则",
+            "情况说明",
+            "单位：万元",
+            "项目支出",
+            "预算表",
+            "报表",
+        )
+        medium_positive_markers = (
+            "应当",
+            "不得",
+            "需要",
+            "须",
+            "负责",
+            "申请",
+            "提交",
+            "复核",
+            "登记",
+            "执行",
+            "标准",
+            "范围",
+        )
+        negative_markers = (
+            "目录",
+            "学校概况",
+            "当前位置",
+            "版权所有",
+            "访问者",
+            "发布",
+            "绿地率",
+            "院士",
+            "博士生导师",
+            "硕士生导师",
+            "花园式学校",
+            "国家重点实验室",
+        )
+        if any(marker in normalized_all for marker in strong_positive_markers):
+            score += 12
+        if any(marker in normalized_all for marker in medium_positive_markers):
+            score += 4
+        if re.search(r"\d[\d,]{2,}(?:\.\d+)?", normalized_all):
+            score += 3
+        if "单位：万元" in normalized_all or normalized_content.count("|") >= 8:
+            score += 5
+        if normalized_section:
+            score += 2
+        if normalized_title.endswith((".pdf", ".html")):
+            score += 1
+        if any(marker in normalized_all for marker in negative_markers):
+            score -= 18
+        if normalized_content.count(".") >= 20 or "................................" in normalized_content:
+            score -= 24
+        if chunk_index is not None and int(chunk_index) <= 3:
+            score -= 10
+        return score
 
     def _is_synthetic_eval_title(self, title: str | None) -> bool:
         normalized = str(title or "").strip().lower()
