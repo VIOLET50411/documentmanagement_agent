@@ -23,6 +23,14 @@ except ImportError:  # pragma: no cover - optional dependency import fallback
 class SemanticCache:
     """Cache responses for repetitive and semantically similar queries."""
 
+    LOW_QUALITY_ANSWER_PATTERNS = (
+        "## 未找到可用证据",
+        "当前知识库中没有检索到",
+        "当前权限范围内未检索到",
+        "暂时无法形成可靠结论",
+        "请补充文档名称、年份或部门范围后重试",
+    )
+
     def __init__(self, redis_client):
         self.redis = redis_client
         self.threshold = settings.semantic_cache_threshold
@@ -67,8 +75,11 @@ class SemanticCache:
         *,
         degraded: bool = False,
         fallback_reason: str | None = None,
+        agent_used: str | None = None,
     ):
         if not settings.semantic_cache_enabled or self.redis is None:
+            return
+        if not self._should_cache(answer, citations, degraded=degraded, fallback_reason=fallback_reason, agent_used=agent_used):
             return
 
         cache_key = self._build_key(query, user_id)
@@ -232,3 +243,28 @@ class SemanticCache:
 
     def _normalize_query(self, query: str) -> str:
         return re.sub(r"\s+", " ", (query or "").strip().lower())
+
+    def _should_cache(
+        self,
+        answer: str,
+        citations: list,
+        *,
+        degraded: bool,
+        fallback_reason: str | None,
+        agent_used: str | None,
+    ) -> bool:
+        if degraded or fallback_reason:
+            return False
+        if agent_used in {"input_guard", "output_guard", "rule_fallback_garbled"}:
+            return False
+
+        normalized_answer = self._normalize_query(self.watermarker.strip(answer or ""))
+        if not normalized_answer:
+            return False
+        if any(marker.lower() in normalized_answer for marker in self.LOW_QUALITY_ANSWER_PATTERNS):
+            return False
+
+        if citations:
+            return True
+
+        return agent_used == "data"

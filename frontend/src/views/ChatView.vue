@@ -3,13 +3,14 @@
     <section v-if="showHeroState" class="hero-state">
       <div class="hero-intro">
         <h2>您好，今天想了解什么？</h2>
+        <p class="section-copy">我是您的智能文档助手。我可以帮您总结长文档、检索关键信息，并基于企业知识库回答您的问题。请在下方直接提问，或选择快捷指令开始。</p>
       </div>
 
       <ChatComposer
         class="hero-composer"
         v-model="inputMessage"
         v-model:selected-model="selectedModel"
-        placeholder="How can I help you today?"
+        placeholder="请直接提问，或描述你要检索、总结、对比的文档问题"
         :disabled="chatStore.isStreaming"
         @submit="handleSend"
       />
@@ -66,7 +67,6 @@ const chatStore = useChatStore()
 const { sendMessage } = useSSE()
 const messagesRef = ref<HTMLElement | null>(null)
 const inputMessage = ref('')
-const sessionSearch = ref('')
 const selectedModel = ref('qwen2.5:1.5b')
 const { scrollToBottom } = useAutoScroll(messagesRef)
 
@@ -78,23 +78,8 @@ const quickPrompts = [
   { label: '治理建议', hint: '从风险和管理角度给建议', text: '请从风险视角给出三条平台治理建议。' },
 ]
 
-const onboardingItems = [
-  '上传一份制度文档并查看处理状态。',
-  '验证一次关键词检索与混合检索结果。',
-  '发起一轮带引用的智能问答。',
-  '检查管理页中的运行指标和审计记录。',
-  '完成设备登记并验证推送链路。',
-]
-
 const hasMessages = computed(() => chatStore.messages.length > 0)
-const hasSessions = computed(() => chatStore.sessions.length > 0)
-const activeSessionIsDraft = computed(() => chatStore.activeSession?.title === '新对话')
 const showHeroState = computed(() => !hasMessages.value)
-const filteredSessions = computed(() => {
-  const keyword = sessionSearch.value.trim().toLowerCase()
-  if (!keyword) return chatStore.sessions
-  return chatStore.sessions.filter((session) => session.title.toLowerCase().includes(keyword))
-})
 const lastUserPrompt = computed(() => [...chatStore.messages].reverse().find((msg) => msg.role === 'user')?.content || '')
 
 watch(() => chatStore.messages.length, () => nextTick(() => scrollToBottom()))
@@ -110,14 +95,6 @@ function handleSend() {
 function sendQuickPrompt(prompt: string) {
   inputMessage.value = prompt
   handleSend()
-}
-
-function startFreshChat() {
-  chatStore.createSession()
-}
-
-async function openSession(sessionId: string) {
-  await chatStore.setActiveSession(sessionId)
 }
 
 async function submitFeedback(messageId: string, rating: number) {
@@ -136,20 +113,6 @@ function retryLastPrompt() {
   if (lastUserPrompt.value && !chatStore.isStreaming) {
     sendMessage(lastUserPrompt.value, chatStore.activeSessionId, selectedModel.value)
   }
-}
-
-function formatRelativeTime(value: string) {
-  const target = new Date(value)
-  if (Number.isNaN(target.getTime())) return value
-  const diff = Date.now() - target.getTime()
-  const minute = 60 * 1000
-  const hour = 60 * minute
-  const day = 24 * hour
-  if (diff < minute) return '刚刚更新'
-  if (diff < hour) return `${Math.floor(diff / minute)} 分钟前更新`
-  if (diff < day) return `${Math.floor(diff / hour)} 小时前更新`
-  if (diff < 30 * day) return `${Math.floor(diff / day)} 天前更新`
-  return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, '0')}-${String(target.getDate()).padStart(2, '0')}`
 }
 </script>
 

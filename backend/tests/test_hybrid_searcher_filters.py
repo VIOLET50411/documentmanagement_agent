@@ -36,5 +36,27 @@ def test_filter_synthetic_results_keeps_explicit_title_lookup():
 def test_should_include_graph_for_relationship_question():
     searcher = HybridSearcher()
 
-    assert searcher._should_include_graph("谁负责差旅审批流程")
-    assert searcher._should_include_graph("制度上下级关联关系是什么")
+    assert searcher._should_include_graph("谁负责差旅审批流程？")
+    assert searcher._should_include_graph("制度上下级关联关系是什么？")
+
+
+def test_extract_explicit_titles_from_query():
+    searcher = HybridSearcher()
+
+    titles = searcher._extract_explicit_titles("请根据《西南大学新进教职工合同签订常见问题》概括试用期规则")
+
+    assert titles == ["西南大学新进教职工合同签订常见问题"]
+
+
+def test_prefer_explicit_title_matches_when_named_document_exists():
+    searcher = HybridSearcher()
+
+    results = [
+        {"document_title": "西南大学2023年度决算公开", "chunk_id": "1"},
+        {"document_title": "西南大学2023年度部门预算", "chunk_id": "2"},
+        {"document_title": "西南大学2023年度部门预算（附件）", "chunk_id": "3"},
+    ]
+
+    filtered = searcher._prefer_explicit_title_matches(results, query="请根据《西南大学2023年度部门预算》概括主要内容")
+
+    assert [item["chunk_id"] for item in filtered] == ["2", "3"]

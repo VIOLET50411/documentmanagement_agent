@@ -12,32 +12,27 @@ class ComplianceAgent:
     """Specialist agent for regulatory and policy document Q&A."""
 
     async def run(self, state: dict) -> dict:
+        from app.agent.nodes.retriever import _normalize_retrieved_results, resolve_retrieval_plan
         from app.retrieval.hybrid_searcher import HybridSearcher
 
         searcher = HybridSearcher()
         query = (state.get("rewritten_query") or state["query"]).strip()
+        plan = resolve_retrieval_plan(state)
         results = await searcher.search(
             query=query,
             user=state["current_user"],
-            top_k=5,
-            search_type=state.get("search_type", "hybrid"),
+            top_k=plan["top_k"],
+            search_type=plan["search_type"],
             db=state["db"],
         )
+        results = _normalize_retrieved_results(searcher, query=query, results=results)
+
         state["retrieved_docs"] = results
-        state["citations"] = [
-            {
-                "doc_id": item["doc_id"],
-                "doc_title": item.get("document_title", "未知文档"),
-                "page_number": item.get("page_number"),
-                "section_title": item.get("section_title"),
-                "snippet": item.get("snippet", ""),
-                "relevance_score": item.get("score", 0.0),
-            }
-            for item in results
-        ]
+        state["retrieval_plan"] = plan
+        state["citations"] = self._build_citations(results)
 
         if not results:
-            state["answer"] = "当前权限范围内未检索到可直接支持该问题的文档内容。请补充文档名称、年份或部门范围后重试。"
+            state["answer"] = "当前权限范围内未检索到可直接支撑该问题的文档内容。请补充文档名称、年份或部门范围后重试。"
         else:
             llm_answer = await self._try_llm_answer(state, query, results)
             if llm_answer:
@@ -50,6 +45,19 @@ class ComplianceAgent:
         state["agent_used"] = "compliance"
         return state
 
+    def _build_citations(self, results: list[dict]) -> list[dict]:
+        return [
+            {
+                "doc_id": item.get("doc_id"),
+                "doc_title": item.get("document_title", "未知文档"),
+                "page_number": item.get("page_number"),
+                "section_title": item.get("section_title"),
+                "snippet": item.get("snippet", ""),
+                "relevance_score": item.get("score", 0.0),
+            }
+            for item in results
+        ]
+
     async def _try_llm_answer(self, state: dict, query: str, results: list[dict]) -> str | None:
         context_lines = []
         for idx, item in enumerate(results[:5], start=1):
@@ -60,7 +68,7 @@ class ComplianceAgent:
 
         prompt = (
             f"## 用户问题\n{query}\n\n"
-            f"## 文档证据\n" + "\n\n".join(context_lines) + "\n\n"
+            f"## 文档证据\n{chr(10).join(context_lines)}\n\n"
             "## 回答要求\n"
             "请用结构化简体中文回答：\n"
             "1. 先给出简明结论；\n"
@@ -68,8 +76,7 @@ class ComplianceAgent:
             "3. 在对应要点后标注引用来源，格式为 [来源: 文档标题]；\n"
             "4. 不要编造证据之外的信息。"
         )
-        llm = LLMService()
-        answer = await llm.generate(
+        answer = await LLMService().generate(
             system_prompt=(
                 "你是企业制度问答助手 DocMind。\n"
                 "请严格依据提供的文档证据回答用户问题。\n"
@@ -88,13 +95,19 @@ class ComplianceAgent:
     def _build_qa_answer(self, query: str, results: list[dict]) -> str:
         top = results[0]
         conclusion = self._extract_best_evidence(query, top.get("snippet", ""))
+        source = self._format_source(top)
+        evidence_excerpt = conclusion if conclusion != "未提取到有效证据。" else self._normalize_text(top.get("snippet", ""))
         lines = [
-            f"## 关于「{query}」",
+            f"## 关于“{query}”",
             "",
             f"**结论：** {conclusion}",
+            "",
+            "### 相关依据",
+            f"1. {source}",
+            f"   - 证据摘录：{evidence_excerpt}",
+            "---",
+            "> 以上内容基于知识库检索结果整理，请以原始制度正文为准。",
         ]
-        lines.append("---")
-        lines.append("> 以上内容基于知识库检索结果整理，请以原始制度正文为准。")
         return "\n".join(lines).strip()
 
     def _build_compare_answer(self, query: str, results: list[dict]) -> str:
@@ -221,8 +234,8 @@ class ComplianceAgent:
         text = answer.strip()
         if len(text) <= 10:
             return False
-        if text.count("?") >= 6 or "�" in text:
+        if text.count("?") >= 6 or "锟" in text:
             return False
-        chinese_chars = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
+        chinese_chars = sum(1 for char in text if "\u4e00" <= char <= "\u9fff")
         non_space = len(text.replace(" ", "").replace("\n", ""))
         return non_space > 0 and chinese_chars / non_space > 0.08

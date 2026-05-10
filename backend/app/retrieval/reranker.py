@@ -51,6 +51,7 @@ class Reranker:
     def _rerank_local(self, query: str, candidates: list[dict], top_k: int) -> list[dict]:
         query_terms = self._tokenize(query)
         query_phrase = (query or "").strip().lower()
+        explicit_titles = self._extract_explicit_titles(query)
         inferred_departments = self._infer_query_departments(query_phrase)
         ranked = []
 
@@ -64,6 +65,7 @@ class Reranker:
             title_overlap = sum(1 for term in query_terms if term and term in title)
             section_overlap = sum(1 for term in query_terms if term and term in section)
             exact_phrase = 1 if query_phrase and query_phrase in full_text else 0
+            exact_title = self._exact_title_boost(title, explicit_titles)
             same_department = self._department_boost(item.get("department"), inferred_departments)
             freshness = self._freshness_boost(item)
             base_score = float(item.get("score", 0.0))
@@ -74,6 +76,7 @@ class Reranker:
                 + title_overlap * 2.0
                 + section_overlap * 1.4
                 + exact_phrase * 3.0
+                + exact_title
                 + same_department
                 + freshness
             )
@@ -229,3 +232,35 @@ class Reranker:
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
+
+    def _extract_explicit_titles(self, query: str) -> list[str]:
+        titles = []
+        seen = set()
+        for match in re.findall(r"《([^》]{2,80})》", query or ""):
+            title = match.strip().lower()
+            if not title:
+                continue
+            for variant in self._title_variants(title):
+                if variant not in seen:
+                    seen.add(variant)
+                    titles.append(variant)
+        return titles
+
+    def _title_variants(self, title: str) -> list[str]:
+        normalized = str(title or "").strip().lower()
+        if not normalized:
+            return []
+        variants = [normalized]
+        stem = re.sub(r"\.(pdf|docx|doc|xlsx|xls|csv|txt)$", "", normalized, flags=re.IGNORECASE).strip()
+        if stem and stem != normalized:
+            variants.append(stem)
+        return variants
+
+    def _exact_title_boost(self, candidate_title: str, explicit_titles: list[str]) -> float:
+        normalized_title = str(candidate_title or "").strip().lower()
+        if not normalized_title or not explicit_titles:
+            return 0.0
+        for title in explicit_titles:
+            if title in normalized_title:
+                return 8.0
+        return 0.0

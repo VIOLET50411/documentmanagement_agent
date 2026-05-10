@@ -369,19 +369,8 @@ class MilvusClient:
         if not tokens:
             return dense_hits
 
-        candidates: list[dict] = []
-        try:
-            query_expr = expr or 'chunk_id != ""'
-            candidates = collection.query(
-                expr=query_expr,
-                output_fields=["chunk_id", "doc_id", "department", "document_title", "section_title", "page_number", "snippet"],
-                limit=max(top_k * 20, 200),
-            )
-        except (MilvusException, OSError, RuntimeError, AttributeError, TypeError, ValueError):
-            return dense_hits
-
         merged: dict[str, dict] = {item.get("chunk_id"): item for item in dense_hits if item.get("chunk_id")}
-        for row in candidates:
+        for row in self._iter_lexical_candidates(collection=collection, expr=expr):
             chunk_id = row.get("chunk_id")
             if not chunk_id:
                 continue
@@ -408,6 +397,49 @@ class MilvusClient:
         items = list(merged.values())
         items.sort(key=lambda item: item.get("score", 0.0), reverse=True)
         return items
+
+    def _iter_lexical_candidates(self, *, collection, expr: str):
+        query_expr = expr or 'chunk_id != ""'
+        output_fields = ["chunk_id", "doc_id", "department", "document_title", "section_title", "page_number", "snippet"]
+        iterator_factory = getattr(collection, "query_iterator", None)
+        iterator = None
+        if callable(iterator_factory):
+            try:
+                iterator = iterator_factory(
+                    batch_size=500,
+                    limit=-1,
+                    expr=query_expr,
+                    output_fields=output_fields,
+                    timeout=self._operation_timeout,
+                )
+                while True:
+                    batch = iterator.next()
+                    if not batch:
+                        break
+                    for row in batch:
+                        yield row
+                return
+            except (MilvusException, OSError, RuntimeError, AttributeError, TypeError, ValueError):
+                pass
+            finally:
+                if iterator is not None:
+                    close = getattr(iterator, "close", None)
+                    if callable(close):
+                        try:
+                            close()
+                        except (MilvusException, OSError, RuntimeError, AttributeError, TypeError, ValueError):
+                            pass
+
+        try:
+            candidates = collection.query(
+                expr=query_expr,
+                output_fields=output_fields,
+                limit=2000,
+            )
+        except (MilvusException, OSError, RuntimeError, AttributeError, TypeError, ValueError):
+            return
+        for row in candidates:
+            yield row
 
     def _lexical_score(self, tokens: list[str], row: dict) -> float:
         title = str(row.get("document_title") or "")

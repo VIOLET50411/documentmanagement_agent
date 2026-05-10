@@ -21,10 +21,58 @@ from app.models.db.session import ChatMessage, ChatSession
 from app.models.db.user import User
 from app.models.schemas.chat import ChatRequest, ChatResponse
 from app.services.llm_service import use_request_model_name
-from app.utils.history_truncator import truncate_history
 from app.services.security_audit_service import SecurityAuditService
+from app.utils.history_truncator import truncate_history
 
 router = APIRouter()
+BLOCKED_OUTPUT_MESSAGE = "输出内容命中安全规则，系统已拦截。"
+
+
+def _extract_citation_titles(citations_json: str | None) -> list[str]:
+    if not citations_json:
+        return []
+    try:
+        citations = json.loads(citations_json)
+    except json.JSONDecodeError:
+        return []
+
+    titles = []
+    seen = set()
+    for item in citations or []:
+        title = str(item.get("doc_title") or "").strip()
+        if title and title not in seen:
+            seen.add(title)
+            titles.append(title)
+    return titles
+
+
+def _dedupe_citations(citations: list[dict] | None) -> list[dict]:
+    ordered: list[dict] = []
+    seen: set[tuple[str, str, str, str, str]] = set()
+    for item in citations or []:
+        key = (
+            str(item.get("doc_id") or "").strip(),
+            str(item.get("doc_title") or "").strip(),
+            str(item.get("section_title") or "").strip(),
+            str(item.get("page_number") or "").strip(),
+            str(item.get("snippet") or "").strip(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(item)
+    return ordered
+
+
+def _format_history_message(item: ChatMessage) -> dict[str, str]:
+    content = (item.content or "").strip()
+    if item.role == "assistant":
+        titles = _extract_citation_titles(getattr(item, "citations_json", None))
+        if titles:
+            citation_note = f"\n[参考文档: {'、'.join(titles[:3])}]"
+            if citation_note not in content:
+                content = f"{content}{citation_note}"
+    return {"role": item.role, "content": content}
 
 
 @router.post("/message", response_model=ChatResponse)
@@ -51,18 +99,20 @@ async def chat_message(
     from app.security.input_guard import InputGuard
     from app.security.output_guard import OutputGuard
     from app.security.pii_masker import PIIMasker
+
     audit = SecurityAuditService(redis_client, db)
     with use_request_model_name(request.selected_model):
         cache = SemanticCache(redis_client)
         cached = await cache.get(request.message, user_id=current_user.id)
         if cached:
+            cached_citations = _dedupe_citations(cached.get("citations", []))
             assistant_message.content = cached["answer"]
-            assistant_message.citations_json = json.dumps(cached.get("citations", []), ensure_ascii=False)
+            assistant_message.citations_json = json.dumps(cached_citations, ensure_ascii=False)
             assistant_message.agent_used = "cache"
             return ChatResponse(
                 message_id=assistant_message.id,
                 answer=cached["answer"],
-                citations=cached.get("citations", []),
+                citations=cached_citations,
                 agent_used="cache",
                 cached=True,
                 thread_id=session.id,
@@ -94,11 +144,9 @@ async def chat_message(
         masker = PIIMasker()
         masked_query, pii_mapping = masker.mask(request.message)
         history_rows = await db.execute(select(ChatMessage).where(ChatMessage.session_id == session.id).order_by(ChatMessage.created_at.asc()))
-        history_messages = truncate_history([
-            {"role": item.role, "content": item.content}
-            for item in history_rows.scalars().all()
-            if item.id != assistant_message.id
-        ])
+        history_messages = truncate_history(
+            [_format_history_message(item) for item in history_rows.scalars().all() if item.id != assistant_message.id]
+        )
 
         runtime = AgentRuntime(redis_client)
         runtime_request = RuntimeRequest(
@@ -115,7 +163,7 @@ async def chat_message(
         async for event in runtime.run(runtime_request, db=db, current_user=current_user):
             if event.get("status") == "done":
                 final_answer = event.get("answer", "")
-                citations = event.get("citations", [])
+                citations = _dedupe_citations(event.get("citations", []))
                 final_agent = event.get("agent_used") or final_agent
                 break
 
@@ -134,16 +182,17 @@ async def chat_message(
         if not guarded_output["safe"]:
             if guarded_output.get("degraded") and guarded_output.get("mode") == "garbled_detection":
                 from app.agent.nodes.generator import _build_rule_fallback
+
                 restored_answer = _build_rule_fallback(request.message, citations)
                 final_agent = "rule_fallback_garbled"
             else:
-                restored_answer = "输出内容命中安全规则，系统已拦截�?
+                restored_answer = BLOCKED_OUTPUT_MESSAGE
                 citations = []
                 final_agent = "output_guard"
         assistant_message.content = restored_answer
         assistant_message.citations_json = json.dumps(citations, ensure_ascii=False)
         assistant_message.agent_used = final_agent
-        await cache.put(request.message, restored_answer, citations, user_id=current_user.id)
+        await cache.put(request.message, restored_answer, citations, user_id=current_user.id, agent_used=final_agent)
 
         return ChatResponse(
             message_id=assistant_message.id,
@@ -174,6 +223,7 @@ async def chat_stream(
         last_sequence = parsed_last_sequence
 
     if resume_trace_id:
+
         async def replay_generator():
             from app.agent.runtime import AgentRuntime, RuntimeRequest
             from app.security.input_guard import InputGuard
@@ -231,16 +281,17 @@ async def chat_stream(
                     )
                     if not guard_result["safe"]:
                         yield await emit_resume({"status": "error", "msg": guard_result["reason"]})
-                        yield await emit_resume({"status": "done", "answer": guard_result["reason"], "citations": [], "agent_used": "input_guard"})
+                        yield await emit_resume(
+                            {"status": "done", "answer": guard_result["reason"], "citations": [], "agent_used": "input_guard"}
+                        )
                         return
 
                     masker = PIIMasker()
                     masked_query, pii_mapping = masker.mask(request.message)
-                    history_rows = await db.execute(select(ChatMessage).where(ChatMessage.session_id == (request.thread_id or "")).order_by(ChatMessage.created_at.asc()))
-                    history_messages = truncate_history([
-                        {"role": item.role, "content": item.content}
-                        for item in history_rows.scalars().all()
-                    ])
+                    history_rows = await db.execute(
+                        select(ChatMessage).where(ChatMessage.session_id == (request.thread_id or "")).order_by(ChatMessage.created_at.asc())
+                    )
+                    history_messages = truncate_history([_format_history_message(item) for item in history_rows.scalars().all()])
                     runtime = AgentRuntime(redis_client)
                     runtime_request = RuntimeRequest(
                         query=masked_query,
@@ -250,7 +301,12 @@ async def chat_stream(
                         history=history_messages,
                     )
                     resumed = False
-                    async for payload in runtime.resume_from_checkpoint(runtime_request, trace_id=resume_trace_id, db=db, current_user=current_user):
+                    async for payload in runtime.resume_from_checkpoint(
+                        runtime_request,
+                        trace_id=resume_trace_id,
+                        db=db,
+                        current_user=current_user,
+                    ):
                         resumed = True
                         payload["trace_id"] = resume_trace_id
                         if payload.get("status") == "done":
@@ -267,11 +323,12 @@ async def chat_stream(
                                 guard_result=guarded_output,
                             )
                             if not guarded_output["safe"]:
-                                payload["answer"] = "输出内容命中安全规则，系统已拦截�?
+                                payload["answer"] = BLOCKED_OUTPUT_MESSAGE
                                 payload["citations"] = []
                                 payload["agent_used"] = "output_guard"
                             else:
                                 payload["answer"] = restored_answer
+                                payload["citations"] = _dedupe_citations(payload.get("citations", []))
                         highest_sequence += 1
                         payload["sequence_num"] = highest_sequence
                         await _persist_replay_event(redis_client, current_user.tenant_id, payload)
@@ -282,7 +339,7 @@ async def chat_stream(
                                 "status": "done",
                                 "degraded": True,
                                 "fallback_reason": "replay_window_miss",
-                                "msg": "未找到可继续恢复的事件，请重新发起请求�?,
+                                "msg": "未找到可继续恢复的事件，请重新发起请求。",
                             }
                         )
 
@@ -309,6 +366,7 @@ async def chat_stream(
         from app.security.pii_masker import PIIMasker
         from app.security.watermark import Watermarker
         from app.services.dlp_forensics_service import DLPForensicsService
+
         with use_request_model_name(request.selected_model):
             answer_parts: list[str] = []
             citations: list[dict] = []
@@ -345,16 +403,19 @@ async def chat_stream(
                 return _sse_event(payload)
 
             try:
-                yield await emit({"status": "thinking", "msg": "正在接收并校验请�?.."})
+                yield await emit({"status": "thinking", "msg": "正在接收并校验请求..."})
                 cached = await cache.get(request.message, user_id=current_user.id)
                 if cached:
                     visible_answer = watermarker.strip(cached["answer"])
-                    yield await emit({"status": "reading", "msg": "命中语义缓存，正在返回结�?.."})
-                    yield await emit({"status": "streaming", "content": visible_answer, "citations": cached.get("citations", [])})
+                    cached_citations = _dedupe_citations(cached.get("citations", []))
+                    yield await emit({"status": "reading", "msg": "命中语义缓存，正在返回结果..."})
+                    yield await emit({"status": "streaming", "content": visible_answer, "citations": cached_citations})
                     assistant_message.content = visible_answer
-                    assistant_message.citations_json = json.dumps(cached.get("citations", []), ensure_ascii=False)
+                    assistant_message.citations_json = json.dumps(cached_citations, ensure_ascii=False)
                     assistant_message.agent_used = "cache"
-                    yield await emit({"status": "done", "citations": cached.get("citations", []), "message_id": assistant_message.id, "thread_id": session.id})
+                    yield await emit(
+                        {"status": "done", "citations": cached_citations, "message_id": assistant_message.id, "thread_id": session.id}
+                    )
                     return
 
                 guard_result = await InputGuard().check(request.message)
@@ -378,11 +439,9 @@ async def chat_stream(
                 masker = PIIMasker()
                 masked_query, pii_mapping = masker.mask(request.message)
                 history_rows = await db.execute(select(ChatMessage).where(ChatMessage.session_id == session.id).order_by(ChatMessage.created_at.asc()))
-                history_messages = truncate_history([
-                    {"role": item.role, "content": item.content}
-                    for item in history_rows.scalars().all()
-                    if item.id != assistant_message.id
-                ])
+                history_messages = truncate_history(
+                    [_format_history_message(item) for item in history_rows.scalars().all() if item.id != assistant_message.id]
+                )
 
                 runtime = AgentRuntime(redis_client)
                 runtime_request = RuntimeRequest(
@@ -398,7 +457,7 @@ async def chat_stream(
                     if event.get("status") == "done":
                         request_trace_id = event.get("trace_id", request_trace_id)
                         final_answer = event.get("answer", "")
-                        citations = event.get("citations", [])
+                        citations = _dedupe_citations(event.get("citations", []))
                         final_agent = event.get("agent_used") or final_agent
                         final_degraded = bool(event.get("degraded", False))
                         final_fallback_reason = event.get("fallback_reason")
@@ -420,10 +479,11 @@ async def chat_stream(
                 if not guarded_output["safe"]:
                     if guarded_output.get("degraded") and guarded_output.get("mode") == "garbled_detection":
                         from app.agent.nodes.generator import _build_rule_fallback
+
                         restored_answer = _build_rule_fallback(request.message, citations)
                         final_agent = "rule_fallback_garbled"
                     else:
-                        restored_answer = "输出内容命中安全规则，系统已拦截�?
+                        restored_answer = BLOCKED_OUTPUT_MESSAGE
                         citations = []
                         final_agent = "output_guard"
 
@@ -458,6 +518,7 @@ async def chat_stream(
                         user_id=current_user.id,
                         degraded=False,
                         fallback_reason=final_fallback_reason,
+                        agent_used=final_agent,
                     )
                 yield await emit({"status": "done", "citations": citations, "message_id": assistant_message.id, "thread_id": session.id})
             except asyncio.CancelledError:
@@ -472,7 +533,11 @@ async def chat_stream(
 
 
 @router.get("/history")
-async def get_chat_history(thread_id: str = Query(..., min_length=1), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_chat_history(
+    thread_id: str = Query(..., min_length=1),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Get conversation history for a thread."""
     session = await db.scalar(select(ChatSession).where(ChatSession.id == thread_id, ChatSession.user_id == current_user.id))
     if session is None:
@@ -496,10 +561,22 @@ async def get_chat_history(thread_id: str = Query(..., min_length=1), current_us
 
 
 @router.post("/feedback")
-async def submit_feedback(message_id: str, rating: int = Query(..., ge=-1, le=1), correction: str | None = None, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def submit_feedback(
+    message_id: str,
+    rating: int = Query(..., ge=-1, le=1),
+    correction: str | None = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     from app.services.feedback_service import FeedbackService
 
-    await FeedbackService(db).record(user_id=current_user.id, tenant_id=current_user.tenant_id, message_id=message_id, rating=rating, correction=correction)
+    await FeedbackService(db).record(
+        user_id=current_user.id,
+        tenant_id=current_user.tenant_id,
+        message_id=message_id,
+        rating=rating,
+        correction=correction,
+    )
     return {"status": "recorded"}
 
 
@@ -553,7 +630,8 @@ async def _audit_guard_decision(
         "input": "输入安全校验",
         "output": "输出安全校验",
     }.get(guard_name, "安全校验")
-    message_text = reason or f"{summary}{'通过' if result == 'ok' else '进入降级模式' if result == 'warning' else '已拦�?}�?
+    status_text = "通过" if result == "ok" else "进入降级模式" if result == "warning" else "已拦截"
+    message_text = reason or f"{summary}{status_text}"
     await audit.log_event(
         tenant_id,
         f"{guard_name}_guard_decision",
@@ -599,8 +677,12 @@ async def _get_or_create_session(db: AsyncSession, current_user: User, thread_id
             return existing
 
     new_id = thread_id if thread_id else str(uuid.uuid4())
-    session = ChatSession(id=new_id, user_id=current_user.id, tenant_id=current_user.tenant_id, title=(first_question[:40].strip() or "新对�?))
+    session = ChatSession(
+        id=new_id,
+        user_id=current_user.id,
+        tenant_id=current_user.tenant_id,
+        title=(first_question[:40].strip() or "新对话"),
+    )
     db.add(session)
     await db.flush()
     return session
-

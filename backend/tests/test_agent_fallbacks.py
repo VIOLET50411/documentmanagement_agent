@@ -4,6 +4,7 @@ from app.agent.agents.compliance_agent import ComplianceAgent
 from app.agent.agents.data_agent import DataAgent
 from app.agent.nodes.intent_router import intent_router
 from app.agent.nodes.query_rewriter import query_rewriter
+from app.agent.nodes.retriever import _normalize_retrieved_results, resolve_retrieval_plan
 from app.agent.tools.text2sql import Text2SQLTool
 from app.retrieval.graph_searcher import GraphSearcher
 from app.retrieval.hybrid_searcher import HybridSearcher
@@ -50,6 +51,25 @@ async def test_query_rewriter_expands_ambiguous_reference():
         }
     )
     assert "差旅报销制度" in state["rewritten_query"]
+
+
+@pytest.mark.asyncio
+async def test_query_rewriter_uses_assistant_document_context_for_follow_up():
+    state = await query_rewriter(
+        {
+            "query": "需要哪些材料？",
+            "messages": [
+                {"role": "user", "content": "请说明差旅报销要求"},
+                {
+                    "role": "assistant",
+                    "content": "根据《差旅报销制度》，报销前需完成审批并保留票据。\n[参考文档: 差旅报销制度]",
+                },
+            ],
+        }
+    )
+
+    assert "《差旅报销制度》" in state["rewritten_query"]
+    assert "需要哪些材料" in state["rewritten_query"]
 
 
 @pytest.mark.asyncio
@@ -133,7 +153,12 @@ async def test_compliance_agent_extracts_table_evidence(monkeypatch):
                 {
                     "doc_id": "doc-1",
                     "document_title": "请假制度表",
-                    "snippet": "| policy | content |\n| --- | --- |\n| travel | 出差前需要提交审批 |\n| leave | 员工每年享有带薪年假，具体天数依据职级确定。|",
+                    "snippet": (
+                        "| policy | content |\n"
+                        "| --- | --- |\n"
+                        "| travel | 出差前需要提交审批 |\n"
+                        "| leave | 员工每年享有带薪年假，具体天数依据职级确定。|"
+                    ),
                     "page_number": None,
                     "section_title": "未命名章节",
                     "score": 1.0,
@@ -209,7 +234,147 @@ def test_hybrid_searcher_includes_graph_for_compare_query():
     assert searcher._should_include_graph("年假制度是什么") is False
 
 
+def test_resolve_retrieval_plan_uses_intent_defaults():
+    compare_plan = resolve_retrieval_plan({"intent": "compare", "search_type": "hybrid"})
+    summary_plan = resolve_retrieval_plan({"intent": "summarize"})
+    graph_plan = resolve_retrieval_plan({"intent": "graph_query", "search_type": "hybrid"})
+
+    assert compare_plan["top_k"] == 8
+    assert compare_plan["search_type"] == "hybrid"
+    assert summary_plan["top_k"] == 8
+    assert summary_plan["search_type"] == "hybrid"
+    assert graph_plan["top_k"] == 6
+    assert graph_plan["search_type"] == "graph"
+
+
+@pytest.mark.asyncio
+async def test_compliance_agent_uses_intent_aware_retrieval_plan(monkeypatch):
+    captured = {}
+
+    async def no_llm_answer(*args, **kwargs):
+        return None
+
+    class DummySearcher:
+        async def search(self, **kwargs):
+            captured.update(kwargs)
+            return [
+                {
+                    "doc_id": "doc-1",
+                    "document_title": "制度 A",
+                    "snippet": "制度 A 规定了流程一。",
+                    "page_number": 1,
+                    "section_title": "总则",
+                    "score": 1.0,
+                }
+            ]
+
+    monkeypatch.setattr("app.retrieval.hybrid_searcher.HybridSearcher", DummySearcher)
+    monkeypatch.setattr(ComplianceAgent, "_try_llm_answer", no_llm_answer)
+    state = await ComplianceAgent().run(
+        {
+            "query": "请比较制度 A 和制度 B 的差异",
+            "rewritten_query": "请比较制度 A 和制度 B 的差异",
+            "current_user": object(),
+            "search_type": "hybrid",
+            "db": object(),
+            "intent": "compare",
+        }
+    )
+
+    assert captured["top_k"] == 8
+    assert captured["search_type"] == "hybrid"
+    assert state["retrieval_plan"]["intent"] == "compare"
+
+
 def test_graph_searcher_infers_relationship():
     searcher = GraphSearcher()
     assert searcher._infer_relationship("谁负责审批", "该部门负责人审批") == "manages"
     assert searcher._infer_relationship("修订关系", "新制度替代旧制度") == "amends"
+
+
+def test_retriever_scopes_named_document_results_to_explicit_title():
+    searcher = HybridSearcher()
+    results = [
+        {"doc_id": "doc-a", "document_title": "西南大学2023年度部门预算.html", "section_title": "预算公开", "snippet": "预算公开"},
+        {"doc_id": "doc-a", "document_title": "西南大学2023年度部门预算.html", "section_title": "预算正文", "snippet": "预算正文"},
+        {"doc_id": "doc-b", "document_title": "西南大学2023年度决算公开.html", "section_title": "决算公开", "snippet": "决算公开"},
+    ]
+
+    normalized = _normalize_retrieved_results(
+        searcher,
+        query="请根据《西南大学2023年度部门预算》概括主要内容",
+        results=results,
+    )
+
+    assert len(normalized) == 2
+    assert {item["doc_id"] for item in normalized} == {"doc-a"}
+    assert [item["section_title"] for item in normalized] == ["预算公开", "预算正文"]
+
+
+def test_retriever_limits_duplicate_chunks_per_document_for_general_queries():
+    searcher = HybridSearcher()
+    results = [
+        {"doc_id": "doc-a", "document_title": "员工手册", "section_title": "年假", "snippet": "员工每年可休年假"},
+        {"doc_id": "doc-a", "document_title": "员工手册", "section_title": "年假", "snippet": "员工每年可休年假"},
+        {"doc_id": "doc-a", "document_title": "员工手册", "section_title": "调休", "snippet": "加班后可调休"},
+        {"doc_id": "doc-a", "document_title": "员工手册", "section_title": "补充", "snippet": "补充说明"},
+    ]
+
+    normalized = _normalize_retrieved_results(searcher, query="年假怎么休", results=results)
+
+    assert len(normalized) == 2
+    assert [item["section_title"] for item in normalized] == ["年假", "调休"]
+
+
+def test_retriever_drops_low_information_title_chunks_before_limiting():
+    searcher = HybridSearcher()
+    results = [
+        {
+            "doc_id": "doc-a",
+            "document_title": "西南大学2023年度部门预算.html",
+            "section_title": "西南大学2023年度部门预算-信息公开",
+            "snippet": "西南大学2023年度部门预算-信息公开",
+        },
+        {
+            "doc_id": "doc-a",
+            "document_title": "西南大学2023年度部门预算.html",
+            "section_title": "预算正文",
+            "snippet": "本年度预算包括收入安排、支出安排和财政拨款说明。",
+        },
+    ]
+
+    normalized = _normalize_retrieved_results(
+        searcher,
+        query="请根据《西南大学2023年度部门预算》概括主要内容",
+        results=results,
+    )
+
+    assert len(normalized) == 1
+    assert normalized[0]["snippet"] == "本年度预算包括收入安排、支出安排和财政拨款说明。"
+
+
+def test_retriever_filters_boilerplate_footer_chunks_when_possible():
+    searcher = HybridSearcher()
+    results = [
+        {
+            "doc_id": "doc-a",
+            "document_title": "西南大学2023年度部门预算.html",
+            "section_title": "西南大学2023年度部门预算.html",
+            "snippet": "西南大学2023年度部门预算.pdf 附件【西南大学2023年度部门预算.pdf】已下载次 你是第 位访问者 版权所有 地址：重庆市北碚区天生路2号",
+        },
+        {
+            "doc_id": "doc-a",
+            "document_title": "西南大学2023年度部门预算.html",
+            "section_title": "预算正文",
+            "snippet": "预算安排覆盖收入来源、支出结构和财政拨款。",
+        },
+    ]
+
+    normalized = _normalize_retrieved_results(
+        searcher,
+        query="请根据《西南大学2023年度部门预算》概括主要内容",
+        results=results,
+    )
+
+    assert len(normalized) == 1
+    assert normalized[0]["section_title"] == "预算正文"

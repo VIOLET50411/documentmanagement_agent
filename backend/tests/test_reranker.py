@@ -44,3 +44,28 @@ async def test_reranker_adds_department_and_freshness_boost():
     )
     assert ranked[0]["department"] == "finance"
     assert ranked[0]["rerank_score"] > ranked[1]["rerank_score"]
+
+
+@pytest.mark.asyncio
+async def test_reranker_prefers_explicit_document_title_lookup():
+    reranker = Reranker()
+    ranked = await reranker.rerank(
+        "请根据《西南大学新进教职工合同签订常见问题》概括试用期规则",
+        [
+            {
+                "document_title": "员工手册",
+                "section_title": "试用期",
+                "snippet": "员工试用期按岗位安排执行。",
+                "score": 1.2,
+            },
+            {
+                "document_title": "西南大学新进教职工合同签订常见问题.pdf",
+                "section_title": "试用期",
+                "snippet": "签订合同时，部分新进人员需约定试用期，试用期为12个月。",
+                "score": 0.5,
+            },
+        ],
+        top_k=2,
+    )
+
+    assert ranked[0]["document_title"] == "西南大学新进教职工合同签订常见问题.pdf"

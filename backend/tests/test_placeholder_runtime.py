@@ -96,6 +96,8 @@ async def test_summary_agent_returns_summary_text(monkeypatch):
     finally:
         agents_pkg.summary_agent.ComplianceAgent = original
     assert "\u6587\u6863\u6458\u8981" in state["answer"]
+    assert "\u6458\u8981\u7ed3\u8bba" in state["answer"]
+    assert "\u5173\u952e\u8981\u70b9" in state["answer"]
 
 
 async def test_graph_extractor_returns_relationships():

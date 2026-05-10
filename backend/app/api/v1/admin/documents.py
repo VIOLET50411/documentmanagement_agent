@@ -267,3 +267,18 @@ async def reindex_documents(limit: int | None = None, current_user: User = Depen
     from app.services.index_sync_service import IndexSyncService
 
     return await IndexSyncService(db).reindex_tenant(current_user.tenant_id, limit=limit)
+
+
+@router.get("/index-consistency")
+async def get_index_consistency(
+    limit: int = Query(default=10, ge=1, le=50),
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.index_sync_service import IndexSyncService
+
+    return await IndexSyncService(db).audit_tenant_consistency(
+        current_user.tenant_id,
+        limit=limit,
+        minio_client=get_minio_client(),
+    )

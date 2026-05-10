@@ -74,7 +74,7 @@ async def test_semantic_cache_strips_watermark(monkeypatch):
     monkeypatch.setattr(cache, "_upsert_vector_entry", fake_upsert)
     marked = Watermarker().inject("制度答案", "user-1", timestamp="2026-01-01T00:00:00")
 
-    await cache.put("测试问题", marked, [], user_id="user-1")
+    await cache.put("测试问题", marked, [{"doc_id": "doc-1"}], user_id="user-1")
     payload = await cache.get("测试问题", user_id="user-1")
 
     assert payload["answer"] == "制度答案"
@@ -100,3 +100,25 @@ async def test_semantic_cache_can_invalidate_by_doc(monkeypatch):
     assert deleted == 1
     assert deleted_keys
     assert await cache.get("报销制度", user_id="user-1") is None
+
+
+@pytest.mark.asyncio
+async def test_semantic_cache_skips_low_quality_empty_evidence_answer(monkeypatch):
+    monkeypatch.setattr("app.retrieval.semantic_cache.settings.semantic_cache_enabled", True)
+    redis = FakeRedis()
+    cache = SemanticCache(redis)
+
+    async def fake_upsert(*args, **kwargs):
+        raise AssertionError("low quality answer should not be written into vector cache")
+
+    monkeypatch.setattr(cache, "_upsert_vector_entry", fake_upsert)
+
+    await cache.put(
+        "西南大学国内差旅费管理办法是什么？",
+        "## 未找到可用证据\n\n当前知识库中没有检索到与该问题直接相关的文档内容。",
+        [],
+        user_id="user-1",
+        agent_used="langgraph_runtime",
+    )
+
+    assert await cache.get("西南大学国内差旅费管理办法是什么？", user_id="user-1") is None

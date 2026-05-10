@@ -84,6 +84,44 @@ def test_milvus_health_prefers_live_row_count(monkeypatch):
     assert collection.iterator.closed is True
 
 
+def test_milvus_lexical_rerank_uses_iterator_candidates_beyond_first_page():
+    client = MilvusClient(dim=8)
+
+    class FakeIterator:
+        def __init__(self):
+            self._batches = [
+                [{"chunk_id": "a-1", "doc_id": "doc-a", "document_title": "其他制度", "section_title": "概述", "snippet": "无关内容"}],
+                [{"chunk_id": "target-1", "doc_id": "doc-target", "document_title": "西南大学2023年度部门预算.html", "section_title": "信息公开", "snippet": "西南大学2023年度部门预算"}],
+                [],
+            ]
+            self.closed = False
+
+        def next(self):
+            return self._batches.pop(0)
+
+        def close(self):
+            self.closed = True
+
+    class FakeCollection:
+        def __init__(self):
+            self.iterator = FakeIterator()
+
+        def query_iterator(self, **kwargs):
+            self.kwargs = kwargs
+            return self.iterator
+
+    reranked = client._lexical_rerank(
+        collection=FakeCollection(),
+        expr='tenant_id == "default"',
+        dense_hits=[],
+        dense_scores={},
+        query_embedding={"sparse": {"西南大学2023年度部门预算": 1.0, "信息公开": 1.0}},
+        top_k=5,
+    )
+
+    assert reranked[0]["doc_id"] == "doc-target"
+
+
 def test_es_health_returns_degraded_on_transport_error(monkeypatch):
     client = ESClient()
     monkeypatch.setattr(client, "_ensure_index_sync", lambda: (_ for _ in ()).throw(RuntimeError("es down")))

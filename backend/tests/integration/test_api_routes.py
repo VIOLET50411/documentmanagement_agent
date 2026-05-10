@@ -113,6 +113,29 @@ class FakeRedis:
         return True
 
 
+def test_format_history_message_appends_citation_titles():
+    from app.api.v1.chat import _format_history_message
+    from app.models.db.session import ChatMessage
+
+    item = ChatMessage(
+        session_id="session-1",
+        role="assistant",
+        content="这是回答正文。",
+    )
+    item.citations_json = json.dumps(
+        [
+            {"doc_title": "差旅报销制度"},
+            {"doc_title": "财务审批规范"},
+        ],
+        ensure_ascii=False,
+    )
+
+    payload = _format_history_message(item)
+
+    assert payload["role"] == "assistant"
+    assert "[参考文档: 差旅报销制度、财务审批规范]" in payload["content"]
+
+
 @pytest.fixture
 def test_app():
     original_overrides = app.dependency_overrides.copy()

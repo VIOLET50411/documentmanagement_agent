@@ -180,6 +180,7 @@ def _build_rule_fallback(query: str, retrieved_docs: list[dict]) -> str:
     """Build a structured deterministic answer from retrieved chunks."""
     evidence_blocks = []
     source_lines = []
+    lead = ""
 
     for item in retrieved_docs[:3]:
         title = item.get("document_title") or item.get("doc_title") or "未命名文档"
@@ -194,6 +195,8 @@ def _build_rule_fallback(query: str, retrieved_docs: list[dict]) -> str:
 
         if snippet:
             evidence_blocks.append(f"- {snippet} [{source_label}]")
+            if not lead:
+                lead = snippet
         source_lines.append(f"- {source_label}")
 
     if not evidence_blocks:
@@ -206,7 +209,9 @@ def _build_rule_fallback(query: str, retrieved_docs: list[dict]) -> str:
     answer_lines = [
         f"## 关于“{query}”的回答",
         "",
-        "根据当前检索到的文档证据，系统已定位到以下相关内容：",
+        f"**直接结论：** {lead or '当前已命中相关文档，但暂未提取到足够稳定的正文证据。'}",
+        "",
+        "### 引用依据",
         "",
         *evidence_blocks,
         "",
