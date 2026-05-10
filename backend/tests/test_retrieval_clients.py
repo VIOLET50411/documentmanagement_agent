@@ -122,6 +122,16 @@ def test_milvus_lexical_rerank_uses_iterator_candidates_beyond_first_page():
     assert reranked[0]["doc_id"] == "doc-target"
 
 
+def test_milvus_truncate_varchar_respects_utf8_byte_limit():
+    client = MilvusClient(dim=8)
+
+    truncated = client._truncate_varchar("预算说明" * 400, 2048)
+
+    assert len(truncated.encode("utf-8")) <= 2048
+    assert truncated.startswith("预算说明")
+    assert truncated
+
+
 def test_es_health_returns_degraded_on_transport_error(monkeypatch):
     client = ESClient()
     monkeypatch.setattr(client, "_ensure_index_sync", lambda: (_ for _ in ()).throw(RuntimeError("es down")))

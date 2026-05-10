@@ -11,7 +11,7 @@ from app.services.llm_service import LLMService
 logger = structlog.get_logger("docmind.critic_agent")
 
 CRITIC_SYSTEM_PROMPT = """你是企业文档问答系统的审查员。请检查 AI 生成的回答是否满足：
-1. 结论是否有证据支持；
+1. 结论是否有证据支撑；
 2. 引用是否足够；
 3. 是否出现与证据矛盾或超出证据的信息；
 4. 是否需要提示“证据不足”。
@@ -35,6 +35,15 @@ class CriticAgent:
             state["critic_approved"] = False
             state["iteration"] = state.get("iteration", 0) + 1
             state["answer"] = "已命中相关内容，但缺少可引用依据，当前不输出无出处结论。"
+            return state
+
+        structure_issue = self._validate_structure(state, answer)
+        if structure_issue:
+            state["critic_approved"] = False
+            state["critic_source"] = "rule_structure"
+            state["critic_reason"] = structure_issue
+            state["iteration"] = state.get("iteration", 0) + 1
+            state["answer"] = f"{answer}\n\n审查提示：{structure_issue}"
             return state
 
         llm = LLMService()
@@ -72,6 +81,18 @@ class CriticAgent:
         state["critic_approved"] = True
         state["critic_source"] = "rule_fallback"
         return state
+
+    def _validate_structure(self, state: dict, answer: str) -> str | None:
+        agent_used = str(state.get("agent_used") or "").strip()
+        intent = str(state.get("intent") or "").strip()
+
+        if agent_used == "summary" and "### 关键要点" not in answer:
+            return "摘要回答缺少“关键要点”结构，当前要求重新整理。"
+        if agent_used == "compliance" and intent == "qa" and "**结论：**" not in answer:
+            return "制度问答缺少明确结论，当前要求重新整理。"
+        if intent == "compare" and "| 主题 | 文档 A | 文档 B | 差异说明 |" not in answer and "无法完成可靠对比" not in answer:
+            return "对比回答缺少差异表或澄清提示，当前要求重新整理。"
+        return None
 
 
 def _parse_critic_decision(raw: str) -> dict:

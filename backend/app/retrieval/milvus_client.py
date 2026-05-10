@@ -76,11 +76,11 @@ class MilvusClient:
                 [chunk.get("doc_id") or "" for chunk in chunks],
                 [chunk.get("tenant_id") or "default" for chunk in chunks],
                 [int(chunk.get("access_level", 1) or 1) for chunk in chunks],
-                [chunk.get("department") or "" for chunk in chunks],
-                [chunk.get("title") or chunk.get("section_title") or "" for chunk in chunks],
-                [chunk.get("section_title") or "" for chunk in chunks],
+                [self._truncate_varchar(chunk.get("department"), 64) for chunk in chunks],
+                [self._truncate_varchar(chunk.get("title") or chunk.get("section_title"), 512) for chunk in chunks],
+                [self._truncate_varchar(chunk.get("section_title"), 512) for chunk in chunks],
                 [int(chunk.get("page_number") or 0) for chunk in chunks],
-                [chunk.get("content", "")[:2000] for chunk in chunks],
+                [self._truncate_varchar(chunk.get("content"), 2048) for chunk in chunks],
                 [self._normalize_dense(chunk.get("dense_vector")) for chunk in chunks],
             ]
             collection.insert(rows)
@@ -275,6 +275,19 @@ class MilvusClient:
         if len(raw) < self.dim:
             return [float(item) for item in raw] + [0.0] * (self.dim - len(raw))
         return [0.0] * self.dim
+
+    def _truncate_varchar(self, value: str | None, max_bytes: int) -> str:
+        text = str(value or "")
+        raw = text.encode("utf-8")
+        if len(raw) <= max_bytes:
+            return text
+        trimmed = raw[:max_bytes]
+        while trimmed:
+            try:
+                return trimmed.decode("utf-8")
+            except UnicodeDecodeError:
+                trimmed = trimmed[:-1]
+        return ""
 
     def _extract_collection_dim(self, collection) -> int | None:
         try:

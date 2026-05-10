@@ -19,7 +19,14 @@ from celery_app import celery
 from app.config import settings
 
 
-@celery.task(bind=True, name="app.maintenance.tasks.run_evaluation_job", acks_late=True, max_retries=0)
+@celery.task(
+    bind=True,
+    name="app.maintenance.tasks.run_evaluation_job",
+    acks_late=True,
+    max_retries=0,
+    soft_time_limit=max(settings.ragas_timeout_seconds + 300, settings.celery_task_soft_time_limit_seconds),
+    time_limit=max(settings.ragas_timeout_seconds + 360, settings.celery_task_time_limit_seconds),
+)
 def run_evaluation_job(self, tenant_id: str, sample_limit: int = 100, actor_id: str | None = None):
     """Run evaluation asynchronously and persist runtime task progress."""
     task_id = self.request.id or ""

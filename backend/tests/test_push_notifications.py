@@ -106,7 +106,7 @@ def test_push_provider_not_configured_fail_closed(monkeypatch):
 def test_fcm_is_configured_with_service_account(monkeypatch):
     monkeypatch.setattr(settings, 'push_fcm_server_key', '')
     monkeypatch.setattr(settings, 'push_fcm_access_token', '')
-    monkeypatch.setattr(settings, 'push_fcm_project_id', 'docmind-7bbdd')
+    monkeypatch.setattr(settings, 'push_fcm_project_id', 'example-firebase-project')
     monkeypatch.setattr(settings, 'push_fcm_service_account_file', '/run/secrets/docmind/firebase-service-account.json')
 
     assert PushNotificationService()._fcm_configured() is True
@@ -120,7 +120,7 @@ async def test_push_health_summary_marks_multi_ready_when_subprovider_configured
     monkeypatch.setattr(settings, 'push_notification_fail_closed', False)
     monkeypatch.setattr(settings, 'push_fcm_server_key', '')
     monkeypatch.setattr(settings, 'push_fcm_access_token', 'access-token')
-    monkeypatch.setattr(settings, 'push_fcm_project_id', 'docmind-7bbdd')
+    monkeypatch.setattr(settings, 'push_fcm_project_id', 'example-firebase-project')
     monkeypatch.setattr(settings, 'push_fcm_service_account_file', '')
     monkeypatch.setattr(settings, 'push_wechat_access_token', '')
     monkeypatch.setattr(settings, 'push_wechat_app_id', '')
@@ -152,7 +152,7 @@ async def test_push_health_summary_accepts_wechat_app_secret_mode(monkeypatch):
     monkeypatch.setattr(settings, 'push_notification_fail_closed', False)
     monkeypatch.setattr(settings, 'push_fcm_server_key', '')
     monkeypatch.setattr(settings, 'push_fcm_access_token', 'access-token')
-    monkeypatch.setattr(settings, 'push_fcm_project_id', 'docmind-7bbdd')
+    monkeypatch.setattr(settings, 'push_fcm_project_id', 'example-firebase-project')
     monkeypatch.setattr(settings, 'push_fcm_service_account_file', '')
     monkeypatch.setattr(settings, 'push_wechat_access_token', '')
     monkeypatch.setattr(settings, 'push_wechat_app_id', 'wx-app')
@@ -177,7 +177,7 @@ async def test_push_health_summary_reports_platform_gap_when_required_provider_m
     monkeypatch.setattr(settings, 'push_notification_fail_closed', False)
     monkeypatch.setattr(settings, 'push_fcm_server_key', '')
     monkeypatch.setattr(settings, 'push_fcm_access_token', 'access-token')
-    monkeypatch.setattr(settings, 'push_fcm_project_id', 'docmind-7bbdd')
+    monkeypatch.setattr(settings, 'push_fcm_project_id', 'example-firebase-project')
     monkeypatch.setattr(settings, 'push_fcm_service_account_file', '')
     monkeypatch.setattr(settings, 'push_wechat_access_token', '')
     monkeypatch.setattr(settings, 'push_wechat_template_id', '')
@@ -278,7 +278,7 @@ async def test_push_health_summary_reports_single_provider_mismatch(monkeypatch)
     monkeypatch.setattr(settings, 'push_notification_fail_closed', True)
     monkeypatch.setattr(settings, 'push_fcm_server_key', '')
     monkeypatch.setattr(settings, 'push_fcm_access_token', 'access-token')
-    monkeypatch.setattr(settings, 'push_fcm_project_id', 'docmind-7bbdd')
+    monkeypatch.setattr(settings, 'push_fcm_project_id', 'example-firebase-project')
     monkeypatch.setattr(settings, 'push_fcm_service_account_file', '')
     monkeypatch.setattr(settings, 'push_wechat_access_token', 'wechat-token')
     monkeypatch.setattr(settings, 'push_wechat_template_id', 'template-1')
@@ -317,7 +317,7 @@ async def test_fcm_v1_dispatch_sends_each_device(monkeypatch):
 
     monkeypatch.setattr(settings, 'push_fcm_server_key', '')
     monkeypatch.setattr(settings, 'push_fcm_access_token', 'access-token')
-    monkeypatch.setattr(settings, 'push_fcm_project_id', 'docmind-7bbdd')
+    monkeypatch.setattr(settings, 'push_fcm_project_id', 'example-firebase-project')
     monkeypatch.setattr(settings, 'push_fcm_service_account_file', '')
 
     class FakeResponse:
@@ -367,7 +367,7 @@ async def test_fcm_invalid_token_deactivates_device(monkeypatch):
 
     monkeypatch.setattr(settings, 'push_fcm_server_key', '')
     monkeypatch.setattr(settings, 'push_fcm_access_token', 'access-token')
-    monkeypatch.setattr(settings, 'push_fcm_project_id', 'docmind-7bbdd')
+    monkeypatch.setattr(settings, 'push_fcm_project_id', 'example-firebase-project')
     monkeypatch.setattr(settings, 'push_fcm_service_account_file', '')
     monkeypatch.setattr(settings, 'push_auto_deactivate_invalid_tokens', True)
 

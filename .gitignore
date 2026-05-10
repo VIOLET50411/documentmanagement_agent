@@ -1,72 +1,105 @@
-# Python
+# ============================================
+# DocMind ignore policy
+# 目标：
+# 1. 保留源码、说明文档、必要模板
+# 2. 拦截本地私密配置、密钥、运行产物、缓存、训练结果
+# 3. 避免把大体量原始语料和临时调试文件继续上传
+# ============================================
+
+# ---------- OS / editor ----------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ---------- Python ----------
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
-*.egg-info/
-dist/
-build/
-.eggs/
 *.egg
+*.egg-info/
+.eggs/
 .python-version
 .mypy_cache/
+.pytest_cache/
 .ruff_cache/
+htmlcov/
+.coverage
 
-# Virtual environments
+# ---------- Node / frontend ----------
+node_modules/
+frontend/node_modules/
+frontend/dist/
+docmind-miniapp/node_modules/
+docmind-miniapp/dist/
+.npm/
+
+# ---------- Build / package ----------
+build/
+dist/
+coverage/
+
+# ---------- Virtual env ----------
 .venv/
 venv/
 ENV/
 
-# Environment variables
+# ---------- Env / secrets ----------
 .env
 .env.local
 .env.production
+.env.development.local
+.env.test.local
+.env.*.local
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.mobileprovision
+*.secret
+*.secrets
+secrets/
+frontend/android/app/google-services.json
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
+# ---------- Private local project config ----------
+project.private.config.json
 
-# Node
-node_modules/
-frontend/dist/
-.npm/
-
-# Docker
-docker-compose.override.yml
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
+# ---------- Logs / runtime ----------
 *.log
-logs/
 *.pid
-
-# Data
-data/
+logs/
 uploads/
 backend/runtime/
-reports/
-backend/reports/
-
-# Coverage
-htmlcov/
-.coverage
-.pytest_cache/
-coverage/
-
-# Alembic
-alembic/versions/*.pyc
-
-# Local environment and generated state
+backend/runtime/email_outbox/
 backend/celerybeat-schedule
-backend/68.0.0
-.env.*.local
 
-# Local planning / debugging artifacts
+# ---------- Docker local overrides ----------
+docker-compose.override.yml
+
+# ---------- Reports / generated artifacts ----------
+reports/**
+!reports/
+backend/reports/**
+!backend/reports/
+
+# ---------- Local datasets / corpora ----------
+# 默认不提交新增原始语料、抓取结果和派生数据。
+# 仅保留仓库内用于说明来源的轻量元数据文件。
+datasets/**
+!datasets/
+!datasets/**/
+!datasets/**/README.md
+!datasets/**/sources.json
+!datasets/**/failed_sources.json
+
+# ---------- Temporary / debug files ----------
 task_plan.md
 progress.md
 findings.md
@@ -74,5 +107,16 @@ bad_upload.txt
 blocked_chat.json
 chat_request*.json
 tmp_upload*.csv
+tmp_ui_upload.csv
+tmp_*.json
+tmp_*.txt
+tmp_*.csv
 
-secrets/
+# ---------- Snapshots / exports ----------
+openapi_snapshot.json
+*.out
+*.bak
+*.tmp
+
+# ---------- Misc local generated ----------
+backend/68.0.0

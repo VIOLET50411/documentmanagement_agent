@@ -19,6 +19,7 @@ class ReportGenerator:
         metrics = payload.get("metrics", payload)
         gate = payload.get("gate") or {}
         generated_from = payload.get("generated_from") or {}
+        dataset_summary = generated_from.get("dataset_summary") or {}
         lines = [
             "# DocMind Evaluation Report",
             "",
@@ -53,6 +54,40 @@ class ReportGenerator:
                     lines.append(
                         f"- {item.get('metric')}: actual={item.get('actual')} threshold={item.get('threshold')} delta={item.get('delta')}"
                     )
+        if dataset_summary:
+            lines.extend(
+                [
+                    "",
+                    "## Dataset Coverage",
+                    "",
+                    f"- unique_doc_count: {dataset_summary.get('unique_doc_count', 0)}",
+                    f"- grounded_sample_count: {dataset_summary.get('grounded_sample_count', 0)}",
+                    f"- compare_sample_count: {dataset_summary.get('compare_sample_count', 0)}",
+                    f"- follow_up_sample_count: {dataset_summary.get('follow_up_sample_count', 0)}",
+                    f"- avg_context_length: {dataset_summary.get('avg_context_length', 0)}",
+                ]
+            )
+            difficulty_counts = dataset_summary.get("difficulty_counts") or {}
+            if difficulty_counts:
+                lines.extend(["", "### Difficulty Buckets", ""])
+                for key, value in difficulty_counts.items():
+                    lines.append(f"- {key}: {value}")
+            task_type_counts = dataset_summary.get("task_type_counts") or {}
+            if task_type_counts:
+                lines.extend(["", "### Task Type Buckets", ""])
+                for key, value in task_type_counts.items():
+                    lines.append(f"- {key}: {value}")
+        per_sample = metrics.get("per_sample") if isinstance(metrics, dict) else None
+        if per_sample:
+            worst_items = sorted(
+                per_sample,
+                key=lambda item: (item.get("context_precision", 0.0), item.get("faithfulness", 0.0)),
+            )[:5]
+            lines.extend(["", "## Lowest Precision Samples", ""])
+            for item in worst_items:
+                lines.append(
+                    f"- Q: {item.get('question', '')} | context_precision={item.get('context_precision', 0.0)} | faithfulness={item.get('faithfulness', 0.0)}"
+                )
         path.write_text("\n".join(lines), encoding="utf-8")
         return str(path)
 

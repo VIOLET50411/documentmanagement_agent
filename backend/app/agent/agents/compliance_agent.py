@@ -25,7 +25,7 @@ class ComplianceAgent:
             search_type=plan["search_type"],
             db=state["db"],
         )
-        results = _normalize_retrieved_results(searcher, query=query, results=results)
+        results = _normalize_retrieved_results(searcher, query=query, results=results, plan=plan)
 
         state["retrieved_docs"] = results
         state["retrieval_plan"] = plan
@@ -64,7 +64,7 @@ class ComplianceAgent:
             title = item.get("document_title") or "未知文档"
             section = item.get("section_title") or "未命名章节"
             snippet = (item.get("snippet") or "").strip()[:300]
-            context_lines.append(f"[证据{idx}] 《{title}》 / {section}\n{snippet}")
+            context_lines.append(f"[证据{idx}] 《{title}》/ {section}\n{snippet}")
 
         prompt = (
             f"## 用户问题\n{query}\n\n"
@@ -93,18 +93,25 @@ class ComplianceAgent:
         return None
 
     def _build_qa_answer(self, query: str, results: list[dict]) -> str:
-        top = results[0]
+        top = self._select_primary_result(query, results)
         conclusion = self._extract_best_evidence(query, top.get("snippet", ""))
+        if conclusion == "未提取到有效证据。":
+            conclusion = "当前证据不足以直接回答该问题，建议补充文档名称、版本或章节范围后重试。"
         source = self._format_source(top)
-        evidence_excerpt = conclusion if conclusion != "未提取到有效证据。" else self._normalize_text(top.get("snippet", ""))
+        raw_snippet = str(top.get("snippet", "") or "")
+        evidence_excerpt = conclusion if "|" in raw_snippet else self._normalize_text(raw_snippet)
+        follow_up = self._build_follow_up_hint(query, results)
         lines = [
-            f"## 关于“{query}”",
+            f"## 关于“{query}”的回答",
             "",
             f"**结论：** {conclusion}",
             "",
             "### 相关依据",
             f"1. {source}",
             f"   - 证据摘录：{evidence_excerpt}",
+            "",
+            "### 待确认事项",
+            f"1. {follow_up}",
             "---",
             "> 以上内容基于知识库检索结果整理，请以原始制度正文为准。",
         ]
@@ -113,7 +120,18 @@ class ComplianceAgent:
     def _build_compare_answer(self, query: str, results: list[dict]) -> str:
         grouped = self._group_by_document(results)
         if len(grouped) < 2:
-            return self._build_qa_answer(query, results)
+            only_title = next(iter(grouped.keys()), "当前命中文档")
+            return "\n".join(
+                [
+                    f"## 关于“{query}”的对比结果",
+                    "",
+                    f"**结论：** 当前仅检索到 1 份文档《{only_title}》，无法完成可靠对比。",
+                    "",
+                    "### 待补充信息",
+                    "1. 请补充另一份制度的名称、年份或版本号。",
+                    "2. 若需要做同制度新旧版本对比，请明确“上一版/2023版/2024版”等范围。",
+                ]
+            ).strip()
 
         doc_items = list(grouped.items())[:2]
         left_title, left_results = doc_items[0]
@@ -130,9 +148,15 @@ class ComplianceAgent:
             [
                 f"## 对比分析：《{left_title}》 vs 《{right_title}》",
                 "",
+                f"**对比结论：** 两份文档在关注重点上存在差异，建议结合具体业务场景进一步确认适用版本。",
+                "",
                 "| 主题 | 文档 A | 文档 B | 差异说明 |",
                 "| --- | --- | --- | --- |",
                 f"| 核心要求 | {left_text} | {right_text} | {diff} |",
+                "",
+                "### 使用建议",
+                "1. 若需落地执行，请继续追问适用对象、审批流程或生效时间。",
+                "2. 若是新旧版本对比，请补充版本年份以减少错配。",
             ]
         )
 
@@ -214,13 +238,53 @@ class ComplianceAgent:
                 ordered.append(keyword)
         return ordered
 
+    def _select_primary_result(self, query: str, results: list[dict]) -> dict:
+        if not results:
+            return {}
+        if not self._is_core_requirements_query(query):
+            return results[0]
+
+        def score(item: dict) -> tuple[int, float]:
+            snippet = " ".join(str(item.get("snippet") or "").split()).strip()
+            page_number = int(item.get("page_number") or 0)
+            points = 0
+            if any(marker in snippet for marker in ("总则", "适用于", "差旅费是指", "加强和规范", "定义", "基本原则")):
+                points += 8
+            if any(marker in snippet for marker in ("审批", "报销", "标准", "住宿费", "伙食补助费", "交通费")):
+                points += 5
+            if any(marker in snippet for marker in ("责任", "处分", "附则", "负责解释", "印发", "通知")):
+                points -= 6
+            if 2 <= page_number <= 6:
+                points += 3
+            if page_number >= 10:
+                points -= 2
+            return points, float(item.get("score") or 0.0)
+
+        return max(results, key=score)
+
+    def _is_core_requirements_query(self, query: str) -> bool:
+        normalized = str(query or "").strip()
+        return any(marker in normalized for marker in ("核心要求", "主要要求", "关键要求", "核心内容", "主要内容", "要点", "重点"))
+
+    def _build_follow_up_hint(self, query: str, results: list[dict]) -> str:
+        titles = []
+        for item in results[:2]:
+            title = str(item.get("document_title") or "").strip()
+            if title and title not in titles:
+                titles.append(title)
+        if "版本" in query or "区别" in query or "差异" in query:
+            return "如需进一步确认版本差异，请补充另一份制度的年份或版本号。"
+        if titles:
+            return f"如需继续细化，可围绕《{titles[0]}》追问适用范围、审批流程或生效时间。"
+        return "如需继续细化，请补充制度名称、年份、章节或部门范围。"
+
     def _format_source(self, item: dict) -> str:
         title = item.get("document_title") or "未知文档"
         section = item.get("section_title") or "未命名章节"
         page = item.get("page_number")
         if page is None:
-            return f"《{title}》 / {section}"
-        return f"《{title}》 / 第 {page} 页 / {section}"
+            return f"《{title}》/ {section}"
+        return f"《{title}》/ 第 {page} 页 / {section}"
 
     def _normalize_text(self, text: str) -> str:
         snippet = " ".join((text or "").split())

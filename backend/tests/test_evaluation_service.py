@@ -49,6 +49,11 @@ def test_build_gate_fails_when_dataset_summary_lacks_coverage(monkeypatch):
     monkeypatch.setattr(settings, "ci_gate_min_eval_dataset_size", 3)
     monkeypatch.setattr(settings, "ci_gate_min_eval_unique_docs", 2)
     monkeypatch.setattr(settings, "ci_gate_min_eval_difficulty_buckets", 2)
+    monkeypatch.setattr(settings, "ci_gate_min_eval_grounded_samples", 1)
+    monkeypatch.setattr(settings, "ci_gate_min_eval_avg_context_length", 80)
+    monkeypatch.setattr(settings, "ci_gate_min_eval_task_type_buckets", 3)
+    monkeypatch.setattr(settings, "ci_gate_min_eval_compare_samples", 1)
+    monkeypatch.setattr(settings, "ci_gate_min_eval_follow_up_samples", 1)
 
     gate = service._build_gate(
         {
@@ -58,13 +63,27 @@ def test_build_gate_fails_when_dataset_summary_lacks_coverage(monkeypatch):
             "context_recall": settings.ci_gate_min_context_recall,
             "_meta": {"real_mode": True, "mode": "ragas_api"},
         },
-        dataset_summary={"dataset_size": 3, "unique_doc_count": 1, "difficulty_counts": {"basic": 3}},
+        dataset_summary={
+            "dataset_size": 3,
+            "unique_doc_count": 1,
+            "difficulty_counts": {"basic": 3},
+            "task_type_counts": {"summary": 3},
+            "grounded_sample_count": 0,
+            "compare_sample_count": 0,
+            "follow_up_sample_count": 0,
+            "avg_context_length": 32,
+        },
     )
 
     assert gate["passed"] is False
     failure_metrics = {item["metric"] for item in gate["failures"]}
     assert "unique_doc_count" in failure_metrics
     assert "difficulty_buckets" in failure_metrics
+    assert "grounded_sample_count" in failure_metrics
+    assert "avg_context_length" in failure_metrics
+    assert "task_type_buckets" in failure_metrics
+    assert "compare_sample_count" in failure_metrics
+    assert "follow_up_sample_count" in failure_metrics
 
 
 def test_build_gate_fails_when_dataset_size_below_threshold(monkeypatch):
@@ -79,7 +98,16 @@ def test_build_gate_fails_when_dataset_size_below_threshold(monkeypatch):
             "context_recall": settings.ci_gate_min_context_recall,
             "_meta": {"real_mode": True, "mode": "ragas_api"},
         },
-        dataset_summary={"dataset_size": 4, "unique_doc_count": 4, "difficulty_counts": {"basic": 2, "grounded": 2}},
+        dataset_summary={
+            "dataset_size": 4,
+            "unique_doc_count": 4,
+            "difficulty_counts": {"basic": 2, "grounded": 2},
+            "task_type_counts": {"summary": 1, "grounded_requirement": 1, "compare": 1, "follow_up": 1},
+            "grounded_sample_count": 2,
+            "compare_sample_count": 1,
+            "follow_up_sample_count": 1,
+            "avg_context_length": 120,
+        },
     )
 
     assert gate["passed"] is False
@@ -102,6 +130,43 @@ def test_build_gate_uses_ragas_ollama_thresholds(monkeypatch):
 
     assert gate["passed"] is True
     assert gate["thresholds"]["answer_relevancy"] == 0.4
+
+
+def test_summarize_dataset_tracks_grounded_samples_and_task_types():
+    service = EvaluationService(None, None, reports_dir=Path("."))
+
+    summary = service._summarize_dataset(
+        [
+            {
+                "context_doc_ids": ["doc-1"],
+                "difficulty": "grounded",
+                "task_type": "grounded_requirement",
+                "contexts": ["这是第一段比较完整的上下文内容，用来验证 grounded 样本统计。"],
+            },
+            {
+                "context_doc_ids": ["doc-2"],
+                "difficulty": "compare",
+                "task_type": "compare",
+                "contexts": ["这是第二段上下文内容，也比较完整，用来验证 compare 题型统计。"],
+            },
+            {
+                "context_doc_ids": ["doc-2"],
+                "difficulty": "follow_up",
+                "task_type": "follow_up",
+                "contexts": ["继续追问时依旧要基于原文证据回答，这里用来验证 follow_up 题型统计。"],
+            },
+        ]
+    )
+
+    assert summary["dataset_size"] == 3
+    assert summary["unique_doc_count"] == 2
+    assert summary["grounded_sample_count"] == 1
+    assert summary["compare_sample_count"] == 1
+    assert summary["follow_up_sample_count"] == 1
+    assert summary["task_type_counts"]["grounded_requirement"] == 1
+    assert summary["task_type_counts"]["compare"] == 1
+    assert summary["task_type_counts"]["follow_up"] == 1
+    assert summary["avg_context_length"] >= 10
 
 
 @pytest.mark.asyncio
@@ -393,6 +458,24 @@ def test_golden_dataset_grounded_pair_uses_sentence_anchored_answer():
     assert basic["question"] == "根据差旅审批制度，第1段开头的原文要求是什么？"
 
 
+def test_golden_dataset_builds_compare_follow_up_and_version_pairs():
+    generator = GoldenDatasetGenerator()
+
+    pairs = generator._build_sentence_pairs(
+        "采购管理办法（2024版）",
+        "采购申请应当先提交部门审批。审批通过后方可进入比价流程。该制度自2024年3月1日起执行。",
+        {"id": "doc-2"},
+        0,
+    )
+
+    task_types = {item["task_type"] for item in pairs}
+    assert "follow_up" in task_types
+    assert "compare" in task_types
+    assert "version" in task_types
+    compare_pair = next(item for item in pairs if item["task_type"] == "compare")
+    assert "| 对比项 | 内容 |" in compare_pair["answer"]
+
+
 @pytest.mark.asyncio
 async def test_run_includes_dataset_summary_in_payload(tmp_path: Path):
     service = EvaluationService(None, None, reports_dir=tmp_path)
@@ -407,6 +490,7 @@ async def test_run_includes_dataset_summary_in_payload(tmp_path: Path):
                 "contexts": ["预算编制应当遵循统筹安排。预算执行应当严格审批。"],
                 "context_doc_ids": ["doc-1"],
                 "difficulty": "basic",
+                "task_type": "summary",
             }
         ]
     )
@@ -426,6 +510,7 @@ async def test_run_includes_dataset_summary_in_payload(tmp_path: Path):
     assert result["generated_from"]["dataset_summary"]["dataset_size"] == 1
     assert result["generated_from"]["dataset_summary"]["unique_doc_count"] == 1
     assert result["generated_from"]["dataset_summary"]["difficulty_counts"]["basic"] == 1
+    assert result["generated_from"]["dataset_summary"]["task_type_counts"]["summary"] == 1
 
 
 def _async_return(value):

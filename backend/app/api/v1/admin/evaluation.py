@@ -20,7 +20,11 @@ from app.api.v1.admin._helpers import (
 router = APIRouter()
 
 @router.post("/evaluation/run")
-async def run_evaluation(sample_limit: int = 100, current_user: User = Depends(require_role("ADMIN")), db: AsyncSession = Depends(get_db)):
+async def run_evaluation(
+    sample_limit: int = settings.ci_gate_eval_sample_limit,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
     from app.services.evaluation_service import EvaluationService
 
     return await EvaluationService(db, get_redis(), reports_dir=REPORTS_DIR).run(
@@ -31,7 +35,10 @@ async def run_evaluation(sample_limit: int = 100, current_user: User = Depends(r
 
 
 @router.post("/evaluation/run-async")
-async def run_evaluation_async(sample_limit: int = 100, current_user: User = Depends(require_role("ADMIN"))):
+async def run_evaluation_async(
+    sample_limit: int = settings.ci_gate_eval_sample_limit,
+    current_user: User = Depends(require_role("ADMIN")),
+):
     from app.maintenance.tasks import run_evaluation_job
 
     task = run_evaluation_job.apply_async(

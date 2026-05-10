@@ -1,81 +1,89 @@
-﻿# DocMind 交付运行手册（非 LLM 阶段）
+# DocMind 交付运行手册
 
-## 1. 目标
+## 1. 目的
 
-交付前统一执行以下动作：
+本手册用于在当前仓库上执行交付前最小验证，确保交付说明与真实运行状态一致。
 
-1. 启动并确认基础服务与应用可达。
-2. 运行自动化预检并生成归档报告。
-3. 输出最终交付结论（可上线 / 需整改）。
+## 2. 推荐检查顺序
 
-## 2. 一键预检命令
+1. 容器状态
+2. 健康检查
+3. 登录与主页面
+4. 文档上传与状态推进
+5. 检索与问答
+6. 管理端系统状态
+7. 自动化预检
 
-在仓库根目录执行：
+## 3. 关键检查点
+
+### 容器状态
+
+```powershell
+docker ps
+```
+
+至少确认：
+
+- `docmind-backend`
+- `docmind-frontend`
+- `docmind-celery-worker`
+- `docmind-postgres`
+- `docmind-redis`
+- `docmind-minio`
+- `docmind-milvus`
+- `docmind-elasticsearch`
+- `docmind-neo4j`
+
+### 健康检查
+
+```powershell
+Invoke-RestMethod http://localhost:18000/health
+```
+
+### 自动化预检
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\release-preflight.ps1
 ```
 
-## 2.1 本地开源免费 LLM（Ollama）接入
+## 4. 建议验收动作
 
-默认使用 `Ollama + qwen2.5:1.5b`，避免本机资源不足导致 7B 模型拉起失败。
+### 鉴权
 
-```powershell
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d ollama
-docker exec docmind-ollama ollama pull qwen2.5:1.5b
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d backend celery-worker
-```
+- 使用 `admin_demo / Password123` 登录
+- 确认当前用户接口正常
 
-验证点：
+### 文档主链路
 
-1. `GET /api/v1/admin/system/backends` 中 `llm.available=true`。
-2. `llm.model=qwen2.5:1.5b` 且 `llm.model_pulled=true`。
-3. `POST /api/v1/chat/stream` 能输出 `streaming` 事件并最终 `done`。
+- 上传文档
+- 查看列表
+- 查看状态
+- 查看事件
+- 对失败任务执行重试
 
-可选参数：
+### 问答主链路
 
-- `-RunTests`：附加执行后端 `pytest -q`
-- `-RunFrontendBuild`：附加执行前端 `npm.cmd run build`
-- `-RunLoadtest`：附加执行轻量压测
-- `-RunSmokeE2E`：附加执行全链路冒烟（登录→上传→检索→SSE）
+- 发起一次 SSE 问答
+- 确认前端收到事件流
+- 确认回答带引用或明确说明证据不足
 
-示例：
+### 管理端
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\release-preflight.ps1 -RunTests -RunFrontendBuild -RunLoadtest -RunSmokeE2E
-```
+- 系统后端状态
+- 检索指标
+- 安全事件
+- 运行时指标
+- 评估结果
 
-## 3. 报告产物
+## 5. 常见交付误判
 
-脚本会自动写入：
+- 健康检查通过，不等于检索质量已经足够
+- 容器在跑，不等于前端能正常完成核心流程
+- 有 SSE 输出，不等于回答质量已经达标
+- 评估框架存在，不等于质量门禁已经成熟
 
-- `reports/delivery/preflight_YYYYMMDD_HHMMSS.md`
-- `reports/delivery/preflight_YYYYMMDD_HHMMSS.json`
+## 6. 当前阶段交付判断
 
-报告包含：
+当前系统已经适合按“企业文档平台开发版 / 演示版 / 内部验证版”交付。
 
-- 总检查数 / 通过数 / 得分
-- `READY_CANDIDATE` / `NOT_READY` 状态
-- 每个检查项明细与失败原因
-- 失败时附带端口与容器状态诊断
-
-## 4. 上线门槛建议
-
-建议门槛：
-
-- 预检得分 >= 85
-- `backend.health`、`auth.login`、`admin.system.readiness` 必须通过
-- `admin.system.retrieval_integrity` 必须通过
-- 后端测试与前端构建在本次发布窗口内通过
-- `admin.system.backends` 中关键后端不处于持续异常
-
-## 5. 失败处理建议
-
-若预检失败，优先处理顺序：
-
-1. 可用性（health / login）
-2. 数据安全（扫描 / 审计 / 权限）
-3. 检索稳定性（ES / Milvus / Graph）
-4. 性能与体验（SSE 首事件、并发）
-
-修复后重新执行预检并归档新报告，不覆盖旧报告。
+如果要按“高质量文档 Agent 成品”交付，还需要继续补强检索质量、多轮追问和结构化回答能力。

@@ -1197,7 +1197,7 @@ async def test_admin_push_notification_status_route(api_client: AsyncClient, mon
             "provider_coverage": {"android": {"device_count": 2, "required_provider": "fcm", "provider_ready": True, "delivery_mode": "direct", "deliverable": True}},
             "delivery_gaps": [],
             "configuration_sources": {
-                "fcm": {"source": "access_token", "configured": True, "detail": "docmind-7bbdd"},
+                "fcm": {"source": "access_token", "configured": True, "detail": "example-firebase-project"},
                 "wechat": {"source": "none", "configured": False, "detail": None},
                 "webhook": {"source": "none", "configured": False, "detail": None},
             },

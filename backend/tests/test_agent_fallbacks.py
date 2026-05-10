@@ -2,6 +2,7 @@ import pytest
 
 from app.agent.agents.compliance_agent import ComplianceAgent
 from app.agent.agents.data_agent import DataAgent
+from app.agent.agents.summary_agent import SummaryAgent
 from app.agent.nodes.intent_router import intent_router
 from app.agent.nodes.query_rewriter import query_rewriter
 from app.agent.nodes.retriever import _normalize_retrieved_results, resolve_retrieval_plan
@@ -228,23 +229,105 @@ async def test_compliance_agent_formats_compare_table(monkeypatch):
     assert "差旅制度" in state["answer"]
 
 
+@pytest.mark.asyncio
+async def test_summary_agent_prefers_grounded_structured_summary(monkeypatch):
+    async def low_quality_llm(*args, **kwargs):
+        return "根据提供的文档证据，文档显示了学校基本情况。"
+
+    class DummyComplianceAgent:
+        async def run(self, state):
+            state["retrieved_docs"] = [
+                {
+                    "doc_id": "doc-1",
+                    "document_title": "西南大学2023年度部门预算.html",
+                    "section_title": "三、部门预算情况说明",
+                    "page_number": 11,
+                    "snippet": "11 三、部门预算情况说明 （一）收支预算情况说明 我校2023年收支总预算557,259.13万元，其中本年收入预算403,484.64万元。",
+                    "score": 121.0,
+                },
+                {
+                    "doc_id": "doc-1",
+                    "document_title": "西南大学2023年度部门预算.html",
+                    "section_title": "（三）支出预算情况说明",
+                    "page_number": 12,
+                    "snippet": "12 （三）支出预算情况说明 我校2023年支出预算557,259.13万元，其中教育支出434,334.99万元，占77.94%。",
+                    "score": 111.0,
+                },
+            ]
+            state["citations"] = []
+            return state
+
+    monkeypatch.setattr("app.services.llm_service.LLMService.generate", low_quality_llm)
+    monkeypatch.setattr("app.agent.agents.summary_agent.ComplianceAgent", DummyComplianceAgent)
+
+    state = await SummaryAgent().run({"current_user": object()})
+
+    assert "文档摘要" in state["answer"]
+    assert "557,259.13万元" in state["answer"]
+    assert "学校基本情况" not in state["answer"]
+    assert "### 待确认事项" in state["answer"]
+    assert "### 建议追问" in state["answer"]
+
+
 def test_hybrid_searcher_includes_graph_for_compare_query():
     searcher = HybridSearcher()
     assert searcher._should_include_graph("请比较两版制度差异") is True
     assert searcher._should_include_graph("年假制度是什么") is False
 
 
+def test_normalize_retrieved_results_prefers_budget_explanation_pages_for_explicit_title():
+    searcher = HybridSearcher()
+    results = [
+        {
+            "doc_id": "doc-1",
+            "document_title": "西南大学2023年度部门预算.html",
+            "section_title": "20_swu_2023_department_budget__download.jsp",
+            "page_number": 1,
+            "snippet": "西南大学 2023 年度部门预算 2023 年4月",
+            "score": 50.0,
+        },
+        {
+            "doc_id": "doc-1",
+            "document_title": "西南大学2023年度部门预算.html",
+            "section_title": "20_swu_2023_department_budget__download.jsp",
+            "page_number": 2,
+            "snippet": "目录 一、学校基本情况 二、部门预算报表 三、部门预算情况说明",
+            "score": 49.0,
+        },
+        {
+            "doc_id": "doc-1",
+            "document_title": "西南大学2023年度部门预算.html",
+            "section_title": "20_swu_2023_department_budget__download.jsp",
+            "page_number": 11,
+            "snippet": "三、部门预算情况说明 （一）收支预算情况说明 我校2023年收支总预算557,259.13万元，其中本年收入预算403,484.64万元，本年支出预算468,779.07万元。",
+            "score": 42.0,
+        },
+    ]
+
+    normalized = _normalize_retrieved_results(
+        searcher,
+        query="请根据《西南大学2023年度部门预算》概括主要内容",
+        results=results,
+    )
+
+    assert normalized[0]["page_number"] == 11
+
+
 def test_resolve_retrieval_plan_uses_intent_defaults():
     compare_plan = resolve_retrieval_plan({"intent": "compare", "search_type": "hybrid"})
     summary_plan = resolve_retrieval_plan({"intent": "summarize"})
     graph_plan = resolve_retrieval_plan({"intent": "graph_query", "search_type": "hybrid"})
+    statistics_plan = resolve_retrieval_plan({"intent": "statistics"})
 
-    assert compare_plan["top_k"] == 8
+    assert compare_plan["top_k"] == 10
     assert compare_plan["search_type"] == "hybrid"
-    assert summary_plan["top_k"] == 8
+    assert compare_plan["require_multi_doc"] is True
+    assert summary_plan["top_k"] == 10
     assert summary_plan["search_type"] == "hybrid"
+    assert summary_plan["max_per_doc"] == 4
     assert graph_plan["top_k"] == 6
     assert graph_plan["search_type"] == "graph"
+    assert statistics_plan["search_type"] == "keyword"
 
 
 @pytest.mark.asyncio
@@ -281,9 +364,63 @@ async def test_compliance_agent_uses_intent_aware_retrieval_plan(monkeypatch):
         }
     )
 
-    assert captured["top_k"] == 8
+    assert captured["top_k"] == 10
     assert captured["search_type"] == "hybrid"
     assert state["retrieval_plan"]["intent"] == "compare"
+
+
+@pytest.mark.asyncio
+async def test_compliance_agent_requests_clarification_when_compare_has_only_one_document(monkeypatch):
+    async def no_llm_answer(*args, **kwargs):
+        return None
+
+    class DummySearcher:
+        async def search(self, **kwargs):
+            return [
+                {
+                    "doc_id": "doc-1",
+                    "document_title": "差旅制度（2024版）",
+                    "snippet": "差旅报销需附发票与审批单。",
+                    "page_number": 4,
+                    "section_title": "报销管理",
+                    "score": 0.9,
+                },
+            ]
+
+    monkeypatch.setattr("app.retrieval.hybrid_searcher.HybridSearcher", DummySearcher)
+    monkeypatch.setattr(ComplianceAgent, "_try_llm_answer", no_llm_answer)
+    state = await ComplianceAgent().run(
+        {
+            "query": "请比较差旅制度这一版和上一版的区别",
+            "rewritten_query": "请比较差旅制度这一版和上一版的区别",
+            "current_user": object(),
+            "search_type": "hybrid",
+            "db": object(),
+            "intent": "compare",
+        }
+    )
+
+    assert "无法完成可靠对比" in state["answer"]
+    assert "请补充另一份制度的名称、年份或版本号" in state["answer"]
+
+
+def test_normalize_retrieved_results_compare_prefers_multi_doc_coverage():
+    searcher = HybridSearcher()
+    results = [
+        {"doc_id": "doc-a", "document_title": "制度A", "section_title": "A1", "snippet": "制度A 第一条", "page_number": 1, "score": 0.99},
+        {"doc_id": "doc-a", "document_title": "制度A", "section_title": "A2", "snippet": "制度A 第二条", "page_number": 2, "score": 0.98},
+        {"doc_id": "doc-b", "document_title": "制度B", "section_title": "B1", "snippet": "制度B 第一条", "page_number": 1, "score": 0.8},
+    ]
+
+    normalized = _normalize_retrieved_results(
+        searcher,
+        query="请比较制度A和制度B的差异",
+        results=results,
+        plan={"intent": "compare", "max_per_doc": 2, "require_multi_doc": True},
+    )
+
+    assert normalized[0]["doc_id"] == "doc-a"
+    assert normalized[1]["doc_id"] == "doc-b"
 
 
 def test_graph_searcher_infers_relationship():
@@ -378,3 +515,78 @@ def test_retriever_filters_boilerplate_footer_chunks_when_possible():
 
     assert len(normalized) == 1
     assert normalized[0]["section_title"] == "预算正文"
+def test_retriever_prioritizes_core_requirement_chunks_over_notice_and_penalty_pages():
+    searcher = HybridSearcher()
+    results = [
+        {
+            "doc_id": "doc-a",
+            "document_title": "西南大学国内差旅费管理办法.html",
+            "section_title": "18 swu domestic travel expense management",
+            "page_number": 2,
+            "snippet": "第一章 总则。为进一步加强和规范学校国内差旅费管理，差旅费是指工作人员公务出差期间发生的城市间交通费、住宿费、伙食补助费和市内交通费。",
+            "score": 69.0,
+        },
+        {
+            "doc_id": "doc-a",
+            "document_title": "西南大学国内差旅费管理办法.html",
+            "section_title": "18 swu domestic travel expense management",
+            "page_number": 11,
+            "snippet": "人员的责任：虚报冒领差旅费的，追回违规资金并给予处分。",
+            "score": 73.0,
+        },
+        {
+            "doc_id": "doc-a",
+            "document_title": "西南大学国内差旅费管理办法.html",
+            "section_title": "18 swu domestic travel expense management",
+            "page_number": 8,
+            "snippet": "学校不提倡、不鼓励自驾车或租车出差。市内交通费、住宿费和伙食补助费按规定标准报销。",
+            "score": 67.0,
+        },
+        {
+            "doc_id": "doc-a",
+            "document_title": "西南大学国内差旅费管理办法.html",
+            "section_title": "18 swu domestic travel expense management",
+            "page_number": 1,
+            "snippet": "关于印发《西南大学国内差旅费管理办法》的通知，请遵照执行。",
+            "score": 77.0,
+        },
+    ]
+
+    normalized = _normalize_retrieved_results(
+        searcher,
+        query="《西南大学国内差旅费管理办法》的核心要求是什么？",
+        results=results,
+    )
+
+    assert normalized[0]["page_number"] == 2
+    assert normalized[1]["page_number"] == 8
+    assert normalized[-1]["page_number"] == 11
+def test_compliance_agent_prefers_overview_evidence_for_core_requirement_queries():
+    agent = ComplianceAgent()
+    results = [
+        {
+            "document_title": "西南大学国内差旅费管理办法.html",
+            "section_title": "18 swu domestic travel expense management",
+            "page_number": 8,
+            "snippet": "市内交通费、住宿费和伙食补助费按规定标准报销。",
+            "score": 67.0,
+        },
+        {
+            "document_title": "西南大学国内差旅费管理办法.html",
+            "section_title": "18 swu domestic travel expense management",
+            "page_number": 2,
+            "snippet": "第一章 总则。为进一步加强和规范学校国内差旅费管理，差旅费是指工作人员公务出差期间发生的城市间交通费、住宿费、伙食补助费和市内交通费。",
+            "score": 77.0,
+        },
+        {
+            "document_title": "西南大学国内差旅费管理办法.html",
+            "section_title": "18 swu domestic travel expense management",
+            "page_number": 11,
+            "snippet": "人员的责任：虚报冒领差旅费的，追回违规资金并给予处分。",
+            "score": 73.0,
+        },
+    ]
+
+    primary = agent._select_primary_result("《西南大学国内差旅费管理办法》的核心要求是什么？", results)
+
+    assert primary["page_number"] == 2

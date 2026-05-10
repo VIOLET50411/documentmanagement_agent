@@ -42,6 +42,7 @@ services:
       CLAMAV_PORT: "3310"
       GUARDRAILS_SIDECAR_URL: http://guardrails-sidecar:8090
       RAGAS_API_BASE_URL: http://ragas-sidecar:8091
+      RAGAS_TIMEOUT_SECONDS: "900"
       PUSH_FCM_SERVICE_ACCOUNT_FILE: /run/secrets/docmind/firebase-service-account.json
       DOCMIND_SHARED_DATASETS_DIR: /workspace/datasets
       DOCMIND_REPORTS_DIR: /workspace/reports
@@ -117,6 +118,7 @@ services:
       CLAMAV_PORT: "3310"
       GUARDRAILS_SIDECAR_URL: http://guardrails-sidecar:8090
       RAGAS_API_BASE_URL: http://ragas-sidecar:8091
+      RAGAS_TIMEOUT_SECONDS: "900"
       PUSH_FCM_SERVICE_ACCOUNT_FILE: /run/secrets/docmind/firebase-service-account.json
       DOCMIND_SHARED_DATASETS_DIR: /workspace/datasets
       DOCMIND_REPORTS_DIR: /workspace/reports
@@ -177,6 +179,7 @@ services:
       CLAMAV_PORT: "3310"
       GUARDRAILS_SIDECAR_URL: http://guardrails-sidecar:8090
       RAGAS_API_BASE_URL: http://ragas-sidecar:8091
+      RAGAS_TIMEOUT_SECONDS: "900"
       PUSH_FCM_SERVICE_ACCOUNT_FILE: /run/secrets/docmind/firebase-service-account.json
       DOCMIND_SHARED_DATASETS_DIR: /workspace/datasets
       DOCMIND_REPORTS_DIR: /workspace/reports

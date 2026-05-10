@@ -377,7 +377,13 @@ class EvaluationService:
         dataset_size = int(summary.get("dataset_size", 0) or 0)
         unique_doc_count = int(summary.get("unique_doc_count", 0) or 0)
         difficulty_counts = summary.get("difficulty_counts") if isinstance(summary.get("difficulty_counts"), dict) else {}
+        task_type_counts = summary.get("task_type_counts") if isinstance(summary.get("task_type_counts"), dict) else {}
         difficulty_bucket_count = sum(1 for value in difficulty_counts.values() if int(value or 0) > 0)
+        task_type_bucket_count = sum(1 for value in task_type_counts.values() if int(value or 0) > 0)
+        grounded_sample_count = int(summary.get("grounded_sample_count", 0) or 0)
+        compare_sample_count = int(summary.get("compare_sample_count", 0) or 0)
+        follow_up_sample_count = int(summary.get("follow_up_sample_count", 0) or 0)
+        avg_context_length = float(summary.get("avg_context_length", 0.0) or 0.0)
         if summary:
             if dataset_size < settings.ci_gate_min_eval_dataset_size:
                 failures.append(
@@ -406,6 +412,51 @@ class EvaluationService:
                         "delta": difficulty_bucket_count - settings.ci_gate_min_eval_difficulty_buckets,
                     }
                 )
+            if grounded_sample_count < settings.ci_gate_min_eval_grounded_samples:
+                failures.append(
+                    {
+                        "metric": "grounded_sample_count",
+                        "actual": grounded_sample_count,
+                        "threshold": settings.ci_gate_min_eval_grounded_samples,
+                        "delta": grounded_sample_count - settings.ci_gate_min_eval_grounded_samples,
+                    }
+                )
+            if task_type_bucket_count < settings.ci_gate_min_eval_task_type_buckets:
+                failures.append(
+                    {
+                        "metric": "task_type_buckets",
+                        "actual": task_type_bucket_count,
+                        "threshold": settings.ci_gate_min_eval_task_type_buckets,
+                        "delta": task_type_bucket_count - settings.ci_gate_min_eval_task_type_buckets,
+                    }
+                )
+            if compare_sample_count < settings.ci_gate_min_eval_compare_samples:
+                failures.append(
+                    {
+                        "metric": "compare_sample_count",
+                        "actual": compare_sample_count,
+                        "threshold": settings.ci_gate_min_eval_compare_samples,
+                        "delta": compare_sample_count - settings.ci_gate_min_eval_compare_samples,
+                    }
+                )
+            if follow_up_sample_count < settings.ci_gate_min_eval_follow_up_samples:
+                failures.append(
+                    {
+                        "metric": "follow_up_sample_count",
+                        "actual": follow_up_sample_count,
+                        "threshold": settings.ci_gate_min_eval_follow_up_samples,
+                        "delta": follow_up_sample_count - settings.ci_gate_min_eval_follow_up_samples,
+                    }
+                )
+            if avg_context_length < settings.ci_gate_min_eval_avg_context_length:
+                failures.append(
+                    {
+                        "metric": "avg_context_length",
+                        "actual": round(avg_context_length, 2),
+                        "threshold": settings.ci_gate_min_eval_avg_context_length,
+                        "delta": round(avg_context_length - settings.ci_gate_min_eval_avg_context_length, 2),
+                    }
+                )
         return {
             "passed": not failures and real_mode_ok,
             "failures": failures,
@@ -419,13 +470,25 @@ class EvaluationService:
     def _summarize_dataset(self, dataset: list[dict[str, Any]]) -> dict[str, Any]:
         unique_docs: set[str] = set()
         difficulty_counts: dict[str, int] = {}
+        task_type_counts: dict[str, int] = {}
         context_lengths: list[int] = []
+        grounded_sample_count = 0
+        compare_sample_count = 0
+        follow_up_sample_count = 0
         for item in dataset:
             for doc_id in item.get("context_doc_ids") or []:
                 if doc_id:
                     unique_docs.add(str(doc_id))
             difficulty = str(item.get("difficulty") or "unknown")
             difficulty_counts[difficulty] = difficulty_counts.get(difficulty, 0) + 1
+            task_type = str(item.get("task_type") or "unknown")
+            task_type_counts[task_type] = task_type_counts.get(task_type, 0) + 1
+            if difficulty == "grounded":
+                grounded_sample_count += 1
+            if task_type in {"compare", "cross_doc_compare"}:
+                compare_sample_count += 1
+            if task_type == "follow_up":
+                follow_up_sample_count += 1
             context_text = " ".join(item.get("contexts") or [])
             context_lengths.append(len(context_text))
         avg_context_length = round(sum(context_lengths) / len(context_lengths), 2) if context_lengths else 0.0
@@ -433,6 +496,10 @@ class EvaluationService:
             "dataset_size": len(dataset),
             "unique_doc_count": len(unique_docs),
             "difficulty_counts": difficulty_counts,
+            "task_type_counts": task_type_counts,
+            "grounded_sample_count": grounded_sample_count,
+            "compare_sample_count": compare_sample_count,
+            "follow_up_sample_count": follow_up_sample_count,
             "avg_context_length": avg_context_length,
         }
 

@@ -25,6 +25,7 @@ class SemanticCache:
 
     LOW_QUALITY_ANSWER_PATTERNS = (
         "## 未找到可用证据",
+        "## 未提取到足够正文",
         "当前知识库中没有检索到",
         "当前权限范围内未检索到",
         "暂时无法形成可靠结论",

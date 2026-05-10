@@ -1,75 +1,38 @@
-# Agent Runtime V2 (Non-LLM Phase)
+# DocMind Runtime V2 说明
 
-## Goal
+## 1. 定位
 
-Introduce a QueryEngine-style runtime core without breaking the existing supervisor flow.
+Runtime V2 是当前 DocMind 的主运行链路，用于承载文档问答过程中的状态流、工具调用、回放和恢复能力。
 
-## Runtime Mode
+## 2. 当前能力
 
-- Runtime is now `v2_only` (no v1 dual-stack path).
+- 统一 Runtime 请求结构
+- SSE 事件输出
+- 运行时任务存储
+- Replay
+- Checkpoint
+- Resume
+- 工具调用决策记录
+- 性能与回退指标
 
-## New Core Components
+## 3. 典型链路
 
-- `backend/app/agent/runtime/engine.py`
-  - `AgentRuntime.run(request, db, current_user) -> AsyncIterator[event]`
-- `backend/app/agent/runtime/types.py`
-  - `RuntimeRequest`, `RuntimeState`, `RuntimeEvent`
-- `backend/app/agent/runtime/task_store.py`
-  - unified task lifecycle: `pending -> running -> completed|failed|killed`
-- `backend/app/agent/runtime/tool_registry.py`
-  - explicit `ToolSpec` registration and unified `ToolResultEnvelope`
-- `backend/app/agent/runtime/permission_gate.py`
-  - per-tool decision: `allow|deny|ask`
-- `backend/app/agent/runtime/agent_definitions.py`
-  - built-in definitions + controlled local extension loading
+1. 接收聊天请求
+2. 注入用户、租户和上下文
+3. 执行查询改写、检索、专项 agent、审查
+4. 以 SSE 持续输出事件
+5. 记录 trace、消息、决策和指标
 
-## SSE Protocol Upgrade
+## 4. 相关接口
 
-`/api/v1/chat/stream` now emits compatibility fields on every event:
-
-- `event_id`
-- `sequence_num`
-- `trace_id`
-- `source`
-- `degraded`
-- `fallback_reason`
-
-Resume support:
-
-- Query replay: `resume_trace_id` + `last_sequence`
-- Standard header replay: `Last-Event-ID: <trace_id>:<sequence_num>`
-
-## New Admin Runtime APIs
-
+- `POST /api/v1/chat/stream`
+- `POST /api/v1/chat/message`
 - `GET /api/v1/admin/runtime/tasks`
 - `GET /api/v1/admin/runtime/metrics`
 - `GET /api/v1/admin/runtime/tool-decisions`
 - `GET /api/v1/admin/runtime/tool-decisions/summary`
-- `POST /api/v1/admin/runtime/replay?trace_id=...`
-- `POST /api/v1/admin/security/watermark/trace`
+- `POST /api/v1/admin/runtime/replay`
 
-`/runtime/tool-decisions` supports `source=redis|audit|merged` (default `merged`).
-Runtime decisions are written to both Redis stream and `security_audit_events`.
+## 5. 当前价值
 
-`/runtime/tool-decisions/summary` supports:
-
-- window filter: `since_hours`
-- dimension filters: `decision`, `tool_name`, `reason`, `source`
-- matrix outputs: `matrix_by_tool`, `matrix_by_reason`
-- trend output: `trend_by_hour`
-
-## Maintenance
-
-Replay/task TTL maintenance script:
-
-- `py -3 scripts/runtime_maintenance.py`
-- `py -3 scripts/runtime_maintenance.py --cleanup-empty`
-- `py -3 scripts/runtime_maintenance.py --cleanup-empty --write-report`
-
-Performance baseline report script:
-
-- `py -3 scripts/performance_baseline_report.py`
-
-## Compatibility
-
-- Runtime v2 is the single production chain.
+Runtime V2 的意义在于，DocMind 已经不是只会返回一段字符串的聊天后端，而是具备可追踪、可回放、可治理的问答运行内核。

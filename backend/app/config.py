@@ -211,7 +211,7 @@ class Settings(BaseSettings):
     push_wechat_lang: str = "zh_CN"
     ragas_api_base_url: str = ""
     ragas_api_key: str = ""
-    ragas_timeout_seconds: int = 420
+    ragas_timeout_seconds: int = 900
     ragas_require_real_mode: bool = False
     ci_gate_min_runtime_samples: int = 1
     ci_gate_max_fallback_rate: float = 0.8
@@ -225,10 +225,15 @@ class Settings(BaseSettings):
     ci_gate_min_answer_relevancy_ragas_ollama: float = 0.1
     ci_gate_min_context_precision_ragas_ollama: float = 0.4
     ci_gate_min_context_recall_ragas_ollama: float = 0.5
-    ci_gate_eval_sample_limit: int = 5
+    ci_gate_eval_sample_limit: int = 10
     ci_gate_min_eval_dataset_size: int = 5
     ci_gate_min_eval_unique_docs: int = 1
     ci_gate_min_eval_difficulty_buckets: int = 2
+    ci_gate_min_eval_grounded_samples: int = 1
+    ci_gate_min_eval_avg_context_length: int = 80
+    ci_gate_min_eval_task_type_buckets: int = 3
+    ci_gate_min_eval_compare_samples: int = 1
+    ci_gate_min_eval_follow_up_samples: int = 1
 
     @property
     def cors_origins(self) -> List[str]:

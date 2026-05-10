@@ -156,6 +156,8 @@ class HybridSearcher:
     async def _search_keyword_path(self, db, filters: dict, query: str, query_terms: list[str], top_k: int) -> list[dict]:
         started = time.perf_counter()
         explicit_titles = self._extract_explicit_titles(query)
+        live_results: list[dict] = []
+        summary_hint = bool(re.search(r"(概括|总结|摘要|主要内容)", query or ""))
         try:
             live_results = await self.es_client.search(query=query, filters=filters, top_k=top_k)
             await RetrievalObservabilityService(get_redis()).record(
@@ -166,7 +168,7 @@ class HybridSearcher:
                 timeout=False,
                 latency_ms=int((time.perf_counter() - started) * 1000),
             )
-            if live_results:
+            if live_results and not explicit_titles:
                 return live_results
         except (ApiError, TransportError, OSError, RuntimeError, asyncio.TimeoutError) as exc:
             error_text = str(exc).lower()
@@ -180,8 +182,8 @@ class HybridSearcher:
                 error=str(exc),
             )
 
-        if not settings.vector_local_fallback_enabled:
-            return []
+        if not settings.vector_local_fallback_enabled and live_results and not explicit_titles:
+            return live_results
 
         conditions = self._build_access_conditions(filters)
         content_conditions = [DocumentChunk.content.ilike(f"%{term}%") for term in query_terms]
@@ -201,6 +203,19 @@ class HybridSearcher:
         )
         if exact_title_conditions:
             score_expr = score_expr + sum(case((condition, 12), else_=0) for condition in exact_title_conditions)
+        if explicit_titles and summary_hint:
+            score_expr = (
+                score_expr
+                + case((DocumentChunk.content.ilike("%收支预算情况说明%"), 24), else_=0)
+                + case((DocumentChunk.content.ilike("%收入预算情况说明%"), 18), else_=0)
+                + case((DocumentChunk.content.ilike("%支出预算情况说明%"), 18), else_=0)
+                + case((DocumentChunk.content.ilike("%财政拨款支出预算情况说明%"), 18), else_=0)
+                + case((DocumentChunk.content.ilike("%项目绩效目标表%"), 10), else_=0)
+                + case((DocumentChunk.content.ilike("%万元%"), 4), else_=0)
+                + case((DocumentChunk.page_number >= 10, 3), else_=0)
+                - case((DocumentChunk.content.ilike("%目录%"), 10), else_=0)
+                - case((DocumentChunk.content.ilike("%学校基本情况%"), 6), else_=0)
+            )
 
         rows = await db.execute(
             select(DocumentChunk, Document, score_expr.label("score"))
@@ -209,7 +224,10 @@ class HybridSearcher:
             .order_by(score_expr.desc(), func.length(DocumentChunk.content).asc())
             .limit(top_k)
         )
-        return [self._result_payload(chunk, document, float(score or 0), "keyword") for chunk, document, score in rows.all()]
+        db_results = [self._result_payload(chunk, document, float(score or 0), "keyword") for chunk, document, score in rows.all()]
+        if explicit_titles and live_results:
+            return self._merge_unique_results(db_results, live_results, limit=top_k)
+        return db_results or live_results
 
     async def _search_vector_path(self, db, filters: dict, query: str, top_k: int, allow_fast_skip: bool = False) -> list[dict]:
         started = time.perf_counter()
@@ -406,6 +424,23 @@ class HybridSearcher:
             if lowered and lowered in normalized_title:
                 return 0.8
         return 0.0
+
+    def _merge_unique_results(self, primary: list[dict], secondary: list[dict], *, limit: int) -> list[dict]:
+        merged: list[dict] = []
+        seen: set[tuple[str, str, str]] = set()
+        for item in primary + secondary:
+            signature = (
+                str(item.get("doc_id") or item.get("document_title") or "").strip(),
+                str(item.get("section_title") or "").strip(),
+                str(item.get("snippet") or "").strip(),
+            )
+            if signature in seen:
+                continue
+            seen.add(signature)
+            merged.append(item)
+            if len(merged) >= limit:
+                break
+        return merged
 
     def _prefer_explicit_title_matches(self, results: list[dict], *, query: str) -> list[dict]:
         explicit_titles = self._extract_explicit_titles(query)

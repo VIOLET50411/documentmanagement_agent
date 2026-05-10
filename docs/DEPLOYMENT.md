@@ -1,152 +1,122 @@
 # DocMind Agent 部署说明
 
-## 1. 本地运行基线
+## 1. 当前推荐运行方式
 
-当前仓库已按 Windows 本地开发路径验证，推荐端口如下：
+当前仓库默认按 Docker Compose 本地开发栈运行，推荐直接使用：
 
-- 前端: `http://localhost:15173`
-- 后端: `http://localhost:18000`
-- Flower: `http://localhost:15555`
-- PostgreSQL: `localhost:5432`
-- Redis: `localhost:6379`
-- Milvus: `localhost:19530`
-- Elasticsearch: `localhost:9200`
-- MinIO API: `localhost:9000`
-- MinIO Console: `http://localhost:9001`
-- Neo4j Browser: `http://localhost:7474`
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+```
 
-演示管理员账号会在后端首次启动时自动创建：
+## 2. 当前端口
 
-- 用户名: `admin_demo`
-- 密码: `Password123`
+以当前运行中的容器映射为准：
 
-前置环境：
+- 前端：`http://localhost:15173`
+- 后端：`http://localhost:18000`
+- Flower：`http://localhost:15555`
+- PostgreSQL：`localhost:5432`
+- Redis：`localhost:6379`
+- Milvus：`localhost:19530`
+- Elasticsearch：`localhost:9200`
+- MinIO：`localhost:9000`
+- MinIO Console：`http://localhost:9001`
+- Neo4j Browser：`http://localhost:7474`
+- Ollama：`http://localhost:11434`
+- Guardrails sidecar：`http://localhost:8090`
+- Ragas sidecar：`http://localhost:8091`
+
+## 3. 当前容器
+
+主要服务包括：
+
+- `docmind-backend`
+- `docmind-frontend`
+- `docmind-celery-worker`
+- `docmind-flower`
+- `docmind-postgres`
+- `docmind-redis`
+- `docmind-minio`
+- `docmind-milvus`
+- `docmind-elasticsearch`
+- `docmind-neo4j`
+- `docmind-ollama`
+- `docmind-clamav`
+- `docmind-guardrails-sidecar`
+- `docmind-ragas-sidecar`
+
+## 4. 环境准备
 
 - Docker Desktop
 - Python 3.11+
 - Node.js 20+
 
-## 2. 推荐启动方式
+建议补充：
 
-### 方式 A：全容器启动
+- Git
+- 可联网拉取 Docker 镜像和 Ollama 模型
+- 建议内存 16 GB 及以上
+- 建议磁盘预留 20 GB 以上
 
-```powershell
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
-```
+如果需要 Android / Firebase 联调，请同时参考 [LOCAL_SETUP.md](./LOCAL_SETUP.md) 中的移动端配置说明。
+如果你要构建 Android App，建议直接使用 JDK 17；当前 Android Gradle Plugin 为 `8.2.1`，Java 8 环境会导致 Gradle 依赖解析失败。
 
-### 方式 B：基础设施容器 + 应用本地
-
-先启动基础设施：
-
-```powershell
-docker compose up -d postgres redis etcd minio milvus elasticsearch neo4j
-```
-
-再分别启动后端、Celery、前端：
+初始化环境变量：
 
 ```powershell
-cd backend
-py -3 -m pip install -r requirements.txt
-py -3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+Copy-Item .env.example .env
 ```
+
+建议首次复制后立即替换本地 secret 和默认密码，不要长期保留模板值。
+
+## 5. 首次启动建议
+
+1. 启动 Compose 栈
+2. 访问 `http://localhost:18000/health`
+3. 打开 `http://localhost:15173`
+4. 使用演示管理员登录：
+   - 用户名：`admin_demo`
+   - 密码：`Password123`
+5. 上传一份测试文档，确认状态推进到 `ready` 或可解释的失败态
+
+说明：
+
+- 未配置 Firebase 时，Web / Docker 主链路仍可正常启动
+- Android 推送、小程序推送等能力需要你自己的云端配置
+
+## 6. Ollama 模型准备
 
 ```powershell
-cd backend
-py -3 -m celery -A celery_app worker --loglevel=info --autoscale=8,2
+docker exec docmind-ollama ollama pull qwen2.5:1.5b
+docker exec docmind-ollama ollama pull nomic-embed-text
 ```
+
+## 7. 常用命令
+
+查看容器：
 
 ```powershell
-cd frontend
-npm.cmd install
-npm.cmd run dev -- --host 0.0.0.0 --port 5173
+docker ps
 ```
 
-也可以直接运行仓库脚本：
+查看后端日志：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\start-local.ps1
+docker logs docmind-backend --tail 200
 ```
 
-## 3. 环境变量
-
-- 主配置文件：`C:\Users\32020\Desktop\documentmanagement_agent\.env`
-- 分发模板：`C:\Users\32020\Desktop\documentmanagement_agent\.env.example`
-- AI Key 相关字段目前保持留空，后续接入真实 AI API 时再填写
-
-如果沿用当前 `.env`，容器映射端口如下：
-
-- `BACKEND_PORT=18000`
-- `FRONTEND_PORT=15173`
-- `FLOWER_PORT=15555`
-
-## 4. 首次启动检查清单
-
-1. 访问 `http://localhost:18000/health`，确认返回 `healthy`
-2. 打开 `http://localhost:15173`
-3. 使用 `admin_demo / Password123` 登录
-4. 进入“系统管理”页面，确认可看到：
-   - 管线任务统计
-   - 安全事件列表
-   - 评估与运行时指标
-5. 上传一个测试文档，在文档页确认状态会更新为：
-   - `queued`
-   - `parsing` / `chunking` / `indexing`
-   - `ready` / `partial_failed` / `failed`
-
-如需快速验收，可运行：
+重启后端：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\verify-stack.ps1
+docker restart docmind-backend
 ```
 
-## 5. 基线压测（非LLM阶段）
+## 8. 本地代码与 Docker 同步说明
 
-使用内置脚本验证并发基线：
+当前 `docker-compose.dev.yml` 已把本地目录挂载进容器：
 
-```powershell
-py -3 scripts/loadtest_baseline.py --base-url http://localhost:8000
-```
+- `./backend -> /app`
+- `./datasets -> /workspace/datasets`
+- `./reports -> /workspace/reports`
 
-默认压测配置：
-
-- 搜索：100 请求，50 并发
-- 聊天首事件：40 请求，20 并发
-
-输出指标包含：请求数、错误数、平均延迟、P95 延迟、最大延迟。
-
-## 6. 当前实现边界
-
-已落地：
-
-- FastAPI + Vue3 主流程
-- JWT 登录与 RBAC 基线
-- 上传、解析任务、进度查询与重试
-- SSE 聊天主链路
-- 安全骨架、审计事件、运行时评估指标
-- 默认演示管理员初始化
-
-尚未最终落地：
-
-- 外部 LLM / Embedding / Reranker 真实接入
-- Spark 级历史文档迁移完成度
-- 金融级安全策略与 DLP 联动
-- 完整数据飞轮与自动调优闭环
-
-## 7. 生产部署方向
-
-推荐生产形态：
-
-- Nginx 反向代理 FastAPI 与前端静态资源
-- FastAPI 多副本
-- PostgreSQL 主从或托管高可用
-- Redis Sentinel 或托管 Redis
-- MinIO / S3 对象存储
-- Milvus 集群模式
-- Elasticsearch 独立节点规划
-- Kubernetes 统一编排
-
-SSE 代理层建议：
-
-- `X-Accel-Buffering: no`
-- 合理读取超时
-- 关闭会破坏流式返回的缓冲
+因此后端代码改动会直接影响容器内运行路径。涉及运行逻辑修改时，应在 Docker 中做最小验证后再视为完成。

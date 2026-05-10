@@ -47,6 +47,18 @@ FOLLOW_UP_HINTS = (
     "适用",
 )
 
+VERSION_FOLLOW_UP_HINTS = (
+    "上一版",
+    "前一版",
+    "旧版",
+    "新版",
+    "这一版",
+    "这版",
+    "前后版本",
+    "和上一版",
+    "与上一版",
+)
+
 REWRITE_SYSTEM_PROMPT = """你是企业文档检索助手的查询改写器。请把用户问题改写成更适合制度文档检索的形式，并遵守以下规则：
 1. 如果问题里有指代词，结合历史消息补全对象；
 2. 保留核心意图，不要扩写成无关内容；
@@ -65,7 +77,14 @@ async def query_rewriter(state: dict) -> dict:
     has_ambiguous = any(ref in query for ref in AMBIGUOUS_REFERENCES)
     is_follow_up = _looks_like_follow_up(query)
     context_subject = _resolve_context_subject(context_messages, prior_user_messages)
-    needs_rewrite = has_ambiguous or is_follow_up or len(query) < 8 or (bool(context_subject) and len(query) < 24)
+    has_version_follow_up = any(token in query for token in VERSION_FOLLOW_UP_HINTS)
+    needs_rewrite = (
+        has_ambiguous
+        or is_follow_up
+        or has_version_follow_up
+        or len(query) < 8
+        or (bool(context_subject) and len(query) < 24)
+    )
 
     llm = LLMService()
     if not llm.is_rule_only and needs_rewrite:
@@ -87,7 +106,13 @@ async def query_rewriter(state: dict) -> dict:
             )
             rewritten = _normalize_rewrite_result(result)
             if rewritten:
-                rewritten = _attach_context_subject(rewritten, query, context_subject, has_ambiguous=has_ambiguous, is_follow_up=is_follow_up)
+                rewritten = _attach_context_subject(
+                    rewritten,
+                    query,
+                    context_subject,
+                    has_ambiguous=has_ambiguous,
+                    is_follow_up=is_follow_up or has_version_follow_up,
+                )
                 if len(rewritten) < 500:
                     state["rewritten_query"] = rewritten
                     state["rewrite_source"] = "llm"
@@ -96,7 +121,7 @@ async def query_rewriter(state: dict) -> dict:
         except (OSError, RuntimeError, ValueError, TypeError) as exc:
             logger.warning("query_rewriter.llm_failed", error=str(exc))
 
-    if context_subject and (has_ambiguous or is_follow_up):
+    if context_subject and (has_ambiguous or is_follow_up or has_version_follow_up):
         state["rewritten_query"] = _merge_subject_and_query(context_subject, query)
         state["rewrite_source"] = "context_fallback"
         return state
@@ -153,6 +178,10 @@ def _resolve_context_subject(messages: list[dict], prior_user_messages: list[dic
             break
     if titles:
         return "、".join(titles[:2])
+    for msg in reversed(prior_user_messages[-4:]):
+        subject = _extract_subject_from_user_query(msg.get("content", ""))
+        if subject:
+            return subject
     if prior_user_messages:
         return _compact_subject(prior_user_messages[-1].get("content", ""))
     return ""
@@ -174,6 +203,25 @@ def _compact_subject(text: str) -> str:
     if len(subject) > 60:
         subject = subject[:60].rstrip()
     return subject
+
+
+def _extract_subject_from_user_query(text: str) -> str:
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+
+    explicit_titles = _extract_document_titles(raw)
+    if explicit_titles:
+        return explicit_titles[-1]
+
+    subject_match = re.search(
+        r"((?:\d{4}\s*)?[\u4e00-\u9fffA-Za-z0-9（）()《》]{2,40}(?:制度|办法|规定|流程|手册|规范|预算|合同|审批单|报销制度|报销办法))",
+        raw,
+    )
+    if subject_match:
+        return subject_match.group(1).strip("：:，,。；; ")
+
+    return _compact_subject(raw)
 
 
 def _attach_context_subject(rewritten: str, query: str, context_subject: str, *, has_ambiguous: bool, is_follow_up: bool) -> str:

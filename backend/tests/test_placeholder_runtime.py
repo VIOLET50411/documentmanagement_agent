@@ -177,3 +177,18 @@ def test_excel_parser_reads_csv_as_table(tmp_path):
     assert result[0]["type"] == "table"
     assert "\u5f20\u4e09" in result[0]["text"]
     assert result[0]["metadata"]["row_count"] == 2
+
+
+async def test_critic_blocks_unstructured_compare_answer(monkeypatch):
+    monkeypatch.setattr(LLMService, "is_rule_only", property(lambda self: True))
+    state = await CriticAgent().run(
+        {
+            "answer": "\u4e24\u4e2a\u5236\u5ea6\u90fd\u63d0\u5230\u4e86\u5ba1\u6279\u548c\u62a5\u9500\uff0c\u4f46\u6ca1\u6709\u8fdb\u4e00\u6b65\u5c55\u5f00\u3002",
+            "citations": [{"doc_title": "\u5236\u5ea6A", "snippet": "\u5ba1\u6279\u8981\u6c42"}],
+            "agent_used": "compliance",
+            "intent": "compare",
+            "iteration": 0,
+        }
+    )
+    assert state["critic_approved"] is False
+    assert "\u5dee\u5f02\u8868\u6216\u6f84\u6e05\u63d0\u793a" in state["critic_reason"]

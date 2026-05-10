@@ -122,3 +122,25 @@ async def test_semantic_cache_skips_low_quality_empty_evidence_answer(monkeypatc
     )
 
     assert await cache.get("西南大学国内差旅费管理办法是什么？", user_id="user-1") is None
+
+
+@pytest.mark.asyncio
+async def test_semantic_cache_skips_degraded_summary_answer(monkeypatch):
+    monkeypatch.setattr("app.retrieval.semantic_cache.settings.semantic_cache_enabled", True)
+    redis = FakeRedis()
+    cache = SemanticCache(redis)
+
+    async def fake_upsert(*args, **kwargs):
+        raise AssertionError("degraded summary should not be written into vector cache")
+
+    monkeypatch.setattr(cache, "_upsert_vector_entry", fake_upsert)
+
+    await cache.put(
+        "请根据《西南大学2023年度部门预算》概括主要内容",
+        "## 未提取到足够正文\n\n当前仅命中标题页、附件页或站点页脚信息，无法形成可靠摘要。",
+        [{"doc_id": "doc-1"}],
+        user_id="user-1",
+        agent_used="summary",
+    )
+
+    assert await cache.get("请根据《西南大学2023年度部门预算》概括主要内容", user_id="user-1") is None

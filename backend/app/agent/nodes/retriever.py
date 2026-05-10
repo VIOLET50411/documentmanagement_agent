@@ -4,11 +4,12 @@ from __future__ import annotations
 
 _searcher = None
 
-DEFAULT_TOP_K_BY_INTENT = {
-    "qa": 5,
-    "compare": 8,
-    "summarize": 8,
-    "graph_query": 6,
+DEFAULT_PLAN_BY_INTENT = {
+    "qa": {"top_k": 6, "search_type": "hybrid", "max_per_doc": 2},
+    "compare": {"top_k": 10, "search_type": "hybrid", "max_per_doc": 2, "require_multi_doc": True},
+    "summarize": {"top_k": 10, "search_type": "hybrid", "max_per_doc": 4, "prefer_summary_details": True},
+    "graph_query": {"top_k": 6, "search_type": "graph", "max_per_doc": 3},
+    "statistics": {"top_k": 6, "search_type": "keyword", "max_per_doc": 2},
 }
 
 
@@ -16,19 +17,20 @@ def resolve_retrieval_plan(state: dict) -> dict:
     """Build a conservative retrieval plan from the current runtime state."""
 
     intent = str(state.get("intent") or "qa")
-    requested_type = str(state.get("search_type") or "hybrid")
+    defaults = DEFAULT_PLAN_BY_INTENT.get(intent, DEFAULT_PLAN_BY_INTENT["qa"]).copy()
+    requested_type = str(state.get("search_type") or "").strip()
     requested_top_k = state.get("top_k")
 
     if isinstance(requested_top_k, int) and requested_top_k > 0:
         top_k = requested_top_k
     else:
-        top_k = DEFAULT_TOP_K_BY_INTENT.get(intent, 5)
+        top_k = defaults["top_k"]
 
-    search_type = requested_type
-    if intent == "graph_query" and requested_type == "hybrid":
+    search_type = requested_type or defaults["search_type"]
+    if intent == "graph_query" and search_type == "hybrid":
         search_type = "graph"
 
-    return {
+    return defaults | {
         "intent": intent,
         "top_k": top_k,
         "search_type": search_type,
@@ -52,7 +54,7 @@ async def retriever(state: dict) -> dict:
         search_type=plan["search_type"],
         db=state["db"],
     )
-    results = _normalize_retrieved_results(searcher, query=query, results=results)
+    results = _normalize_retrieved_results(searcher, query=query, results=results, plan=plan)
     state["retrieved_docs"] = results
     state["citations"] = [
         {
@@ -69,7 +71,8 @@ async def retriever(state: dict) -> dict:
     return state
 
 
-def _normalize_retrieved_results(searcher, *, query: str, results: list[dict]) -> list[dict]:
+def _normalize_retrieved_results(searcher, *, query: str, results: list[dict], plan: dict | None = None) -> list[dict]:
+    plan = plan or {}
     explicit_titles = []
     if hasattr(searcher, "_extract_explicit_titles"):
         explicit_titles = list(searcher._extract_explicit_titles(query))
@@ -92,8 +95,17 @@ def _normalize_retrieved_results(searcher, *, query: str, results: list[dict]) -
         if non_boilerplate_results:
             scoped_results = non_boilerplate_results
 
-    max_per_doc = 3 if explicit_titles else 2
-    return _dedupe_and_limit_results(scoped_results, max_per_doc=max_per_doc)
+    scoped_results = _prioritize_substantive_chunks(
+        scoped_results,
+        query=query,
+        prefer_summary_details=bool(explicit_titles) or bool(plan.get("prefer_summary_details")),
+    )
+
+    max_per_doc = int(plan.get("max_per_doc") or (3 if explicit_titles else 2))
+    normalized = _dedupe_and_limit_results(scoped_results, max_per_doc=max_per_doc)
+    if plan.get("require_multi_doc"):
+        normalized = _prefer_multi_doc_coverage(normalized)
+    return normalized
 
 
 def _dedupe_and_limit_results(results: list[dict], *, max_per_doc: int) -> list[dict]:
@@ -123,9 +135,104 @@ def _dedupe_and_limit_results(results: list[dict], *, max_per_doc: int) -> list[
     return filtered
 
 
+def _prefer_multi_doc_coverage(results: list[dict]) -> list[dict]:
+    grouped: dict[str, list[dict]] = {}
+    ordered_doc_keys: list[str] = []
+    for item in results:
+        doc_key = str(item.get("doc_id") or item.get("document_title") or "__unknown__").strip()
+        if doc_key not in grouped:
+            grouped[doc_key] = []
+            ordered_doc_keys.append(doc_key)
+        grouped[doc_key].append(item)
+
+    if len(grouped) <= 1:
+        return results
+
+    reordered: list[dict] = []
+    max_depth = max(len(items) for items in grouped.values())
+    for depth in range(max_depth):
+        for doc_key in ordered_doc_keys:
+            items = grouped[doc_key]
+            if depth < len(items):
+                reordered.append(items[depth])
+    return reordered
+
+
 def _drop_low_information_chunks(results: list[dict]) -> list[dict]:
     filtered = [item for item in results if not _is_low_information_chunk(item)]
     return filtered
+
+
+def _prioritize_substantive_chunks(results: list[dict], *, query: str, prefer_summary_details: bool) -> list[dict]:
+    if len(results) <= 1:
+        return results
+    return sorted(
+        results,
+        key=lambda item: (
+            _chunk_priority(item, query=query, prefer_summary_details=prefer_summary_details),
+            float(item.get("score") or 0.0),
+        ),
+        reverse=True,
+    )
+
+
+def _chunk_priority(item: dict, *, query: str, prefer_summary_details: bool) -> int:
+    snippet = " ".join(str(item.get("snippet") or "").split()).strip()
+    section = str(item.get("section_title") or "").strip()
+    page_number = int(item.get("page_number") or 0)
+    normalized_query = str(query or "").strip()
+    priority = 0
+
+    if len(snippet) >= 120:
+        priority += 3
+    elif len(snippet) >= 60:
+        priority += 1
+
+    substantive_markers = (
+        "预算情况说明",
+        "收支预算情况说明",
+        "收入预算情况说明",
+        "支出预算情况说明",
+        "财政拨款支出预算情况说明",
+        "项目绩效目标表",
+        "万元",
+        "占",
+        "其中",
+    )
+    if any(marker in snippet for marker in substantive_markers):
+        priority += 6
+
+    if prefer_summary_details:
+        if "目录" in snippet[:20]:
+            priority -= 5
+        if page_number in {1, 2} and "说明" not in snippet:
+            priority -= 3
+        if "__download.jsp" in section:
+            priority -= 2
+        if "年度部门预算" in snippet and "说明" not in snippet and "万元" not in snippet and len(snippet) <= 40:
+            priority -= 4
+
+    if _is_core_requirements_query(normalized_query):
+        if any(marker in snippet for marker in ("责任", "处分", "附则", "负责解释", "自印发之日起执行")):
+            priority -= 7
+        if "关于印发" in snippet or "特此通知" in snippet:
+            priority -= 5
+        if page_number == 1:
+            priority -= 3
+        if page_number >= 10:
+            priority -= 2
+        if 2 <= page_number <= 8:
+            priority += 3
+        if any(marker in snippet for marker in ("总则", "适用于", "加强和规范", "差旅费是指", "定义", "基本原则")):
+            priority += 6
+        if any(marker in snippet for marker in ("审批", "报销", "标准", "住宿费", "伙食补助", "交通费", "出差")):
+            priority += 5
+
+    return priority
+
+
+def _is_core_requirements_query(query: str) -> bool:
+    return any(marker in query for marker in ("核心要求", "主要要求", "关键要求", "核心内容", "主要内容", "要点", "重点"))
 
 
 def _is_low_information_chunk(item: dict) -> bool:

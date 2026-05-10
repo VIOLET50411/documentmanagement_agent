@@ -106,7 +106,10 @@ class OCRParser:
             self._engine = None
             return None
 
-        self._engine = PaddleOCR(use_angle_cls=True, lang="ch")
+        try:
+            self._engine = PaddleOCR(use_angle_cls=True, lang="ch")
+        except Exception:  # pragma: no cover - dependency/runtime specific
+            self._engine = None
         return self._engine
 
     def _normalize_pages(self, result: Any, path: Path) -> list[list[Any]]:
