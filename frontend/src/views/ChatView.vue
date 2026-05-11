@@ -3,7 +3,7 @@
     <section v-if="showHeroState" class="hero-state">
       <div class="hero-intro">
         <h2>您好，今天想了解什么？</h2>
-        <p class="section-copy">我是您的智能文档助手。我可以帮您总结长文档、检索关键信息，并基于企业知识库回答您的问题。请在下方直接提问，或选择快捷指令开始。</p>
+        <p class="section-copy">我是您的智能文档助手。我可以帮您总结长文档、检索关键信息，并基于企业知识库回答问题。请在下方直接提问，或选择快捷指令开始。</p>
       </div>
 
       <ChatComposer
@@ -17,7 +17,7 @@
 
       <div class="quick-pills">
         <button v-for="prompt in quickPrompts" :key="prompt.label" class="quick-pill" @click="sendQuickPrompt(prompt.text)">
-          <span class="pill-icon">✧</span>
+          <span class="pill-icon">+</span>
           <span>{{ prompt.label }}</span>
         </button>
       </div>
@@ -42,7 +42,7 @@
           class="hero-composer compact card-shell"
           v-model="inputMessage"
           v-model:selected-model="selectedModel"
-          placeholder="继续追问、补充条件或要求引用更精确的段落"
+          placeholder="继续追问、补充条件，或要求引用更精确的段落"
           :disabled="chatStore.isStreaming"
           compact
           @submit="handleSend"
@@ -55,32 +55,32 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
-import { useChatStore } from '@/stores/chat'
-import { useSSE } from '@/composables/useSSE'
-import { useAutoScroll } from '@/composables/useAutoScroll'
-import { chatApi } from '@/api/chat'
-import MessageList from '@/components/chat/MessageList.vue'
-import ChatComposer from '@/components/chat/ChatComposer.vue'
+import { computed, nextTick, ref, watch } from "vue"
+import { useChatStore } from "@/stores/chat"
+import { useSSE } from "@/composables/useSSE"
+import { useAutoScroll } from "@/composables/useAutoScroll"
+import { chatApi } from "@/api/chat"
+import MessageList from "@/components/chat/MessageList.vue"
+import ChatComposer from "@/components/chat/ChatComposer.vue"
 
 const chatStore = useChatStore()
 const { sendMessage } = useSSE()
 const messagesRef = ref<HTMLElement | null>(null)
-const inputMessage = ref('')
-const selectedModel = ref('qwen2.5:1.5b')
+const inputMessage = ref("")
+const selectedModel = ref("qwen2.5:1.5b")
 const { scrollToBottom } = useAutoScroll(messagesRef)
 
 const quickPrompts = [
-  { label: '制度问答', hint: '围绕制度、流程、职责追问', text: '请总结当前差旅制度的审批链路，并说明各角色职责。' },
-  { label: '检索验证', hint: '检查上传与召回链路是否正常', text: '请说明文档上传后是如何进入检索链路的。' },
-  { label: '写作辅助', hint: '生成汇报、说明与总结', text: '请起草一份平台实施进展说明，包含风险与下一步计划。' },
-  { label: '运维检查', hint: '梳理当前平台问题与优先级', text: '请列出当前平台最需要优先处理的三个问题，并给出原因。' },
-  { label: '治理建议', hint: '从风险和管理角度给建议', text: '请从风险视角给出三条平台治理建议。' },
+  { label: "制度问答", hint: "围绕制度、流程、职责追问", text: "请总结当前差旅制度的审批链路，并说明各角色职责。" },
+  { label: "检索验证", hint: "检查上传与召回链路是否正常", text: "请说明文档上传后是如何进入检索链路的。" },
+  { label: "写作辅助", hint: "生成汇报、说明与总结", text: "请起草一份平台实施进展说明，包含风险与下一步计划。" },
+  { label: "运维检查", hint: "梳理当前平台问题与优先级", text: "请列出当前平台最需要优先处理的三个问题，并给出原因。" },
+  { label: "治理建议", hint: "从风险和管理角度给建议", text: "请从风险视角给出三条平台治理建议。" },
 ]
 
 const hasMessages = computed(() => chatStore.messages.length > 0)
 const showHeroState = computed(() => !hasMessages.value)
-const lastUserPrompt = computed(() => [...chatStore.messages].reverse().find((msg) => msg.role === 'user')?.content || '')
+const lastUserPrompt = computed(() => [...chatStore.messages].reverse().find((msg) => msg.role === "user")?.content || "")
 
 watch(() => chatStore.messages.length, () => nextTick(() => scrollToBottom()))
 watch(() => chatStore.messages[chatStore.messages.length - 1]?.content, () => nextTick(() => scrollToBottom()))
@@ -89,7 +89,7 @@ function handleSend() {
   const msg = inputMessage.value.trim()
   if (!msg || chatStore.isStreaming) return
   sendMessage(msg, chatStore.activeSessionId, selectedModel.value)
-  inputMessage.value = ''
+  inputMessage.value = ""
 }
 
 function sendQuickPrompt(prompt: string) {

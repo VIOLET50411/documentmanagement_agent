@@ -38,8 +38,21 @@ export const chatHistorySchema = z.object({
   messages: z.array(chatHistoryMessageSchema).optional().default([]),
 })
 
+export const chatSessionSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  created_at: z.string(),
+  updated_at: z.string(),
+})
+
+export const chatSessionListSchema = z.object({
+  items: z.array(chatSessionSchema).optional().default([]),
+})
+
 export type UserPayload = z.infer<typeof userSchema>
 export type LoginResponse = z.infer<typeof loginResponseSchema>
 export type ChatHistoryResponse = z.infer<typeof chatHistorySchema>
 export type ChatHistoryMessage = z.infer<typeof chatHistoryMessageSchema>
 export type ChatCitation = z.infer<typeof chatCitationSchema>
+export type ChatSessionListResponse = z.infer<typeof chatSessionListSchema>
+export type ChatSessionPayload = z.infer<typeof chatSessionSchema>

@@ -1,9 +1,10 @@
-"""Chat API with SSE streaming and persistent session/message records."""
+﻿"""Chat API with SSE streaming and persistent session/message records."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -560,6 +561,59 @@ async def get_chat_history(
     }
 
 
+@router.get("/sessions")
+async def list_chat_sessions(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List recent chat sessions for the current user."""
+    rows = await db.execute(
+        select(ChatSession)
+        .where(ChatSession.user_id == current_user.id)
+        .order_by(ChatSession.updated_at.desc(), ChatSession.created_at.desc())
+    )
+    sessions = rows.scalars().all()
+    items = []
+    for item in sessions:
+        title = (item.title or "").strip()
+        if _title_needs_refresh(title):
+            first_user_message = await db.scalar(
+                select(ChatMessage.content)
+                .where(ChatMessage.session_id == item.id, ChatMessage.role == "user")
+                .order_by(ChatMessage.created_at.asc())
+            )
+            title = _build_session_title(str(first_user_message or ""))
+            item.title = title
+        items.append(
+            {
+                "id": item.id,
+                "title": title or "新对话",
+                "created_at": item.created_at.isoformat(),
+                "updated_at": item.updated_at.isoformat(),
+            }
+        )
+    return {"items": items}
+
+
+@router.delete("/sessions/{thread_id}")
+async def delete_chat_session(
+    thread_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a chat session and its messages for the current user."""
+    session = await db.scalar(select(ChatSession).where(ChatSession.id == thread_id, ChatSession.user_id == current_user.id))
+    if session is None:
+        return {"deleted": False, "thread_id": thread_id}
+
+    rows = await db.execute(select(ChatMessage).where(ChatMessage.session_id == thread_id))
+    for message in rows.scalars().all():
+        await db.delete(message)
+    await db.delete(session)
+    await db.flush()
+    return {"deleted": True, "thread_id": thread_id}
+
+
 @router.post("/feedback")
 async def submit_feedback(
     message_id: str,
@@ -681,8 +735,29 @@ async def _get_or_create_session(db: AsyncSession, current_user: User, thread_id
         id=new_id,
         user_id=current_user.id,
         tenant_id=current_user.tenant_id,
-        title=(first_question[:40].strip() or "新对话"),
+        title=_build_session_title(first_question),
     )
     db.add(session)
     await db.flush()
     return session
+
+
+def _build_session_title(first_question: str) -> str:
+    normalized = " ".join((first_question or "").split()).strip()
+    if not normalized:
+        return "新对话"
+    first_chunk = next((item.strip() for item in re.split(r"[。！？\n]", normalized) if item.strip()), normalized)
+    compact = re.sub(r"^[#>*\-\d.\s]+", "", first_chunk).strip()
+    title = compact or normalized
+    return title[:40] if len(title) <= 40 else f"{title[:40].rstrip()}…"
+
+
+def _title_needs_refresh(title: str) -> bool:
+    normalized = (title or "").strip()
+    if not normalized:
+        return True
+    if normalized.count("?") >= 3 or "\ufffd" in normalized:
+        return True
+    latin1_noise = sum(1 for char in normalized if "\u00c0" <= char <= "\u00ff")
+    cjk_chars = sum(1 for char in normalized if "\u4e00" <= char <= "\u9fff")
+    return latin1_noise >= 4 and cjk_chars == 0

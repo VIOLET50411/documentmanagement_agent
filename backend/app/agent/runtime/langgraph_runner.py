@@ -205,7 +205,10 @@ class LangGraphRuntimeRunner:
             self._route_after_critic,
             {
                 "retry_qa": "retriever",
-                "retry_specialist": "compliance",
+                "retry_compliance": "compliance",
+                "retry_summary": "summary",
+                "retry_graph": "graph",
+                "retry_data": "data",
                 "end": END,
             },
         )
@@ -358,8 +361,14 @@ class LangGraphRuntimeRunner:
             branch = self._route_after_critic(state)
             if branch == "retry_qa":
                 return "retriever"
-            if branch == "retry_specialist":
+            if branch == "retry_compliance":
                 return "compliance"
+            if branch == "retry_summary":
+                return "summary"
+            if branch == "retry_graph":
+                return "graph"
+            if branch == "retry_data":
+                return "data"
             return None
         return None
 
@@ -405,7 +414,13 @@ class LangGraphRuntimeRunner:
             return "end"
         if state.get("intent") == "qa":
             return "retry_qa"
-        return "retry_specialist"
+        if state.get("intent") == "summarize":
+            return "retry_summary"
+        if state.get("intent") == "graph_query":
+            return "retry_graph"
+        if state.get("intent") == "statistics":
+            return "retry_data"
+        return "retry_compliance"
 
     def _checkpoint_payload(self, state: dict) -> dict:
         return {
@@ -417,6 +432,7 @@ class LangGraphRuntimeRunner:
             "session_id": state.get("session_id"),
             "search_type": state.get("search_type"),
             "selected_agent": state.get("selected_agent"),
+            "task_mode": state.get("task_mode"),
             "agent_used": state.get("agent_used"),
             "retrieval_sufficient": state.get("retrieval_sufficient"),
             "critic_approved": state.get("critic_approved"),
@@ -425,7 +441,9 @@ class LangGraphRuntimeRunner:
             "warnings": state.get("warnings", []),
             "citations": state.get("citations", []),
             "retrieved_docs": state.get("retrieved_docs", []),
+            "evidence_pack": state.get("evidence_pack", {}),
             "messages": state.get("messages", []),
+            "conversation_state": state.get("conversation_state", {}),
             "answer_preview": (state.get("answer") or "")[:500],
             "answer": state.get("answer") or "",
         }

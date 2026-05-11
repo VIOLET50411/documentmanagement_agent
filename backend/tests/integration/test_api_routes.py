@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import sys
@@ -24,6 +24,7 @@ class DummyDB:
     def __init__(self, *, scalar_value=None, execute_value=None):
         self.scalar_value = scalar_value
         self.execute_value = execute_value
+        self.deleted_items: list[object] = []
 
     async def execute(self, *_args, **_kwargs):
         return self.execute_value
@@ -37,6 +38,10 @@ class DummyDB:
     def add(self, item):
         if getattr(item, "id", None) is None:
             item.id = str(uuid.uuid4())
+        return None
+
+    async def delete(self, item):
+        self.deleted_items.append(item)
         return None
 
     async def commit(self):
@@ -132,8 +137,8 @@ def test_format_history_message_appends_citation_titles():
 
     payload = _format_history_message(item)
 
-    assert payload["role"] == "assistant"
     assert "[参考文档: 差旅报销制度、财务审批规范]" in payload["content"]
+    assert payload["role"] == "assistant"
 
 
 @pytest.fixture
@@ -229,6 +234,67 @@ async def test_me_route_uses_dependency_override(api_client: AsyncClient):
     assert payload["username"] == "admin_demo"
     assert payload["tenant_id"] == "tenant-1"
     assert payload["email_verified"] is True
+
+
+@pytest.mark.asyncio
+async def test_chat_sessions_route_returns_recent_threads(api_client: AsyncClient):
+    from app.models.db.session import ChatSession
+    from app.dependencies import get_db
+
+    current_user = SimpleNamespace(id="user-1", username="admin_demo", role="ADMIN", tenant_id="tenant-1")
+    session_a = ChatSession(id="thread-1", user_id="user-1", tenant_id="tenant-1", title="差旅报销怎么走")
+    session_a.created_at = datetime(2026, 5, 10, 10, 0, tzinfo=timezone.utc)
+    session_a.updated_at = datetime(2026, 5, 10, 10, 5, tzinfo=timezone.utc)
+    session_b = ChatSession(id="thread-2", user_id="user-1", tenant_id="tenant-1", title="预算报表怎么查")
+    session_b.created_at = datetime(2026, 5, 11, 9, 0, tzinfo=timezone.utc)
+    session_b.updated_at = datetime(2026, 5, 11, 9, 30, tzinfo=timezone.utc)
+    execute_value = SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [session_b, session_a]))
+
+    async def override_current_user():
+        return current_user
+
+    async def override_db():
+        yield DummyDB(execute_value=execute_value)
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_db] = override_db
+
+    response = await api_client.get("/api/v1/chat/sessions")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [item["id"] for item in payload["items"]] == ["thread-2", "thread-1"]
+    assert payload["items"][0]["title"] == "预算报表怎么查"
+
+
+@pytest.mark.asyncio
+async def test_delete_chat_session_route_removes_session_and_messages(api_client: AsyncClient):
+    from app.models.db.session import ChatMessage, ChatSession
+    from app.dependencies import get_db
+
+    current_user = SimpleNamespace(id="user-1", username="admin_demo", role="ADMIN", tenant_id="tenant-1")
+    session = ChatSession(id="thread-1", user_id="user-1", tenant_id="tenant-1", title="待删除会话")
+    message_a = ChatMessage(id="msg-1", session_id="thread-1", role="user", content="问题")
+    message_b = ChatMessage(id="msg-2", session_id="thread-1", role="assistant", content="回答")
+    execute_value = SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [message_a, message_b]))
+    dummy_db = DummyDB(scalar_value=session, execute_value=execute_value)
+
+    async def override_current_user():
+        return current_user
+
+    async def override_db():
+        yield dummy_db
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    app.dependency_overrides[get_db] = override_db
+
+    response = await api_client.delete("/api/v1/chat/sessions/thread-1")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["deleted"] is True
+    assert payload["thread_id"] == "thread-1"
+    assert dummy_db.deleted_items == [message_a, message_b, session]
 
 
 @pytest.mark.asyncio
@@ -346,7 +412,7 @@ async def test_chat_replay_route_falls_back_to_checkpoint_resume(api_client: Asy
                 "event_id": "evt-r1",
                 "sequence_num": 1,
                 "source": "agent_runtime_v2_resume",
-                "msg": "已从检查点恢复",
+                "msg": "宸蹭粠妫€鏌ョ偣鎭㈠",
             }
             yield {
                 "status": "done",
@@ -361,7 +427,7 @@ async def test_chat_replay_route_falls_back_to_checkpoint_resume(api_client: Asy
 
     class DummyMasker:
         def mask(self, text):
-            assert text == "恢复会话"
+            assert text == "鎭㈠浼氳瘽"
             return "[MASKED]", {"[PHONE_1]": "13800138000"}
 
         def restore(self, text, mapping):
@@ -421,7 +487,7 @@ async def test_chat_replay_route_falls_back_to_checkpoint_resume(api_client: Asy
     async with api_client.stream(
         "POST",
         f"/api/v1/chat/stream?resume_trace_id={trace_id}&last_sequence=0",
-        json={"message": "恢复会话", "thread_id": "thread-1", "search_type": "hybrid"},
+        json={"message": "鎭㈠浼氳瘽", "thread_id": "thread-1", "search_type": "hybrid"},
     ) as response:
         assert response.status_code == 200
         body = ""
@@ -1381,7 +1447,7 @@ async def test_admin_gap_report_route_includes_blocker_summaries(api_client: Asy
                 {"id": "wechat_push_provider_ready", "scope": "external", "provider": "wechat"},
             ],
             "internal_blockers": [],
-            "notes": ["当前只剩外部 provider 凭据待补齐。"],
+            "notes": ["当前仅剩外部 provider 凭据待补齐。"],
         }
 
     async def fake_health(self, *, tenant_id: str):
@@ -2257,8 +2323,8 @@ async def test_ws_handle_chat_message_audits_guard_decisions(monkeypatch):
             pass
 
         async def run(self, _request, **_kwargs):
-            yield {"status": "thinking", "msg": "正在分析"}
-            yield {"status": "done", "answer": "制度要点总结", "citations": [], "trace_id": "trace-ws-1"}
+            yield {"status": "thinking", "msg": "姝ｅ湪鍒嗘瀽"}
+            yield {"status": "done", "answer": "鍒跺害瑕佺偣鎬荤粨", "citations": [], "trace_id": "trace-ws-1"}
 
     class DummyMasker:
         def mask(self, text):

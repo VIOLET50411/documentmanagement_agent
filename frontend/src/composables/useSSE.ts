@@ -30,12 +30,13 @@ export function useSSE() {
 
   async function sendMessage(message: string, threadId: string | null = null, modelName: string | null = null) {
     error.value = null
+    const targetThreadId = threadId || chatStore.createSession().id
     chatStore.setStreamState("thinking", "正在理解您的问题...")
     chatStore.addMessage({ role: "user", content: message, citations: [] })
     chatStore.addMessage({ role: "assistant", content: "", citations: [] })
 
     try {
-      const response = await chatApi.streamChat(message, threadId, modelName)
+      const response = await chatApi.streamChat(message, targetThreadId, modelName)
       if (!response.ok || !response.body) throw new Error(`SSE request failed: ${response.status}`)
 
       const reader = response.body.getReader()
@@ -111,6 +112,7 @@ export function useSSE() {
         }
         chatStore.setLastAssistantMeta({ id: event.message_id, citations: event.citations || [] })
         chatStore.ensureSessionById(event.thread_id)
+        void chatStore.loadSessions().catch(() => {})
         chatStore.setStreamState("done")
         break
     }

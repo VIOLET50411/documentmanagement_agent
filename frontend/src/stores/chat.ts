@@ -1,4 +1,4 @@
-﻿import { defineStore } from "pinia"
+import { defineStore } from "pinia"
 import { computed, ref, type Ref } from "vue"
 import { chatApi } from "@/api/chat"
 import type { ChatCitation } from "@/api/schemas"
@@ -31,6 +31,8 @@ export interface ChatRuntimeEvent {
   fallbackReason?: string | null
 }
 
+const ACTIVE_SESSION_STORAGE_KEY = "docmind.chat.activeSessionId"
+
 export const useChatStore = defineStore("chat", () => {
   const sessions: Ref<ChatSession[]> = ref([])
   const activeSessionId = ref<string | null>(null)
@@ -39,13 +41,35 @@ export const useChatStore = defineStore("chat", () => {
   const isStreaming = ref(false)
   const streamStatus = ref("")
   const streamStatusMsg = ref("")
+  const initialized = ref(false)
 
   const activeSession = computed(() => sessions.value.find((session) => session.id === activeSessionId.value) ?? null)
+
+  function canUseStorage() {
+    return typeof window !== "undefined" && typeof window.localStorage !== "undefined"
+  }
+
+  function saveActiveSessionId(sessionId: string | null) {
+    if (!canUseStorage()) return
+    if (sessionId) {
+      window.localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, sessionId)
+    } else {
+      window.localStorage.removeItem(ACTIVE_SESSION_STORAGE_KEY)
+    }
+  }
+
+  function loadStoredActiveSessionId() {
+    if (!canUseStorage()) return null
+    return window.localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY)
+  }
 
   function formatSessionTitle(content: string) {
     const normalized = content.replace(/\s+/g, " ").trim()
     if (!normalized) return "新对话"
-    return normalized.length > 28 ? `${normalized.slice(0, 28)}…` : normalized
+    const firstChunk = normalized.split(/[。！？\n]/).map((item) => item.trim()).find(Boolean) || normalized
+    const compact = firstChunk.replace(/^[#>*\-\d.\s]+/, "").trim()
+    const title = compact || normalized
+    return title.length > 24 ? `${title.slice(0, 24)}…` : title
   }
 
   function touchActiveSession(content?: string) {
@@ -59,12 +83,20 @@ export const useChatStore = defineStore("chat", () => {
     sessions.value = [...sessions.value].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
   }
 
+  function createSessionId() {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID()
+    }
+    return `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
+  }
+
   function createSession(): ChatSession {
     const now = new Date().toISOString()
-    const id = Date.now().toString()
+    const id = createSessionId()
     const session: ChatSession = { id, title: "新对话", createdAt: now, updatedAt: now }
-    sessions.value.unshift(session)
+    sessions.value = [session, ...sessions.value.filter((item) => item.id !== id)]
     activeSessionId.value = id
+    saveActiveSessionId(id)
     messages.value = []
     runtimeEvents.value = []
     return session
@@ -72,6 +104,7 @@ export const useChatStore = defineStore("chat", () => {
 
   async function setActiveSession(sessionId: string) {
     activeSessionId.value = sessionId
+    saveActiveSessionId(sessionId)
     messages.value = []
     runtimeEvents.value = []
     try {
@@ -89,18 +122,29 @@ export const useChatStore = defineStore("chat", () => {
     touchActiveSession()
   }
 
-  function deleteSession(sessionId: string) {
+  async function deleteSession(sessionId: string) {
+    try {
+      await chatApi.deleteSession(sessionId)
+    } catch {
+      // Keep local state consistent even if backend deletion fails.
+    }
     sessions.value = sessions.value.filter((session) => session.id !== sessionId)
     if (activeSessionId.value === sessionId) {
-      activeSessionId.value = sessions.value[0]?.id || null
-      messages.value = []
-      runtimeEvents.value = []
+      const nextSessionId = sessions.value[0]?.id || null
+      if (nextSessionId) {
+        await setActiveSession(nextSessionId)
+      } else {
+        activeSessionId.value = null
+        saveActiveSessionId(null)
+        messages.value = []
+        runtimeEvents.value = []
+      }
     }
   }
 
   function addMessage(message: Omit<ChatMessage, "id" | "timestamp"> & Partial<Pick<ChatMessage, "id" | "timestamp">>) {
     messages.value.push({
-      id: message.id || Date.now().toString(),
+      id: message.id || createSessionId(),
       role: message.role,
       content: message.content,
       citations: message.citations || [],
@@ -201,7 +245,38 @@ export const useChatStore = defineStore("chat", () => {
       sessions.value.unshift({ id: sessionId, title: "新对话", createdAt: now, updatedAt: now })
     }
     activeSessionId.value = sessionId
+    saveActiveSessionId(sessionId)
     touchActiveSession()
+  }
+
+  async function loadSessions() {
+    const res = await chatApi.getSessions()
+    sessions.value = res.items.map((item) => ({
+      id: item.id,
+      title: item.title || "新对话",
+      createdAt: item.created_at,
+      updatedAt: item.updated_at,
+    }))
+  }
+
+  async function initialize() {
+    if (initialized.value) return
+    try {
+      await loadSessions()
+      const storedId = loadStoredActiveSessionId()
+      const firstAvailableId = sessions.value[0]?.id || null
+      const nextSessionId = storedId && sessions.value.some((item) => item.id === storedId) ? storedId : firstAvailableId
+      if (nextSessionId) {
+        await setActiveSession(nextSessionId)
+      } else {
+        activeSessionId.value = null
+        saveActiveSessionId(null)
+        messages.value = []
+        runtimeEvents.value = []
+      }
+    } finally {
+      initialized.value = true
+    }
   }
 
   return {
@@ -212,7 +287,10 @@ export const useChatStore = defineStore("chat", () => {
     isStreaming,
     streamStatus,
     streamStatusMsg,
+    initialized,
     activeSession,
+    initialize,
+    loadSessions,
     createSession,
     setActiveSession,
     deleteSession,

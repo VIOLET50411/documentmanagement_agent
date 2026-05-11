@@ -16,6 +16,7 @@ class ComplianceAgent:
     """Specialist agent for regulatory and policy document Q&A."""
 
     async def run(self, state: dict) -> dict:
+        from app.agent.nodes.evidence_pack import build_evidence_pack
         from app.agent.nodes.retriever import _normalize_retrieved_results, resolve_retrieval_plan
         from app.retrieval.hybrid_searcher import HybridSearcher
 
@@ -29,20 +30,31 @@ class ComplianceAgent:
             search_type=plan["search_type"],
             db=state["db"],
         )
-        results = _normalize_retrieved_results(searcher, query=query, results=results, plan=plan)
+        results = _normalize_retrieved_results(
+            searcher,
+            query=query,
+            results=results,
+            plan=plan,
+            conversation_state=state.get("conversation_state"),
+        )
 
         state["retrieved_docs"] = results
         state["retrieval_plan"] = plan
         state["citations"] = self._build_citations(results)
+        evidence_pack = build_evidence_pack(results, query=query)
+        state["evidence_pack"] = evidence_pack
+        task_mode = str(state.get("task_mode") or "qa")
 
         if not results:
             state["answer"] = "当前权限范围内未检索到可直接支撑该问题的文档内容。请补充文档名称、年份或部门范围后重试。"
         else:
-            llm_answer = await self._try_llm_answer(state, query, results)
+            llm_answer = await self._try_llm_answer(state, query, results, evidence_pack=evidence_pack, task_mode=task_mode)
             if llm_answer:
                 state["answer"] = llm_answer
             elif state.get("intent") == "compare":
                 state["answer"] = self._build_compare_answer(query, results)
+            elif task_mode == "process":
+                state["answer"] = self._build_process_answer(query, results)
             else:
                 state["answer"] = self._build_qa_answer(query, results)
 
@@ -62,23 +74,34 @@ class ComplianceAgent:
             for item in results
         ]
 
-    async def _try_llm_answer(self, state: dict, query: str, results: list[dict]) -> str | None:
+    async def _try_llm_answer(self, state: dict, query: str, results: list[dict], *, evidence_pack: dict, task_mode: str) -> str | None:
         context_lines = []
-        for idx, item in enumerate(results[:5], start=1):
+        salient_points = evidence_pack.get("salient_points") if isinstance(evidence_pack.get("salient_points"), list) else []
+        source_items = salient_points[:5] if salient_points else results[:5]
+        for idx, item in enumerate(source_items, start=1):
             title = item.get("document_title") or "未知文档"
             section = item.get("section_title") or "未命名章节"
             snippet = (item.get("snippet") or "").strip()[:300]
-            context_lines.append(f"[证据{idx}] 《{title}》/ {section}\n{snippet}")
+            category = item.get("category")
+            context_lines.append(f"[证据{idx}] 《{title}》 {section}" + (f" / {category}" if category else "") + f"\n{snippet}")
+
+        conversation_state = state.get("conversation_state") if isinstance(state.get("conversation_state"), dict) else {}
 
         prompt = (
             f"## 用户问题\n{query}\n\n"
+            f"## 任务模式\n{task_mode}\n\n"
+            f"## 对话上下文\n"
+            f"主题：{conversation_state.get('subject') or '未识别'}\n"
+            f"追问：{'是' if conversation_state.get('is_follow_up') else '否'}\n"
+            f"版本：{conversation_state.get('version_scope') or '未指定'}\n\n"
             f"## 文档证据\n{chr(10).join(context_lines)}\n\n"
             "## 回答要求\n"
             "请用结构化简体中文回答：\n"
             "1. 先给出简明结论；\n"
             "2. 再用 2-4 条编号列表展开关键要点；\n"
-            "3. 在对应要点后标注引用来源，格式为 [来源: 文档标题]；\n"
-            "4. 不要编造证据之外的信息。"
+            "3. 如果是流程题，要按步骤组织；如果是提取题，要列出字段、条件和边界；\n"
+            "4. 在对应要点后标注引用来源，格式为 [来源: 文档标题]；\n"
+            "5. 不要编造证据之外的信息。"
         )
         answer = await LLMService().generate(
             system_prompt=(
@@ -121,6 +144,37 @@ class ComplianceAgent:
         ]
         return "\n".join(lines).strip()
 
+    def _build_process_answer(self, query: str, results: list[dict]) -> str:
+        steps = []
+        seen = set()
+        for item in results[:4]:
+            snippet = self._normalize_text(item.get("snippet", ""))
+            if not snippet or snippet in seen:
+                continue
+            seen.add(snippet)
+            steps.append((self._format_source(item), snippet))
+        lines = [
+            f"## 关于“{query}”的流程说明",
+            "",
+            f"**流程结论：** {steps[0][1] if steps else '当前已命中相关文档，但暂未提取到清晰流程证据。'}",
+            "",
+            "### 关键步骤 / 依据",
+        ]
+        if steps:
+            for index, (source, snippet) in enumerate(steps, start=1):
+                lines.append(f"{index}. {snippet}")
+                lines.append(f"   - 来源：{source}")
+        else:
+            lines.append("1. 当前证据不足以还原稳定流程，请补充更具体的问题或章节。")
+        lines.extend(
+            [
+                "",
+                "### 建议追问",
+                "1. 如需落地执行，可继续追问每一步的责任人、所需材料和例外情况。",
+            ]
+        )
+        return "\n".join(lines).strip()
+
     def _build_compare_answer(self, query: str, results: list[dict]) -> str:
         grouped = self._group_by_document(results)
         if len(grouped) < 2:
@@ -133,7 +187,7 @@ class ComplianceAgent:
                     "",
                     "### 待补充信息",
                     "1. 请补充另一份制度的名称、年份或版本号。",
-                    "2. 若需要做同制度新旧版本对比，请明确“上一版/2023版/2024版”等范围。",
+                    "2. 若需要做同制度新旧版本对比，请明确“上一版、2023版、2024版”等范围。",
                 ]
             ).strip()
 
@@ -152,7 +206,7 @@ class ComplianceAgent:
             [
                 f"## 对比分析：《{left_title}》 vs 《{right_title}》",
                 "",
-                f"**对比结论：** 两份文档在关注重点上存在差异，建议结合具体业务场景进一步确认适用版本。",
+                "**对比结论：** 两份文档在关注重点上存在差异，建议结合具体业务场景进一步确认适用版本。",
                 "",
                 "| 主题 | 文档 A | 文档 B | 差异说明 |",
                 "| --- | --- | --- | --- |",
@@ -287,8 +341,8 @@ class ComplianceAgent:
         section = item.get("section_title") or "未命名章节"
         page = item.get("page_number")
         if page is None:
-            return f"《{title}》/ {section}"
-        return f"《{title}》/ 第 {page} 页 / {section}"
+            return f"《{title}》 / {section}"
+        return f"《{title}》 / 第 {page} 页 / {section}"
 
     def _normalize_text(self, text: str) -> str:
         snippet = " ".join((text or "").split())

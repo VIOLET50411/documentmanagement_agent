@@ -1,4 +1,4 @@
-"""Critic agent: LLM-based answer review with deterministic fallback."""
+﻿"""Critic agent: LLM-based answer review with deterministic fallback."""
 
 from __future__ import annotations
 
@@ -51,8 +51,7 @@ class CriticAgent:
             try:
                 query = state.get("rewritten_query") or state.get("query") or ""
                 evidence_snippets = "\n".join(
-                    f"- {c.get('doc_title', '未知文档')}: {c.get('snippet', '')[:200]}"
-                    for c in citations[:5]
+                    f"- {c.get('doc_title', '未知文档')}: {c.get('snippet', '')[:200]}" for c in citations[:5]
                 )
                 user_prompt = (
                     f"用户问题：{query}\n\n"

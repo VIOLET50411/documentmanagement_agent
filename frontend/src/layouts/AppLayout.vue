@@ -200,7 +200,7 @@ const navItems: NavItem[] = [
 const visibleNavItems = computed(() => navItems.filter((item) => !item.adminOnly || user.value?.role === 'ADMIN'))
 
 const pageTitle = computed(() => {
-  if (route.name === 'Chat' && chatStore.messages.length > 0) {
+  if (route.name === 'Chat') {
     return chatStore.activeSession?.title || '当前对话'
   }
   const routeLabels: Record<string, string> = {
@@ -304,6 +304,7 @@ function handleGlobalClick() {
 
 onMounted(() => {
   window.addEventListener('click', handleGlobalClick)
+  void chatStore.initialize()
 })
 
 onBeforeUnmount(() => {

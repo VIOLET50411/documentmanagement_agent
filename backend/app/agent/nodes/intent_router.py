@@ -1,4 +1,4 @@
-"""Deterministic intent router for runtime graph execution."""
+﻿"""Deterministic intent router for runtime graph execution."""
 
 from __future__ import annotations
 
@@ -41,6 +41,8 @@ SUMMARY_KEYWORDS = (
     "概括",
     "梳理",
     "总结一下",
+    "主要内容",
+    "要点",
     "summary",
     "summarize",
 )
@@ -80,6 +82,7 @@ async def intent_router(state: dict) -> dict:
         intent = "qa"
 
     state["intent"] = intent
+    state["task_mode"] = _derive_task_mode(query, intent)
     return state
 
 
@@ -101,3 +104,22 @@ def _looks_like_summary(query: str, lowered: str) -> bool:
 
 def _looks_like_graph(query: str, lowered: str) -> bool:
     return any(keyword in query or keyword in lowered for keyword in GRAPH_KEYWORDS)
+
+
+def _derive_task_mode(query: str, intent: str) -> str:
+    normalized = str(query or "").strip()
+    if intent == "compare":
+        return "compare"
+    if intent == "summarize":
+        return "summary"
+    if intent == "statistics":
+        return "extract"
+    if intent == "graph_query":
+        return "process"
+    if any(token in normalized for token in ("起草", "撰写", "写一份", "生成一份", "草拟", "写一个")):
+        return "draft"
+    if any(token in normalized for token in ("流程", "步骤", "怎么走", "如何办理", "审批链", "链路")):
+        return "process"
+    if any(token in normalized for token in ("材料", "条件", "金额", "标准", "负责人", "依据", "适用范围")):
+        return "extract"
+    return "qa"
