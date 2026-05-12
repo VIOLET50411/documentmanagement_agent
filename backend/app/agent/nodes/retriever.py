@@ -297,9 +297,9 @@ def _chunk_priority(item: dict, *, query: str, prefer_summary_details: bool) -> 
         if any(marker in snippet for marker in ("责任", "处分", "附则", "负责解释", "自印发之日起执行")):
             priority -= 7
         if "关于印发" in snippet or "特此通知" in snippet:
-            priority -= 5
+            priority -= 8
         if page_number == 1:
-            priority -= 3
+            priority -= 4
         if page_number >= 10:
             priority -= 2
         if 2 <= page_number <= 8:

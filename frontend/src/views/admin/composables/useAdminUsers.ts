@@ -31,7 +31,7 @@ export function useAdminUsers() {
       department: "",
       level: 2,
       expires_hours: 72,
-    }
+    },
   })
 
   async function loadUsers() {
@@ -208,6 +208,6 @@ export function useAdminUsers() {
     resendInvitation,
     revokeInvitation,
     invitationStatusLabel,
-    formatDate
+    formatDate,
   }
 }

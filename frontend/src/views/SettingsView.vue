@@ -1,6 +1,5 @@
 <template>
   <div class="settings-page">
-
     <div class="settings-shell">
       <aside class="settings-nav">
         <div class="settings-nav-card">
@@ -75,7 +74,7 @@
               <div class="toggle-item">
                 <div>
                   <strong>对话状态提示</strong>
-                  <p>在搜索、阅读、生成等阶段切换时显示简洁状态反馈。</p>
+                  <p>在检索、阅读、生成等阶段切换时显示简洁状态反馈。</p>
                 </div>
                 <button class="toggle-switch" :class="{ on: statusHintsEnabled }" @click="statusHintsEnabled = !statusHintsEnabled">
                   <span></span>
@@ -94,11 +93,11 @@
 
           <section class="settings-panel">
             <div class="info-list">
-              <div class="info-row"><span>登录账号</span><strong>{{ user?.username || '-' }}</strong></div>
+              <div class="info-row"><span>登录账号</span><strong>{{ user?.username || "-" }}</strong></div>
               <div class="info-row"><span>角色</span><strong>{{ roleLabel(user?.role) }}</strong></div>
-              <div class="info-row"><span>邮箱</span><strong>{{ user?.email || '-' }}</strong></div>
-              <div class="info-row"><span>邮箱状态</span><strong>{{ user?.email_verified ? '已验证' : '未验证' }}</strong></div>
-              <div class="info-row"><span>租户 ID</span><strong>{{ user?.tenant_id || '-' }}</strong></div>
+              <div class="info-row"><span>邮箱</span><strong>{{ user?.email || "-" }}</strong></div>
+              <div class="info-row"><span>邮箱状态</span><strong>{{ user?.email_verified ? "已验证" : "未验证" }}</strong></div>
+              <div class="info-row"><span>租户 ID</span><strong>{{ user?.tenant_id || "-" }}</strong></div>
             </div>
           </section>
         </div>
@@ -133,8 +132,8 @@
             <label class="field">
               <span>附加要求</span>
               <select class="input" v-model="responseRequirement">
-                <option value="default">优先给结论，提供引用来源</option>
-                <option value="detailed">详细展开，按步骤解答</option>
+                <option value="default">优先给结论，并附带引用来源</option>
+                <option value="detailed">详细展开，按步骤说明</option>
                 <option value="concise">极简模式，仅回答核心内容</option>
               </select>
             </label>
@@ -198,18 +197,18 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { storeToRefs } from 'pinia'
-import { useRoute, useRouter } from 'vue-router'
-import SettingsAdminPanels from '@/components/settings/SettingsAdminPanels.vue'
-import SettingsDevicesPanel from '@/components/settings/SettingsDevicesPanel.vue'
-import SettingsEventsPanel from '@/components/settings/SettingsEventsPanel.vue'
-import { useAuthStore } from '@/stores/auth'
-import { useNotificationsStore } from '@/stores/notifications'
-import { useSettingsStore } from '@/stores/settings'
-import { useThemeStore } from '@/stores/theme'
+import { computed, onMounted, ref, watch } from "vue"
+import { storeToRefs } from "pinia"
+import { useRoute, useRouter } from "vue-router"
+import SettingsAdminPanels from "@/components/settings/SettingsAdminPanels.vue"
+import SettingsDevicesPanel from "@/components/settings/SettingsDevicesPanel.vue"
+import SettingsEventsPanel from "@/components/settings/SettingsEventsPanel.vue"
+import { useAuthStore } from "@/stores/auth"
+import { useNotificationsStore } from "@/stores/notifications"
+import { useSettingsStore } from "@/stores/settings"
+import { useThemeStore } from "@/stores/theme"
 
-const responseRequirement = ref('default')
+const responseRequirement = ref("default")
 
 const route = useRoute()
 const router = useRouter()
@@ -218,7 +217,7 @@ const notificationsStore = useNotificationsStore()
 const settingsStore = useSettingsStore()
 const themeStore = useThemeStore()
 const user = computed(() => authStore.user)
-const isAdmin = computed(() => user.value?.role === 'ADMIN')
+const isAdmin = computed(() => user.value?.role === "ADMIN")
 
 const {
   activeSection,
@@ -258,27 +257,27 @@ const {
 } = storeToRefs(notificationsStore)
 
 const sections = [
-  { key: 'general', label: '通用', description: '外观、资料与提示' },
-  { key: 'account', label: '账号', description: '身份、角色与租户' },
-  { key: 'preferences', label: '偏好', description: '回答风格与语言' },
-  { key: 'models', label: '模型策略', description: '模型路由与检索完整性' },
-  { key: 'runtime', label: '运行时', description: '恢复、断连与后端状态' },
-  { key: 'security', label: '安全', description: '策略、审计与 fail-closed' },
-  { key: 'mobile', label: '移动端', description: 'OAuth、推送与接入就绪度' },
-  { key: 'devices', label: '设备', description: '推送登记与状态' },
-  { key: 'events', label: '通知', description: '最近推送事件' },
+  { key: "general", label: "通用", description: "外观、资料与提示" },
+  { key: "account", label: "账号", description: "身份、角色与租户" },
+  { key: "preferences", label: "偏好", description: "回答风格与语言" },
+  { key: "models", label: "模型策略", description: "模型路由与检索完整性" },
+  { key: "runtime", label: "运行时", description: "恢复、断连与后端状态" },
+  { key: "security", label: "安全", description: "策略、审计与 fail-closed" },
+  { key: "mobile", label: "移动端", description: "OAuth、推送与接入就绪度" },
+  { key: "devices", label: "设备", description: "推送登记与状态" },
+  { key: "events", label: "通知", description: "最近推送事件" },
 ] as const
 
-type SectionKey = (typeof sections)[number]['key']
+type SectionKey = (typeof sections)[number]["key"]
 
 watch(
   () => route.query.section,
   (section) => {
-    if (typeof section === 'string' && sections.some((item) => item.key === section)) {
+    if (typeof section === "string" && sections.some((item) => item.key === section)) {
       settingsStore.setSection(section as SectionKey)
     }
   },
-  { immediate: true }
+  { immediate: true },
 )
 
 watch(responseStyle, (value) => settingsStore.setResponseStyle(value))
@@ -293,23 +292,23 @@ function setSection(section: string) {
 
 function roleLabel(role?: string) {
   const map: Record<string, string> = {
-    ADMIN: '管理员',
-    MANAGER: '经理',
-    EMPLOYEE: '员工',
-    VIEWER: '访客',
+    ADMIN: "管理员",
+    MANAGER: "经理",
+    EMPLOYEE: "员工",
+    VIEWER: "访客",
   }
-  return role ? map[role] || role : '-'
+  return role ? map[role] || role : "-"
 }
 
 function formatDate(value?: string | null) {
-  if (!value) return '-'
+  if (!value) return "-"
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`
 }
 
 function formatPercent(value?: number | null) {
-  if (value === null || value === undefined) return '-'
+  if (value === null || value === undefined) return "-"
   return `${(Number(value) * 100).toFixed(1)}%`
 }
 
@@ -362,11 +361,6 @@ onMounted(async () => {
 .settings-shell {
   max-width: 1440px;
   margin: 0 auto;
-}
-
-
-
-.settings-shell {
   display: grid;
   grid-template-columns: 200px minmax(0, 1fr);
   gap: 48px;
@@ -538,56 +532,52 @@ onMounted(async () => {
 .theme-dark-preview {
   background:
     linear-gradient(180deg, rgba(33, 29, 24, 0.98), rgba(23, 19, 15, 0.98)),
-    linear-gradient(90deg, rgba(78, 67, 54, 0.78) 0 28%, rgba(255, 255, 255, 0) 28%);
+    linear-gradient(90deg, rgba(94, 80, 66, 0.45) 0 28%, rgba(255, 255, 255, 0) 28%);
 }
 
 .toggle-list {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
+  display: grid;
+  gap: 16px;
 }
 
 .toggle-item {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 20px;
-  align-items: center;
-  padding-bottom: 18px;
-  border-bottom: 1px solid var(--border-color-subtle);
+  padding: 18px 0;
+  border-top: 1px solid var(--border-color-subtle);
 }
 
-.toggle-item:last-child {
-  padding-bottom: 0;
-  border-bottom: none;
-}
-
-.toggle-item strong {
-  display: block;
-  font-size: 1rem;
+.toggle-item:first-child {
+  border-top: none;
 }
 
 .toggle-item p {
-  color: var(--text-secondary);
   margin-top: 6px;
+  color: var(--text-secondary);
 }
 
 .toggle-switch {
   width: 52px;
   height: 30px;
-  border: 1px solid var(--border-color);
+  border: none;
   border-radius: 999px;
-  background: rgba(61, 56, 51, 0.08);
-  padding: 2px;
-  cursor: pointer;
+  background: var(--bg-surface-hover);
+  position: relative;
+  flex-shrink: 0;
+  transition: background-color var(--transition-fast);
 }
 
 .toggle-switch span {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
   background: #fff;
-  display: block;
-  transition: all var(--transition-fast);
+  transition: transform var(--transition-fast);
 }
 
 .toggle-switch.on {
@@ -600,14 +590,14 @@ onMounted(async () => {
 
 .info-list {
   display: grid;
-  gap: 14px;
+  gap: 12px;
 }
 
 .info-row {
   display: flex;
   justify-content: space-between;
-  gap: 20px;
-  padding-bottom: 14px;
+  gap: 14px;
+  padding: 14px 0;
   border-bottom: 1px solid var(--border-color-subtle);
 }
 
@@ -616,65 +606,21 @@ onMounted(async () => {
 }
 
 @media (max-width: 1120px) {
-  .panel-grid,
-  .theme-cards {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 980px) {
-
   .settings-shell {
     grid-template-columns: 1fr;
-    gap: 28px;
+    gap: 24px;
   }
 
   .settings-nav {
     position: static;
-    display: flex;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    padding-bottom: 12px;
-    margin-bottom: -12px; /* compensate for padding */
-    gap: 8px;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none; /* Firefox */
-  }
-
-  .settings-nav::-webkit-scrollbar {
-    display: none; /* Chrome/Safari */
-  }
-
-  .settings-tab {
-    white-space: nowrap;
-    padding: 8px 16px;
-    border-radius: 999px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border-color);
-  }
-
-  .settings-tab.active {
-    background: var(--text-primary);
-    color: var(--bg-body);
-    border-color: var(--text-primary);
-  }
-
-  .settings-tab + .settings-tab {
-    margin-top: 0;
-  }
-
-  .form-grid {
-    grid-template-columns: 1fr;
   }
 }
 
-@media (max-width: 640px) {
-  .settings-page {
-    padding-inline: 16px;
-  }
-
-  .block-head {
-    flex-direction: column;
+@media (max-width: 900px) {
+  .panel-grid,
+  .form-grid,
+  .theme-cards {
+    grid-template-columns: 1fr;
   }
 }
 </style>

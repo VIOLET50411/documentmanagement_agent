@@ -1,6 +1,5 @@
 <template>
   <div class="search-page workbench-page">
-
     <section class="search-shell card-glass">
       <div class="search-bar">
         <input v-model="query" class="input search-input" placeholder="输入检索关键词或问题" @keydown.enter="doSearch" />
@@ -11,7 +10,7 @@
           <option value="graph">图谱检索</option>
         </select>
         <button class="btn btn-primary" :disabled="!query.trim() || isLoading" @click="doSearch">
-          {{ isLoading ? '检索中…' : '开始检索' }}
+          {{ isLoading ? "检索中..." : "开始检索" }}
         </button>
       </div>
 
@@ -20,11 +19,11 @@
         <div v-for="(result, idx) in results" :key="idx" class="result-card card animate-fade-in">
           <div class="result-header">
             <span class="result-rank">#{{ idx + 1 }}</span>
-            <span class="result-title">{{ result.doc_title || result.document_title || '未命名文档' }}</span>
+            <span class="result-title">{{ result.doc_title || result.document_title || "未命名文档" }}</span>
             <span class="badge badge-primary">{{ searchTypeLabel }}</span>
             <span class="result-score">得分 {{ Number(result.score || result.rrf_score || 0).toFixed(4) }}</span>
           </div>
-          <p class="result-content">{{ result.snippet || result.content || '暂无摘要内容' }}</p>
+          <p class="result-content">{{ result.snippet || result.content || "暂无摘要内容" }}</p>
           <div class="result-meta">
             <span v-if="result.page_number">页码 {{ result.page_number }}</span>
             <span v-if="result.section_title">章节 {{ result.section_title }}</span>
@@ -87,8 +86,6 @@ async function doSearch() {
   max-width: 1080px;
   margin: 0 auto;
 }
-
-
 
 .search-bar {
   display: grid;

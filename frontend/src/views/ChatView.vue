@@ -21,6 +21,12 @@
           <span>{{ prompt.label }}</span>
         </button>
       </div>
+
+      <div class="capability-strip">
+        <span v-for="item in capabilityChips" :key="item" class="capability-chip">{{ item }}</span>
+      </div>
+
+      <p class="capability-note">{{ capabilityNote }}</p>
     </section>
 
     <section v-else class="conversation-state">
@@ -72,6 +78,8 @@ const followupPlaceholder =
   "\u7ee7\u7eed\u8ffd\u95ee\u3001\u8865\u5145\u6761\u4ef6\uff0c\u6216\u8981\u6c42\u5f15\u7528\u66f4\u7cbe\u786e\u7684\u6bb5\u843d"
 const footerNote =
   "\u56de\u7b54\u4f1a\u4f18\u5148\u9644\u5e26\u5f15\u7528\u3002\u82e5\u8bc1\u636e\u4e0d\u8db3\uff0c\u7cfb\u7edf\u4f1a\u660e\u786e\u63d0\u793a\u7f6e\u4fe1\u5ea6\u548c\u539f\u56e0\u3002"
+const capabilityNote =
+  "当前版本支持知识库检索、结构化摘要、字段提取、流程/对比问答、统计查询与运行轨迹展示；尚未接入本机文件修改或桌面自动化执行。"
 
 const chatStore = useChatStore()
 const { sendMessage } = useSSE()
@@ -101,6 +109,14 @@ const quickPrompts = [
     label: "\u6cbb\u7406\u5efa\u8bae",
     text: "\u8bf7\u4ece\u98ce\u9669\u89c6\u89d2\u7ed9\u51fa\u4e09\u6761\u5e73\u53f0\u6cbb\u7406\u5efa\u8bae\u3002",
   },
+]
+
+const capabilityChips = [
+  "知识检索与引用",
+  "文档摘要与字段提取",
+  "流程 / 对比问答",
+  "统计查询",
+  "工具调用轨迹",
 ]
 
 const hasMessages = computed(() => chatStore.messages.length > 0)
@@ -219,6 +235,33 @@ function retryLastPrompt() {
   background: var(--bg-surface-hover);
   color: var(--text-primary);
   border-color: var(--border-color-strong);
+}
+
+.capability-strip {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.capability-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
+  border: 1px solid var(--border-color-subtle);
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.capability-note {
+  max-width: 760px;
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  line-height: 1.65;
 }
 
 .conversation-state {

@@ -16,7 +16,7 @@ export function useAdminSecurity() {
       action: "",
       result: "",
     },
-    error: ""
+    error: "",
   })
 
   async function loadSecurityEvents(resetPage = true) {
@@ -60,6 +60,6 @@ export function useAdminSecurity() {
     state,
     loadSecurityEvents,
     changeSecurityPage,
-    formatDate
+    formatDate,
   }
 }

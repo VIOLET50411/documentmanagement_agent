@@ -251,7 +251,7 @@ def _extract_reference_titles(text: str) -> list[str]:
         title = raw.strip()
         if title and title not in seen:
             seen.add(title)
-            titles.append(title)
+            titles.append(title if title.startswith("《") and title.endswith("》") else f"《{title.strip('《》')}》")
     return titles
 
 
@@ -275,7 +275,13 @@ def _normalize_titles(titles: list[str]) -> list[str]:
         if not key or key in seen:
             continue
         seen.add(key)
-        ordered.append(f"《{key if '.pdf' in key else normalized.strip('《》')}》" if normalized.startswith("《") or normalized.endswith("》") else normalized)
+        cleaned = normalized.strip("《》")
+        if normalized.startswith("《") or normalized.endswith("》"):
+            ordered.append(f"《{cleaned}》")
+        elif re.search(r"(制度|办法|规定|流程|规范|预算|合同|手册|细则|方案|通知|指引)(?:\.\w+)?$", cleaned):
+            ordered.append(f"《{cleaned}》")
+        else:
+            ordered.append(cleaned)
     return ordered
 
 

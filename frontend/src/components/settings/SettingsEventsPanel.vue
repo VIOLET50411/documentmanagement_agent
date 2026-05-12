@@ -6,7 +6,7 @@
         <p>查看最近的推送记录和文档处理事件。</p>
       </div>
       <button class="btn btn-ghost btn-sm" @click="loadEvents" :disabled="loadingEvents">
-        {{ loadingEvents ? '刷新中...' : '刷新' }}
+        {{ loadingEvents ? "刷新中..." : "刷新" }}
       </button>
     </div>
 
@@ -14,12 +14,12 @@
       <ul v-if="events.length" class="event-list">
         <li v-for="(event, index) in events" :key="`${event.document_id || 'evt'}-${index}`" class="event-item">
           <div class="event-topline">
-            <strong>{{ event.title || '推送事件' }}</strong>
-            <span class="badge badge-primary">{{ event.status || '-' }}</span>
+            <strong>{{ event.title || "推送事件" }}</strong>
+            <span class="badge badge-primary">{{ event.status || "-" }}</span>
           </div>
-          <p class="event-body">{{ event.body || '-' }}</p>
+          <p class="event-body">{{ event.body || "-" }}</p>
           <p class="event-meta">
-            <span>文档：{{ event.document_id || '-' }}</span>
+            <span>文档：{{ event.document_id || "-" }}</span>
             <span>时间：{{ formatDate(event.timestamp) }}</span>
             <span>设备数：{{ event.devices?.length || 0 }}</span>
           </p>

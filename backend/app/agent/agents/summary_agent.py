@@ -337,6 +337,8 @@ class SummaryAgent:
         return normalized
 
     def _summarize_point(self, section: str, snippet: str) -> str:
+        if any(marker in snippet for marker in ("万元", "%", "占", "预算", "收支")) and re.search(r"\d", snippet):
+            return snippet
         compact = self._summarize_faq_snippet(snippet)
         if compact:
             return compact

@@ -1,4 +1,4 @@
-﻿"""Excel/CSV parser with sheet-aware structured output."""
+"""Excel/CSV parser with sheet-aware structured output."""
 
 from __future__ import annotations
 
@@ -41,7 +41,6 @@ class ExcelParser:
             rows = self._extract_rows_from_sheet(worksheet)
             if not rows:
                 continue
-            elements.append(self._build_sheet_overview_element(sheet_name=sheet_name, rows=rows, parser="openpyxl"))
             elements.append(
                 {
                     "type": "table",
@@ -56,6 +55,7 @@ class ExcelParser:
                     },
                 }
             )
+            elements.append(self._build_sheet_overview_element(sheet_name=sheet_name, rows=rows, parser="openpyxl"))
         return elements
 
     def _parse_xlsx_with_pandas(self, path: Path) -> list[dict]:
@@ -78,7 +78,6 @@ class ExcelParser:
             rows.extend([list(map(str, row)) for row in clean_frame.values.tolist()[:500]])
             if len(rows) == 1 and not any(rows[0]):
                 continue
-            elements.append(self._build_sheet_overview_element(sheet_name=sheet_name, rows=rows, parser="pandas"))
             elements.append(
                 {
                     "type": "table",
@@ -92,29 +91,29 @@ class ExcelParser:
                     },
                 }
             )
+            elements.append(self._build_sheet_overview_element(sheet_name=sheet_name, rows=rows, parser="pandas"))
         return elements
 
     def _parse_csv(self, path: Path) -> list[dict]:
         text = self._decode_csv_text(path)
         reader = csv.reader(text.splitlines())
         rows = list(reader)
-
         if not rows:
             return []
-
+        visible_rows = rows[:501]
         return [
-            self._build_sheet_overview_element(sheet_name=path.stem, rows=rows[:501], parser="csv"),
             {
                 "type": "table",
-                "text": self._render_markdown_table(rows[:501]),
+                "text": self._render_markdown_table(visible_rows),
                 "metadata": {
                     "sheet": path.stem,
                     "section_title": path.stem,
                     "row_count": max(len(rows) - 1, 0),
-                    "column_count": max((len(row) for row in rows[:501]), default=0),
+                    "column_count": max((len(row) for row in visible_rows), default=0),
                     "parser": "csv",
                 },
-            }
+            },
+            self._build_sheet_overview_element(sheet_name=path.stem, rows=visible_rows, parser="csv"),
         ]
 
     def _decode_csv_text(self, path: Path) -> str:
@@ -125,10 +124,9 @@ class ExcelParser:
             except UnicodeDecodeError:
                 continue
 
-        candidates = ["gb18030", "gbk"]
         best_text = ""
         best_score = float("-inf")
-        for encoding in candidates:
+        for encoding in ("gb18030", "gbk"):
             try:
                 decoded = raw.decode(encoding)
             except UnicodeDecodeError:
@@ -142,8 +140,6 @@ class ExcelParser:
         return raw.decode("utf-8", errors="replace")
 
     def _score_decoded_text(self, text: str) -> float:
-        if not text:
-            return float("-inf")
         penalty = sum(text.count(marker) for marker in MOJIBAKE_MARKERS)
         cjk = sum(1 for char in text if "\u4e00" <= char <= "\u9fff")
         printable = sum(1 for char in text if char.isprintable())

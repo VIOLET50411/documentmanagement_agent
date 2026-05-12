@@ -65,7 +65,7 @@ async def ensure_bootstrap_state(session_factory: async_sessionmaker) -> None:
 
         if admin is not None:
             defaults = [
-                ("answer_style", "prefer_concise_citations", "优先给出结论，再列出依据与引用。"),
+                ("answer_style", "prefer_citation_first", "优先列出引用依据，再给出结论与要点，使用标准 markdown 换行。"),
                 ("focus_domain", "enterprise_docs", "常用企业管理制度、合规制度、流程规范文档。"),
             ]
             for memory_type, key, value in defaults:

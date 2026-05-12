@@ -5,7 +5,7 @@
         <h2>设备</h2>
       </div>
       <button class="btn btn-ghost btn-sm" @click="loadPushData" :disabled="loadingDevices || loadingEvents || loadingSummary">
-        {{ loadingDevices || loadingEvents || loadingSummary ? '刷新中...' : '刷新' }}
+        {{ loadingDevices || loadingEvents || loadingSummary ? "刷新中..." : "刷新" }}
       </button>
     </div>
 
@@ -14,13 +14,13 @@
       <div class="status-grid">
         <div class="status-card">
           <span>运行环境</span>
-          <strong>{{ isNativeRuntime ? nativePlatformLabel : 'Web 浏览器' }}</strong>
-          <small>{{ isNativeRuntime ? '支持自动注册与心跳续期' : '仅支持手动登记推送设备' }}</small>
+          <strong>{{ isNativeRuntime ? nativePlatformLabel : "Web 浏览器" }}</strong>
+          <small>{{ isNativeRuntime ? "支持自动注册与心跳续期。" : "仅支持手动登记推送设备。" }}</small>
         </div>
         <div class="status-card">
           <span>本地记录</span>
-          <strong>{{ storedPushRegistration ? '已保存' : '未保存' }}</strong>
-          <small>{{ storedPushRegistration ? maskToken(storedPushRegistration.token) : '当前设备尚未保存本地 token' }}</small>
+          <strong>{{ storedPushRegistration ? "已保存" : "未保存" }}</strong>
+          <small>{{ storedPushRegistration ? maskToken(storedPushRegistration.token) : "当前设备尚未保存本地 token" }}</small>
         </div>
         <div class="status-card">
           <span>后端状态</span>
@@ -29,7 +29,7 @@
         </div>
       </div>
 
-      <div class="summary-strip" v-if="deviceSummary">
+      <div v-if="deviceSummary" class="summary-strip">
         <span class="summary-pill">总设备 {{ deviceSummary.total }}</span>
         <span class="summary-pill success">启用 {{ deviceSummary.active }}</span>
         <span class="summary-pill muted">停用 {{ deviceSummary.inactive }}</span>
@@ -41,19 +41,23 @@
 
     <section class="settings-panel">
       <h3>当前设备推送注册</h3>
-      <p class="panel-copy">原生 App 内点击下方按钮，会向系统申请真实设备 token 并自动同步到后端。</p>
+      <p class="panel-copy">在原生 App 内点击下方按钮，会向系统申请真实设备 token，并自动同步到后端。</p>
       <div class="device-actions">
         <button class="btn btn-primary" :disabled="registeringNativePush" @click="registerCurrentDevicePush">
-          {{ registeringNativePush ? '注册中...' : '自动注册当前设备' }}
+          {{ registeringNativePush ? "注册中..." : "自动注册当前设备" }}
         </button>
         <button class="btn btn-ghost" :disabled="heartbeatingNativePush || !storedPushRegistration" @click="heartbeatCurrentDevicePush">
-          {{ heartbeatingNativePush ? '续期中...' : '发送一次心跳' }}
+          {{ heartbeatingNativePush ? "续期中..." : "发送一次心跳" }}
         </button>
-        <button class="btn btn-ghost" :disabled="registeringNativePush || !storedPushRegistration || deviceSummary?.current_token_status !== 'matched_inactive'" @click="registerCurrentDevicePush">
+        <button
+          class="btn btn-ghost"
+          :disabled="registeringNativePush || !storedPushRegistration || deviceSummary?.current_token_status !== 'matched_inactive'"
+          @click="registerCurrentDevicePush"
+        >
           重新绑定当前设备
         </button>
         <span class="helper-text">
-          {{ isNativeRuntime ? `当前运行环境：${nativePlatformLabel}` : '当前不是原生 App 环境，自动注册不可用。' }}
+          {{ isNativeRuntime ? `当前运行环境：${nativePlatformLabel}` : "当前不是原生 App 环境，自动注册不可用。" }}
         </span>
       </div>
       <p v-if="nativePushMessage" class="feedback-message">{{ nativePushMessage }}</p>
@@ -78,7 +82,12 @@
 
         <label class="field span-2">
           <span>设备 Token</span>
-          <textarea v-model="deviceForm.device_token" class="input large-input" rows="3" placeholder="请输入移动端、WebPush 或小程序的真实设备 token"></textarea>
+          <textarea
+            v-model="deviceForm.device_token"
+            class="input large-input"
+            rows="3"
+            placeholder="请输入移动端、WebPush 或小程序的真实设备 token"
+          ></textarea>
         </label>
 
         <label class="field">
@@ -89,7 +98,7 @@
         <div class="field actions">
           <span></span>
           <button class="btn btn-primary" type="submit" :disabled="registering">
-            {{ registering ? '登记中...' : '登记设备' }}
+            {{ registering ? "登记中..." : "登记设备" }}
           </button>
         </div>
       </form>
@@ -114,18 +123,18 @@
         <tbody>
           <tr v-for="device in devices" :key="device.id">
             <td>{{ device.platform }}</td>
-            <td>{{ device.device_name || '-' }}</td>
-            <td>{{ device.app_version || '-' }}</td>
+            <td>{{ device.device_name || "-" }}</td>
+            <td>{{ device.app_version || "-" }}</td>
             <td class="token-cell">{{ maskToken(device.device_token) }}</td>
             <td>
               <span class="badge" :class="device.is_active ? 'badge-success' : 'badge-muted'">
-                {{ device.is_active ? '已启用' : '已停用' }}
+                {{ device.is_active ? "已启用" : "已停用" }}
               </span>
             </td>
             <td>{{ formatDate(device.last_seen_at || device.updated_at) }}</td>
             <td>
               <button class="btn btn-ghost btn-sm" :disabled="unregisteringToken === device.device_token" @click="unregisterDevice(device)">
-                {{ unregisteringToken === device.device_token ? '注销中...' : '注销' }}
+                {{ unregisteringToken === device.device_token ? "注销中..." : "注销" }}
               </button>
             </td>
           </tr>

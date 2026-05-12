@@ -34,7 +34,7 @@ export function useAdminOverview() {
     try {
       state.retrievalIntegrity = (await adminApi.getRetrievalIntegrity(12)) || null
     } catch {
-      // Keep the overview interactive even if integrity sampling is slow.
+      // 即使完整性采样较慢，也保持概览页可交互。
     } finally {
       state.loadingIntegrity = false
     }

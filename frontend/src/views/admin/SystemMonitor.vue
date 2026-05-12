@@ -61,7 +61,7 @@
         </div>
         <div class="stat-card card compact">
           <span class="stat-value small">{{ state.readiness?.ready ? "READY" : "NOT READY" }}</span>
-          <span class="stat-label">总体状态</span>
+          <span class="stat-label">整体状态</span>
         </div>
         <div class="stat-card card compact">
           <span class="stat-value small">{{ state.readiness?.blockers?.length ?? 0 }}</span>
@@ -81,8 +81,12 @@
       <div class="section-header">
         <h2>检索一致性健康度</h2>
         <div class="action-group">
-          <button class="btn btn-secondary btn-sm" v-if="!state.retrievalIntegrity?.healthy && state.retrievalIntegrity" @click="jumpToInspect">
-            前往运行检查追踪链路
+          <button
+            v-if="!state.retrievalIntegrity?.healthy && state.retrievalIntegrity"
+            class="btn btn-secondary btn-sm"
+            @click="jumpToInspect"
+          >
+            前往运行检查链路
           </button>
         </div>
       </div>
@@ -93,7 +97,7 @@
         </div>
         <div class="stat-card card compact">
           <span class="stat-value small">{{ state.retrievalIntegrity?.healthy ? "HEALTHY" : "DEGRADED" }}</span>
-          <span class="stat-label">总体状态</span>
+          <span class="stat-label">整体状态</span>
         </div>
         <div class="stat-card card compact">
           <span class="stat-value small">{{ state.retrievalIntegrity?.stats?.sample_size ?? 0 }}</span>
@@ -110,7 +114,7 @@
           <span class="list-meta">{{ item.message }}</span>
         </li>
       </ul>
-      <p v-else class="empty-text">检索一致性检查通过。</p>
+      <p v-else class="empty-text">检索一致性检查已通过。</p>
     </div>
 
     <div class="card section-card">
@@ -215,7 +219,14 @@
         </div>
       </div>
       <table v-if="runtimeStore.toolMatrixRows.length" class="data-table">
-        <thead><tr><th>工具</th><th>allow</th><th>ask</th><th>deny</th></tr></thead>
+        <thead>
+          <tr>
+            <th>工具</th>
+            <th>allow</th>
+            <th>ask</th>
+            <th>deny</th>
+          </tr>
+        </thead>
         <tbody>
           <tr v-for="row in runtimeStore.toolMatrixRows" :key="row.tool_name">
             <td>{{ row.tool_name }}</td>
@@ -229,7 +240,14 @@
 
       <h2 class="sub-section-title">按原因聚合</h2>
       <table v-if="runtimeStore.reasonMatrixRows.length" class="data-table">
-        <thead><tr><th>原因</th><th>allow</th><th>ask</th><th>deny</th></tr></thead>
+        <thead>
+          <tr>
+            <th>原因</th>
+            <th>allow</th>
+            <th>ask</th>
+            <th>deny</th>
+          </tr>
+        </thead>
         <tbody>
           <tr v-for="row in runtimeStore.reasonMatrixRows" :key="row.reason">
             <td>{{ row.reason }}</td>
@@ -243,7 +261,15 @@
 
       <h2 class="sub-section-title">小时趋势</h2>
       <table v-if="runtimeStore.trendRows.length" class="data-table">
-        <thead><tr><th>小时</th><th>allow</th><th>ask</th><th>deny</th><th>unknown</th></tr></thead>
+        <thead>
+          <tr>
+            <th>小时</th>
+            <th>allow</th>
+            <th>ask</th>
+            <th>deny</th>
+            <th>unknown</th>
+          </tr>
+        </thead>
         <tbody>
           <tr v-for="row in runtimeStore.trendRows" :key="row.hour">
             <td>{{ formatDate(row.hour) }}</td>
@@ -263,14 +289,9 @@
 import { onMounted, onUnmounted, watch } from "vue"
 import { useRouter } from "vue-router"
 import { useRuntimeStore } from "@/stores/runtime"
+import { useAdminBackends } from "./composables/useAdminBackends"
 
 const router = useRouter()
-function jumpToInspect() {
-  router.push({ query: { tab: 'inspect' } })
-}
-
-import { useAdminBackends } from './composables/useAdminBackends'
-
 const runtimeStore = useRuntimeStore()
 const {
   state,
@@ -282,14 +303,21 @@ const {
   exportPublicCorpusAsync,
   downloadRuntimeToolSummary,
   formatDate,
-  formatPercent
+  formatPercent,
 } = useAdminBackends()
 
 let timer: number
+let stopToolFilterWatch: (() => void) | null = null
+
+function jumpToInspect() {
+  router.push({ query: { tab: "inspect" } })
+}
 
 onMounted(async () => {
   loadBackends()
   void loadRetrievalIntegrity()
+  void loadPublicCorpusLatest()
+
   if (!runtimeStore.toolDecisionSummary) {
     await runtimeStore.loadToolDecisionSummary()
   }
@@ -297,10 +325,14 @@ onMounted(async () => {
     await runtimeStore.loadCheckpointSummary()
   }
 
-  watch(() => runtimeStore.toolFilters, () => {
-    runtimeStore.loadToolDecisionSummary()
-  }, { deep: true })
-  
+  stopToolFilterWatch = watch(
+    () => ({ ...runtimeStore.toolFilters }),
+    () => {
+      runtimeStore.loadToolDecisionSummary()
+    },
+    { deep: true },
+  )
+
   timer = window.setInterval(() => {
     loadBackends()
     runtimeStore.loadToolDecisionSummary()
@@ -310,5 +342,6 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (timer) window.clearInterval(timer)
+  if (stopToolFilterWatch) stopToolFilterWatch()
 })
 </script>

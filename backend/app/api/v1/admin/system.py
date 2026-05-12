@@ -19,12 +19,60 @@ from app.api.v1.admin._helpers import (
 )
 
 router = APIRouter()
+_retrieval_debug_searcher = None
 
 @router.get("/system/retrieval-metrics")
 async def get_retrieval_metrics(current_user: User = Depends(require_role("ADMIN"))):
     from app.services.retrieval_observability_service import RetrievalObservabilityService
 
     return await RetrievalObservabilityService(get_redis()).summary(current_user.tenant_id)
+
+
+@router.get("/system/retrieval-debug")
+async def get_retrieval_debug(
+    q: str,
+    top_k: int = 8,
+    search_type: str = "hybrid",
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.agent.nodes.query_rewriter import query_rewriter
+    from app.retrieval.hybrid_searcher import HybridSearcher
+
+    global _retrieval_debug_searcher
+    normalized_query = (q or "").strip()
+    if not normalized_query:
+        return {
+            "query": q,
+            "rewritten_query": "",
+            "rewrite_source": "empty",
+            "search_type": search_type,
+            "results": [],
+            "total": 0,
+        }
+
+    rewrite_state = await query_rewriter({"query": normalized_query, "messages": [{"role": "user", "content": normalized_query}]})
+    rewritten_query = str(rewrite_state.get("rewritten_query") or normalized_query).strip()
+    rewrite_source = str(rewrite_state.get("rewrite_source") or "passthrough")
+
+    if _retrieval_debug_searcher is None:
+        _retrieval_debug_searcher = HybridSearcher()
+
+    results = await _retrieval_debug_searcher.search(
+        query=rewritten_query,
+        user=current_user,
+        top_k=max(min(top_k, 20), 1),
+        search_type=search_type,
+        db=db,
+    )
+    return {
+        "query": normalized_query,
+        "rewritten_query": rewritten_query,
+        "rewrite_source": rewrite_source,
+        "search_type": search_type,
+        "results": results,
+        "total": len(results),
+    }
 
 
 @router.get("/system/readiness")

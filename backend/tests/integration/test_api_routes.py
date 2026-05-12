@@ -2323,8 +2323,8 @@ async def test_ws_handle_chat_message_audits_guard_decisions(monkeypatch):
             pass
 
         async def run(self, _request, **_kwargs):
-            yield {"status": "thinking", "msg": "姝ｅ湪鍒嗘瀽"}
-            yield {"status": "done", "answer": "鍒跺害瑕佺偣鎬荤粨", "citations": [], "trace_id": "trace-ws-1"}
+            yield {"status": "thinking", "msg": "正在分析"}
+            yield {"status": "done", "answer": "制度要点总结", "citations": [], "trace_id": "trace-ws-1"}
 
     class DummyMasker:
         def mask(self, text):

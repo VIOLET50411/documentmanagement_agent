@@ -1,10 +1,10 @@
 <template>
   <div class="tab-content animate-fade-in">
     <div class="stats-grid">
-      <div 
-        v-for="item in statCards" 
-        :key="item.label" 
-        class="stat-card card" 
+      <div
+        v-for="item in statCards"
+        :key="item.label"
+        class="stat-card card"
         :class="{ clickable: !!item.tab }"
         @click="item.tab && $router.push({ query: { tab: item.tab } })"
       >
@@ -12,6 +12,7 @@
         <span class="stat-label">{{ item.label }}</span>
       </div>
     </div>
+
     <div class="panel-grid">
       <section class="card section-card">
         <h2>高频查询</h2>
@@ -102,16 +103,16 @@
         <h2>平台运营动作</h2>
         <div class="action-group ops-actions">
           <button class="btn btn-primary" :disabled="state.runningAction === 'reindex'" @click="runOpsAction('reindex')">
-            {{ state.runningAction === 'reindex' ? '重建中...' : '重建索引' }}
+            {{ state.runningAction === 'reindex' ? "重建中..." : "重建索引" }}
           </button>
           <button class="btn btn-ghost" :disabled="state.runningAction === 'retry_failed'" @click="runOpsAction('retry_failed')">
-            {{ state.runningAction === 'retry_failed' ? '处理中...' : '批量重试失败任务' }}
+            {{ state.runningAction === 'retry_failed' ? "处理中..." : "批量重试失败任务" }}
           </button>
           <button class="btn btn-ghost" :disabled="state.runningAction === 'evaluation'" @click="runOpsAction('evaluation')">
-            {{ state.runningAction === 'evaluation' ? '启动中...' : '启动运行评估' }}
+            {{ state.runningAction === 'evaluation' ? "启动中..." : "启动运行评估" }}
           </button>
           <button class="btn btn-ghost" :disabled="state.runningAction === 'refresh_health'" @click="runOpsAction('refresh_health')">
-            {{ state.runningAction === 'refresh_health' ? '刷新中...' : '刷新平台体检' }}
+            {{ state.runningAction === 'refresh_health' ? "刷新中..." : "刷新平台体检" }}
           </button>
         </div>
         <p v-if="state.actionMessage" class="report-meta success">{{ state.actionMessage }}</p>
@@ -119,19 +120,19 @@
         <ul class="list compact-list">
           <li class="list-item">
             <span class="list-title">平台就绪度</span>
-            <span class="list-meta">{{ state.readiness?.status || state.readiness?.overall_status || '未知' }}</span>
+            <span class="list-meta">{{ state.readiness?.status || state.readiness?.overall_status || "未知" }}</span>
           </li>
           <li class="list-item">
-            <span class="list-title">检索健康</span>
-            <span class="list-meta">{{ state.retrievalIntegrity?.healthy ? 'healthy' : 'needs attention' }}</span>
+            <span class="list-title">检索健康度</span>
+            <span class="list-meta">{{ state.retrievalIntegrity?.healthy ? "healthy" : "needs attention" }}</span>
           </li>
           <li class="list-item">
             <span class="list-title">Milvus 样本召回</span>
-            <span class="list-meta">{{ state.retrievalIntegrity?.stats?.milvus_sample_recall ?? '-' }}</span>
+            <span class="list-meta">{{ state.retrievalIntegrity?.stats?.milvus_sample_recall ?? "-" }}</span>
           </li>
           <li class="list-item">
             <span class="list-title">ES 文档量</span>
-            <span class="list-meta">{{ state.retrievalIntegrity?.stats?.es_documents ?? '-' }}</span>
+            <span class="list-meta">{{ state.retrievalIntegrity?.stats?.es_documents ?? "-" }}</span>
           </li>
         </ul>
       </section>
@@ -140,21 +141,23 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
-import { useAdminOverview } from './composables/useAdminOverview'
+import { computed, onMounted } from "vue"
+import { useAdminOverview } from "./composables/useAdminOverview"
 
-const {
-  state,
-  statCards,
-  loadOverview,
-  runOpsAction,
-  formatDate
-} = useAdminOverview()
+const { state, statCards, loadOverview, runOpsAction, formatDate } = useAdminOverview()
 
-const maxDocumentStatusCount = computed(() => Math.max(...(state.analytics.document_status_distribution || []).map((item: any) => Number(item.count || 0)), 1))
-const maxRoleCount = computed(() => Math.max(...(state.analytics.role_distribution || []).map((item: any) => Number(item.count || 0)), 1))
-const maxTrendCount = computed(() => Math.max(...(state.analytics.query_trend_7d || []).map((item: any) => Number(item.count || 0)), 1))
-const maxFeedbackCount = computed(() => Math.max(...(state.analytics.feedback_distribution || []).map((item: any) => Number(item.count || 0)), 1))
+const maxDocumentStatusCount = computed(() =>
+  Math.max(...(state.analytics.document_status_distribution || []).map((item: any) => Number(item.count || 0)), 1),
+)
+const maxRoleCount = computed(() =>
+  Math.max(...(state.analytics.role_distribution || []).map((item: any) => Number(item.count || 0)), 1),
+)
+const maxTrendCount = computed(() =>
+  Math.max(...(state.analytics.query_trend_7d || []).map((item: any) => Number(item.count || 0)), 1),
+)
+const maxFeedbackCount = computed(() =>
+  Math.max(...(state.analytics.feedback_distribution || []).map((item: any) => Number(item.count || 0)), 1),
+)
 
 onMounted(() => {
   loadOverview()
@@ -174,6 +177,7 @@ function calcTrendHeight(value: number, maxValue: number) {
   cursor: pointer;
   transition: transform var(--transition-fast), box-shadow var(--transition-fast);
 }
+
 .clickable:hover {
   transform: translateY(-2px);
   box-shadow: var(--shadow-md);

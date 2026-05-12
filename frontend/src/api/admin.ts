@@ -109,6 +109,10 @@ export const adminApi = {
     return apiGet("/admin/system/retrieval-integrity", { params: { sample_size: sampleSize } })
   },
 
+  getRetrievalDebug(query: string, params: QueryParams = {}) {
+    return apiGet("/admin/system/retrieval-debug", { params: { q: query, top_k: 8, search_type: "hybrid", ...params } })
+  },
+
   runEvaluation(sampleLimit = 100) {
     return apiPost("/admin/evaluation/run", null, { params: { sample_limit: sampleLimit } })
   },

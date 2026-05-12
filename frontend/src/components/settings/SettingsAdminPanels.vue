@@ -5,7 +5,7 @@
         <h2>{{ title }}</h2>
       </div>
       <button v-if="isAdmin" class="btn btn-ghost btn-sm" @click="loadAdminDiagnostics" :disabled="loadingAdminDiagnostics">
-        {{ loadingAdminDiagnostics ? '刷新中...' : '刷新' }}
+        {{ loadingAdminDiagnostics ? "刷新中..." : "刷新" }}
       </button>
     </div>
 
@@ -19,23 +19,23 @@
         <div class="status-grid two-col">
           <div class="status-card">
             <span>企业模型开关</span>
-            <strong>{{ llmDomainConfig?.enterprise_enabled ? '已开启' : '未开启' }}</strong>
-            <small>控制制度、审批、预算等领域问题是否走企业策略。</small>
+            <strong>{{ llmDomainConfig?.enterprise_enabled ? "已开启" : "未开启" }}</strong>
+            <small>控制制度、审计、预算等场景是否优先走企业策略。</small>
           </div>
           <div class="status-card">
             <span>企业模型名</span>
-            <strong>{{ llmDomainConfig?.enterprise_model_name || '-' }}</strong>
+            <strong>{{ llmDomainConfig?.enterprise_model_name || "-" }}</strong>
             <small>当前企业文档场景使用的主模型。</small>
           </div>
           <div class="status-card">
             <span>灰度比例</span>
             <strong>{{ llmDomainConfig?.enterprise_canary_percent ?? 0 }}%</strong>
-            <small>企业策略模型当前对租户放量比例。</small>
+            <small>企业策略模型当前对租户放量的比例。</small>
           </div>
           <div class="status-card">
-            <span>最小语料字符数</span>
-            <strong>{{ llmDomainConfig?.enterprise_corpus_min_chars ?? '-' }}</strong>
-            <small>达到该阈值后才适合企业文档专用策略。</small>
+            <span>最小语料字数</span>
+            <strong>{{ llmDomainConfig?.enterprise_corpus_min_chars ?? "-" }}</strong>
+            <small>达到该阈值后才适合启用企业文档专用策略。</small>
           </div>
         </div>
       </section>
@@ -45,13 +45,13 @@
         <div class="status-grid three-col">
           <div class="status-card">
             <span>健康状态</span>
-            <strong>{{ retrievalIntegrity?.healthy ? '健康' : '待校准' }}</strong>
-            <small>按抽样回查评估当前检索链路是否可用于高置信回答。</small>
+            <strong>{{ retrievalIntegrity?.healthy ? "健康" : "待校准" }}</strong>
+            <small>按抽样回查评估当前检索链路是否适合高置信回答。</small>
           </div>
           <div class="status-card">
             <span>完整性评分</span>
-            <strong>{{ retrievalIntegrity?.score ?? '-' }}</strong>
-            <small>聚合 ES / Milvus / Graph 的完整性检查结果。</small>
+            <strong>{{ retrievalIntegrity?.score ?? "-" }}</strong>
+            <small>综合 ES、Milvus、Graph 的链路完整性结果。</small>
           </div>
           <div class="status-card">
             <span>Milvus 召回率</span>
@@ -72,12 +72,12 @@
         <div class="status-grid three-col">
           <div class="status-card">
             <span>TTFT P95</span>
-            <strong>{{ runtimeMetrics?.summary?.ttft_ms_p95 ?? '-' }} ms</strong>
-            <small>首字节时间，反映响应起始速度。</small>
+            <strong>{{ runtimeMetrics?.summary?.ttft_ms_p95 ?? "-" }} ms</strong>
+            <small>首字节耗时，反映响应启动速度。</small>
           </div>
           <div class="status-card">
             <span>完成耗时 P95</span>
-            <strong>{{ runtimeMetrics?.summary?.completion_ms_p95 ?? '-' }} ms</strong>
+            <strong>{{ runtimeMetrics?.summary?.completion_ms_p95 ?? "-" }} ms</strong>
             <small>整轮回答结束耗时。</small>
           </div>
           <div class="status-card">
@@ -86,7 +86,7 @@
             <small>最近采样窗口内的断连累计。</small>
           </div>
           <div class="status-card">
-            <span>回退率</span>
+            <span>Fallback 比例</span>
             <strong>{{ formatPercent(runtimeMetrics?.summary?.fallback_rate) }}</strong>
             <small>说明真实链路触发降级的比例。</small>
           </div>
@@ -97,7 +97,7 @@
           </div>
           <div class="status-card">
             <span>平均工具调用</span>
-            <strong>{{ runtimeMetrics?.summary?.avg_tool_calls ?? '-' }}</strong>
+            <strong>{{ runtimeMetrics?.summary?.avg_tool_calls ?? "-" }}</strong>
             <small>每轮回答平均触发的工具次数。</small>
           </div>
         </div>
@@ -108,18 +108,18 @@
         <div class="status-grid three-col">
           <div class="status-card">
             <span>LLM</span>
-            <strong>{{ backendStatus?.llm?.available ? '在线' : '离线' }}</strong>
-            <small>{{ backendStatus?.llm?.model_name || backendStatus?.llm?.error || '未返回模型信息' }}</small>
+            <strong>{{ backendStatus?.llm?.available ? "在线" : "离线" }}</strong>
+            <small>{{ backendStatus?.llm?.model_name || backendStatus?.llm?.error || "未返回模型信息" }}</small>
           </div>
           <div class="status-card">
             <span>Milvus</span>
-            <strong>{{ backendStatus?.milvus?.available ? '在线' : '离线' }}</strong>
-            <small>{{ backendStatus?.milvus?.error || '向量检索后端可用' }}</small>
+            <strong>{{ backendStatus?.milvus?.available ? "在线" : "离线" }}</strong>
+            <small>{{ backendStatus?.milvus?.error || "向量检索后端可用" }}</small>
           </div>
           <div class="status-card">
             <span>Elasticsearch</span>
-            <strong>{{ backendStatus?.elasticsearch?.available ? '在线' : '离线' }}</strong>
-            <small>{{ backendStatus?.elasticsearch?.error || '词法检索后端可用' }}</small>
+            <strong>{{ backendStatus?.elasticsearch?.available ? "在线" : "离线" }}</strong>
+            <small>{{ backendStatus?.elasticsearch?.error || "词法检索后端可用" }}</small>
           </div>
         </div>
       </section>
@@ -128,19 +128,19 @@
         <h3>安全策略状态</h3>
         <div class="status-grid three-col">
           <div class="status-card">
-            <span>总体级别</span>
-            <strong>{{ securityPolicy?.mode || '-' }}</strong>
+            <span>整体级别</span>
+            <strong>{{ securityPolicy?.mode || "-" }}</strong>
             <small>当前安全模式评估结果。</small>
           </div>
           <div class="status-card">
             <span>Fail-Closed</span>
-            <strong>{{ securityPolicy?.fail_closed ? '开启' : '关闭' }}</strong>
+            <strong>{{ securityPolicy?.fail_closed ? "开启" : "关闭" }}</strong>
             <small>高风险链路是否严格失败关闭。</small>
           </div>
           <div class="status-card">
             <span>审计联动</span>
-            <strong>{{ securityPolicy?.audit_enforced ? '启用' : '未启用' }}</strong>
-            <small>高风险操作是否强制写审计链路。</small>
+            <strong>{{ securityPolicy?.audit_enforced ? "启用" : "未启用" }}</strong>
+            <small>高风险操作是否强制写入审计链路。</small>
           </div>
         </div>
         <ul v-if="securityPolicy?.gaps?.length" class="compact-list">
@@ -156,12 +156,12 @@
         <div class="status-grid two-col">
           <div class="status-card">
             <span>OAuth/OIDC</span>
-            <strong>{{ mobileAuthStatus?.enabled ? '已启用' : '未启用' }}</strong>
-            <small>{{ mobileAuthStatus?.issuer || '未返回 issuer 信息' }}</small>
+            <strong>{{ mobileAuthStatus?.enabled ? "已启用" : "未启用" }}</strong>
+            <small>{{ mobileAuthStatus?.issuer || "未返回 issuer 信息" }}</small>
           </div>
           <div class="status-card">
             <span>PKCE</span>
-            <strong>{{ mobileAuthStatus?.pkce_required ? '强制' : '未强制' }}</strong>
+            <strong>{{ mobileAuthStatus?.pkce_required ? "强制" : "未强制" }}</strong>
             <small>移动端授权码流程是否要求 PKCE。</small>
           </div>
         </div>
@@ -172,13 +172,13 @@
         <div class="status-grid three-col">
           <div class="status-card">
             <span>FCM</span>
-            <strong>{{ pushProviderStatus?.providers?.fcm?.ready ? '已就绪' : '未就绪' }}</strong>
-            <small>{{ pushProviderStatus?.providers?.fcm?.reason || 'Android 推送通道' }}</small>
+            <strong>{{ pushProviderStatus?.providers?.fcm?.ready ? "已就绪" : "未就绪" }}</strong>
+            <small>{{ pushProviderStatus?.providers?.fcm?.reason || "Android 推送通道" }}</small>
           </div>
           <div class="status-card">
             <span>微信小程序</span>
-            <strong>{{ pushProviderStatus?.providers?.wechat?.ready ? '已就绪' : '未就绪' }}</strong>
-            <small>{{ pushProviderStatus?.providers?.wechat?.reason || '订阅消息通道' }}</small>
+            <strong>{{ pushProviderStatus?.providers?.wechat?.ready ? "已就绪" : "未就绪" }}</strong>
+            <small>{{ pushProviderStatus?.providers?.wechat?.reason || "订阅消息通道" }}</small>
           </div>
         </div>
       </section>
@@ -187,7 +187,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed } from "vue"
 
 const props = defineProps<{
   section: string
@@ -206,22 +206,12 @@ const props = defineProps<{
 
 const title = computed(() => {
   const map: Record<string, string> = {
-    models: '模型与策略',
-    runtime: '运行时与恢复',
-    security: '安全与治理',
-    mobile: '移动端接入',
+    models: "模型与策略",
+    runtime: "运行时与恢复",
+    security: "安全与治理",
+    mobile: "移动端接入",
   }
-  return map[props.section] || '设置'
-})
-
-const summary = computed(() => {
-  const map: Record<string, string> = {
-    models: '查看企业文档场景下的模型路由、灰度比例和检索完整性状态。',
-    runtime: '查看会话恢复、SSE 断连和整体运行指标。',
-    security: '查看策略开关、Fail-Closed 状态和高风险链路保护。',
-    mobile: '查看 OAuth2/OIDC、推送提供商和当前租户的移动端接入就绪度。',
-  }
-  return map[props.section] || ''
+  return map[props.section] || "设置"
 })
 </script>
 

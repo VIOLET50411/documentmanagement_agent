@@ -1,7 +1,5 @@
 <template>
   <div class="admin-page">
-
-
     <div class="admin-tabs">
       <button v-for="tab in tabs" :key="tab.key" class="tab-btn" :class="{ active: activeTab === tab.key }" @click="switchTab(tab.key)">
         {{ tab.label }}
@@ -12,6 +10,7 @@
     <UserManagement v-else-if="activeTab === 'users'" />
     <IngestionDashboard v-else-if="activeTab === 'pipeline'" />
     <SystemMonitor v-else-if="activeTab === 'backends'" />
+    <RetrievalDebug v-else-if="activeTab === 'retrieval'" />
     <RuntimeInspect v-else-if="activeTab === 'inspect'" :format-date="formatDate" />
     <SecurityAudit v-else-if="activeTab === 'security'" />
     <RuntimeEvaluation v-else />
@@ -19,10 +18,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted } from "vue"
+import { onMounted, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import AdminOverviewPanel from "./AdminOverviewPanel.vue"
 import IngestionDashboard from "./IngestionDashboard.vue"
+import RetrievalDebug from "./RetrievalDebug.vue"
 import RuntimeEvaluation from "./RuntimeEvaluation.vue"
 import RuntimeInspect from "./RuntimeInspect.vue"
 import SecurityAudit from "./SecurityAudit.vue"
@@ -33,32 +33,37 @@ const route = useRoute()
 const router = useRouter()
 const activeTab = ref("overview")
 
+const tabs = [
+  { key: "overview", label: "总览" },
+  { key: "users", label: "用户管理" },
+  { key: "pipeline", label: "数据管线" },
+  { key: "backends", label: "后端状态" },
+  { key: "retrieval", label: "检索调试" },
+  { key: "inspect", label: "运行排查" },
+  { key: "security", label: "安全审计" },
+  { key: "evaluation", label: "评测报告" },
+]
+
 onMounted(() => {
-  if (route.query.tab) {
-    activeTab.value = route.query.tab as string
+  const tab = route.query.tab
+  if (typeof tab === "string" && tabs.some((item) => item.key === tab)) {
+    activeTab.value = tab
   }
 })
 
-watch(() => route.query.tab, (newTab) => {
-  if (newTab && typeof newTab === 'string') {
-    activeTab.value = newTab
-  }
-})
+watch(
+  () => route.query.tab,
+  (newTab) => {
+    if (typeof newTab === "string" && tabs.some((item) => item.key === newTab)) {
+      activeTab.value = newTab
+    }
+  },
+)
 
 function switchTab(key: string) {
   activeTab.value = key
   router.push({ query: { ...route.query, tab: key } })
 }
-
-const tabs = [
-  { key: "overview", label: "总览" },
-  { key: "users", label: "用户管理" },
-  { key: "pipeline", label: "数据管线" },
-  { key: "backends", label: "检索后端" },
-  { key: "inspect", label: "运行检查" },
-  { key: "security", label: "安全审计" },
-  { key: "evaluation", label: "评估报告" },
-]
 
 function formatDate(value: string | null | undefined) {
   if (!value) return "-"
@@ -72,28 +77,6 @@ function formatDate(value: string | null | undefined) {
   padding: 0 12px 12px;
   overflow-y: auto;
   height: 100%;
-}
-
-
-
-.refresh-btn {
-  border: 1px solid var(--border-color);
-  background: var(--bg-surface);
-  color: var(--text-primary);
-  border-radius: 999px;
-  padding: 12px 16px;
-  cursor: pointer;
-  transition: transform var(--transition-fast), background-color var(--transition-fast), border-color var(--transition-fast);
-}
-
-.refresh-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  background: var(--bg-surface-hover);
-}
-
-.refresh-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
 }
 
 .admin-tabs {
@@ -135,14 +118,6 @@ function formatDate(value: string | null | undefined) {
   background: var(--bg-surface);
 }
 
-.error-banner {
-  max-width: 1240px;
-  margin: 0 auto var(--space-4);
-  padding: var(--space-3) var(--space-4);
-  border-radius: 18px;
-  background: rgba(197, 86, 67, 0.12);
-  color: var(--color-danger);
-}
 :deep(.stats-grid) { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-4); }
 :deep(.panel-grid) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); margin-top: var(--space-6); }
 :deep(.pipeline-grid), :deep(.evaluation-grid) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
@@ -171,11 +146,13 @@ function formatDate(value: string | null | undefined) {
 :deep(.pagination-row) { display: flex; justify-content: space-between; align-items: center; margin-top: var(--space-4); gap: var(--space-2); }
 :deep(.report-box) { margin-top: var(--space-4); background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: var(--space-4); white-space: pre-wrap; word-break: break-word; }
 :deep(.invite-form) { display: grid; grid-template-columns: 2fr 1fr 1fr auto; gap: var(--space-2); margin-bottom: var(--space-4); }
+
 @media (max-width: 1200px) {
   :deep(.stats-grid),
   :deep(.pipeline-grid),
   :deep(.evaluation-grid) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
 @media (max-width: 900px) {
   .admin-page { padding: var(--space-4); }
   :deep(.panel-grid),

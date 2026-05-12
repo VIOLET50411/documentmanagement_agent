@@ -12,7 +12,7 @@ export function useAdminEvaluation() {
     runtimeMetricsHistory: [] as GenericMap[],
     evaluating: false,
     evalError: "",
-    error: ""
+    error: "",
   })
 
   async function loadEvaluation() {
@@ -108,6 +108,6 @@ export function useAdminEvaluation() {
     runEvaluation,
     downloadRuntimeMetrics,
     formatPercent,
-    formatDate
+    formatDate,
   }
 }

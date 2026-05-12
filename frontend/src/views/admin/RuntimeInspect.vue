@@ -4,10 +4,9 @@
       <div class="section-header">
         <div>
           <h2>运行检查台</h2>
-          <p class="inspect-copy">把工具决策、检查点恢复和轨迹回放集中在一个视图里，便于排查请求链路、降级点和失败原因。</p>
+          <p class="inspect-copy">把工具决策、检查点恢复和轨迹回放集中在一个视图里，便于排查请求链路、降级节点和失败原因。</p>
         </div>
-        <div class="action-group">
-        </div>
+        <div class="action-group"></div>
       </div>
 
       <div class="stats-grid pipeline-grid">
@@ -69,11 +68,11 @@
             <article v-for="row in runtimeStore.checkpointSummary" :key="row.session_id" class="checkpoint-card">
               <div class="checkpoint-head">
                 <strong>{{ row.session_id }}</strong>
-                <span class="badge badge-primary">{{ row.resumable ? '可恢复' : '待补齐' }}</span>
+                <span class="badge badge-primary">{{ row.resumable ? "可恢复" : "待补齐" }}</span>
               </div>
-              <p class="checkpoint-meta">节点：{{ row.latest_node_name || '-' }} | 迭代 {{ row.latest_iteration ?? 0 }}</p>
-              <p class="checkpoint-meta">意图：{{ row.intent || '-' }}</p>
-              <p class="checkpoint-meta">改写查询：{{ row.rewritten_query || '-' }}</p>
+              <p class="checkpoint-meta">节点：{{ row.latest_node_name || "-" }} | 迭代 {{ row.latest_iteration ?? 0 }}</p>
+              <p class="checkpoint-meta">意图：{{ row.intent || "-" }}</p>
+              <p class="checkpoint-meta">改写查询：{{ row.rewritten_query || "-" }}</p>
               <p class="checkpoint-meta">时间：{{ formatDate(row.latest_at) }}</p>
             </article>
           </div>
@@ -90,24 +89,28 @@
         <div class="trace-toolbar">
           <input v-model="runtimeStore.replayTraceId" class="input" type="text" placeholder="请输入 trace_id" />
           <button class="btn btn-primary" @click="runtimeStore.loadReplay()" :disabled="runtimeStore.loadingReplay">
-            {{ runtimeStore.loadingReplay ? '回放中...' : '回放轨迹' }}
+            {{ runtimeStore.loadingReplay ? "回放中..." : "回放轨迹" }}
           </button>
         </div>
 
         <div v-if="runtimeStore.replayEvents.length" class="trace-list">
-          <article v-for="(event, index) in runtimeStore.replayEvents" :key="`${event.event_id || event.sequence_num || index}`" class="trace-row">
+          <article
+            v-for="(event, index) in runtimeStore.replayEvents"
+            :key="`${event.event_id || event.sequence_num || index}`"
+            class="trace-row"
+          >
             <div class="trace-seq">{{ event.sequence_num ?? index + 1 }}</div>
             <div class="trace-main">
               <div class="trace-head">
                 <strong>{{ traceStatusLabel(event.status || event.type) }}</strong>
-                <span class="badge badge-secondary">{{ event.source || 'runtime' }}</span>
+                <span class="badge badge-secondary">{{ event.source || "runtime" }}</span>
               </div>
               <p class="trace-meta">
-                <span>event_id：{{ event.event_id || '-' }}</span>
+                <span>event_id：{{ event.event_id || "-" }}</span>
                 <span>trace：{{ event.trace_id || runtimeStore.replayTraceId }}</span>
                 <span v-if="event.degraded">已降级</span>
               </p>
-              <p class="trace-message">{{ event.message || event.msg || event.answer || event.content || '无附加内容' }}</p>
+              <p class="trace-message">{{ event.message || event.msg || event.answer || event.content || "无附加内容" }}</p>
             </div>
             <div class="trace-time">{{ formatDate(event.timestamp || event.created_at) }}</div>
           </article>
@@ -119,7 +122,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted } from "vue"
 import { useRuntimeStore } from "@/stores/runtime"
 
 const runtimeStore = useRuntimeStore()

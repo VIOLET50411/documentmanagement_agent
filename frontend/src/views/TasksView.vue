@@ -4,88 +4,51 @@
       <div class="toolbar-left">
         <h2>任务中心</h2>
       </div>
-      <div class="toolbar-actions">
-      </div>
+      <div class="toolbar-actions"></div>
     </div>
 
     <p v-if="tasksStore.error" class="error-banner">{{ tasksStore.error }}</p>
 
-    <!-- Tab Navigation -->
     <nav class="tasks-nav card">
-      <button
-        class="tab-btn"
-        :class="{ active: activeTab === 'runtime' }"
-        @click="activeTab = 'runtime'"
-      >
-        运行时态 (Runtime)
+      <button class="tab-btn" :class="{ active: activeTab === 'runtime' }" @click="activeTab = 'runtime'">
+        运行时监控
       </button>
-      <button
-        class="tab-btn"
-        :class="{ active: activeTab === 'pipeline' }"
-        @click="activeTab = 'pipeline'"
-      >
+      <button class="tab-btn" :class="{ active: activeTab === 'pipeline' }" @click="activeTab = 'pipeline'">
         文档入库
       </button>
-      <button
-        class="tab-btn"
-        :class="{ active: activeTab === 'training' }"
-        @click="activeTab = 'training'"
-      >
+      <button class="tab-btn" :class="{ active: activeTab === 'training' }" @click="activeTab = 'training'">
         模型训练
       </button>
-      <button
-        class="tab-btn"
-        :class="{ active: activeTab === 'trace' }"
-        @click="activeTab = 'trace'"
-      >
-        轨迹回放定位
+      <button class="tab-btn" :class="{ active: activeTab === 'trace' }" @click="activeTab = 'trace'">
+        轨迹回放
       </button>
     </nav>
 
-    <!-- TAB: RUNTIME -->
     <div v-if="activeTab === 'runtime'" class="tab-content fade-in">
       <section class="metric-grid">
         <article class="metric-card card">
           <span>TTFT P95</span>
-          <strong
-            >{{
-              tasksStore.runtimeMetrics?.summary?.ttft_ms_p95 ?? "-"
-            }}
-            ms</strong
-          >
+          <strong>{{ tasksStore.runtimeMetrics?.summary?.ttft_ms_p95 ?? "-" }} ms</strong>
         </article>
         <article class="metric-card card">
           <span>完成耗时 P95</span>
-          <strong
-            >{{
-              tasksStore.runtimeMetrics?.summary?.completion_ms_p95 ?? "-"
-            }}
-            ms</strong
-          >
+          <strong>{{ tasksStore.runtimeMetrics?.summary?.completion_ms_p95 ?? "-" }} ms</strong>
         </article>
         <article class="metric-card card">
-          <span>回退率</span>
-          <strong>{{
-            percent(tasksStore.runtimeMetrics?.summary?.fallback_rate)
-          }}</strong>
+          <span>Fallback 比例</span>
+          <strong>{{ percent(tasksStore.runtimeMetrics?.summary?.fallback_rate) }}</strong>
         </article>
         <article class="metric-card card">
           <span>工具拒绝率</span>
-          <strong>{{
-            percent(tasksStore.runtimeMetrics?.summary?.deny_rate)
-          }}</strong>
+          <strong>{{ percent(tasksStore.runtimeMetrics?.summary?.deny_rate) }}</strong>
         </article>
         <article class="metric-card card">
           <span>平均工具调用</span>
-          <strong>{{
-            tasksStore.runtimeMetrics?.summary?.avg_tool_calls ?? "-"
-          }}</strong>
+          <strong>{{ tasksStore.runtimeMetrics?.summary?.avg_tool_calls ?? "-" }}</strong>
         </article>
         <article class="metric-card card">
           <span>SSE 断连</span>
-          <strong>{{
-            tasksStore.runtimeMetrics?.summary?.sse_disconnects ?? 0
-          }}</strong>
+          <strong>{{ tasksStore.runtimeMetrics?.summary?.sse_disconnects ?? 0 }}</strong>
         </article>
       </section>
 
@@ -94,23 +57,15 @@
           <div class="panel-head">
             <div>
               <h3>运行时任务</h3>
-              <p>标准问答与智能体调度任务的底层执行状态。</p>
+              <p>查看问答请求与智能体调度任务的实时执行状态。</p>
             </div>
           </div>
           <div class="task-list">
-            <article
-              v-for="item in tasksStore.runtimeTasks"
-              :key="item.task_id"
-              class="task-row"
-            >
+            <article v-for="item in tasksStore.runtimeTasks" :key="item.task_id" class="task-row">
               <div class="task-main">
                 <div class="task-line">
-                  <strong>{{
-                    item.description || item.type || "运行任务"
-                  }}</strong>
-                  <span class="status-pill" :data-status="item.status">{{
-                    unifiedStatusLabel(item.status)
-                  }}</span>
+                  <strong>{{ item.description || item.type || "运行任务" }}</strong>
+                  <span class="status-pill" :data-status="item.status">{{ unifiedStatusLabel(item.status) }}</span>
                 </div>
                 <div class="task-meta">
                   <span>类型：{{ item.type || "-" }}</span>
@@ -119,83 +74,81 @@
                 </div>
               </div>
               <div class="task-actions">
-                <button
-                  class="btn btn-ghost btn-sm"
-                  v-if="item.trace_id"
-                  @click="jumpToTrace(item.trace_id)"
-                >
+                <button v-if="item.trace_id" class="btn btn-ghost btn-sm" @click="jumpToTrace(item.trace_id)">
                   回放
                 </button>
-                <button
-                  class="btn btn-ghost btn-sm"
-                  v-if="item.trace_id"
-                  @click="copyText(item.trace_id)"
-                >
+                <button v-if="item.trace_id" class="btn btn-ghost btn-sm" @click="copyText(item.trace_id)">
                   复制 Trace
                 </button>
-                <span>{{
-                  formatTime(
-                    item.updated_at || item.end_time || item.start_time,
-                  )
-                }}</span>
+                <span>{{ formatTime(item.updated_at || item.end_time || item.start_time) }}</span>
               </div>
             </article>
-            <p v-if="tasksStore.runtimeTasks.length === 0" class="empty-text">
-              最近没有 Runtime 任务。
-            </p>
+            <p v-if="tasksStore.runtimeTasks.length === 0" class="empty-text">最近没有运行任务。</p>
           </div>
         </section>
 
         <section class="panel card">
           <div class="panel-head">
             <div>
-              <h3>运行检查点摘要</h3>
-              <p>可用于恢复多轮长会话和中断前的运行状态。</p>
+              <h3>运行时检查点摘要</h3>
+              <p>用于恢复长会话和定位中断前的运行状态。</p>
             </div>
-            <span class="panel-note"
-              >共 {{ resumableCheckpointCount }} 个可恢复点</span
-            >
+            <span class="panel-note">共 {{ resumableCheckpointCount }} 个可恢复检查点</span>
           </div>
           <div class="checkpoint-list">
-            <article
-              v-for="item in tasksStore.checkpointSummary"
-              :key="item.session_id"
-              class="checkpoint-row"
-            >
+            <article v-for="item in tasksStore.checkpointSummary" :key="item.session_id" class="checkpoint-row">
               <div>
                 <strong>会话：{{ item.session_id }}</strong>
-                <p>
-                  节点：{{ item.latest_node_name }} | 迭代
-                  {{ item.latest_iteration }}
-                </p>
+                <p>节点：{{ item.latest_node_name }} | 迭代 {{ item.latest_iteration }}</p>
               </div>
               <div class="checkpoint-side">
                 <div class="checkpoint-badge" :class="item.resumable ? 'badge-success' : 'badge-error'">
-                  <svg v-if="item.resumable" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
-                  <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
+                  <svg
+                    v-if="item.resumable"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                    <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                  </svg>
+                  <svg
+                    v-else
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="15" y1="9" x2="9" y2="15"></line>
+                    <line x1="9" y1="9" x2="15" y2="15"></line>
+                  </svg>
                   <span>{{ item.resumable ? "支持恢复" : "状态过期" }}</span>
                 </div>
                 <small class="checkpoint-time">{{ formatTime(item.latest_at) }}</small>
               </div>
             </article>
-            <p
-              v-if="tasksStore.checkpointSummary.length === 0"
-              class="empty-text"
-            >
-              暂无运行时检查点摘要。
-            </p>
+            <p v-if="tasksStore.checkpointSummary.length === 0" class="empty-text">暂无运行时检查点摘要。</p>
           </div>
         </section>
       </div>
     </div>
 
-    <!-- TAB: PIPELINE -->
     <div v-if="activeTab === 'pipeline'" class="tab-content fade-in">
       <section class="summary-grid">
         <article class="summary-card card">
-          <span>活动入库任务</span>
+          <span>活跃入库任务</span>
           <strong>{{ activePipelineJobs.length }}</strong>
-          <small>解析、分块、索引等全链路状态</small>
+          <small>覆盖解析、分块、索引等关键阶段。</small>
         </article>
       </section>
 
@@ -203,75 +156,51 @@
         <div class="panel-head">
           <div>
             <h3>文档入库任务概览</h3>
-            <p>这里展示所有处于流转中或失败异常的文档解析任务。</p>
+            <p>展示当前仍在处理中或需要关注的文档解析任务。</p>
           </div>
-          <button
-            class="btn btn-secondary btn-sm"
-            @click="$router.push('/documents')"
-          >
-            跳转文档工作台处理
-          </button>
+          <button class="btn btn-secondary btn-sm" @click="$router.push('/documents')">前往文档工作台</button>
         </div>
         <div class="task-list full-width-list">
-          <article
-            v-for="item in activePipelineJobs"
-            :key="item.doc_id"
-            class="task-row"
-          >
+          <article v-for="item in activePipelineJobs" :key="item.doc_id" class="task-row">
             <div class="task-main">
               <div class="task-line">
                 <strong>{{ item.title || item.doc_id }}</strong>
-                <span class="status-pill" :data-status="item.status">{{
-                  unifiedStatusLabel(item.status)
-                }}</span>
+                <span class="status-pill" :data-status="item.status">{{ unifiedStatusLabel(item.status) }}</span>
               </div>
               <div class="task-meta">
                 <span>进度：{{ item.percentage ?? 0 }}%</span>
                 <span>尝试：{{ item.attempt ?? 0 }}</span>
                 <span v-if="item.detail">{{ item.detail }}</span>
               </div>
-              <p v-if="item.error_message" class="task-error">
-                {{ item.error_message }}
-              </p>
+              <p v-if="item.error_message" class="task-error">{{ item.error_message }}</p>
             </div>
             <div class="task-actions">
               <button class="btn btn-ghost btn-sm" @click="$router.push('/documents')">查看详情</button>
               <span>{{ formatTime(item.updated_at) }}</span>
             </div>
           </article>
-          <p v-if="activePipelineJobs.length === 0" class="empty-text">
-            当前没有活动中的文档处理任务。
-          </p>
+          <p v-if="activePipelineJobs.length === 0" class="empty-text">当前没有活跃中的文档处理任务。</p>
         </div>
       </section>
     </div>
 
-    <!-- TAB: TRAINING -->
     <div v-if="activeTab === 'training'" class="tab-content fade-in">
       <section class="deployment-grid">
         <article class="deployment-card card">
           <span>已发布模型</span>
-          <strong>{{
-            tasksStore.deploymentSummary?.publish_counts?.published ?? 0
-          }}</strong>
+          <strong>{{ tasksStore.deploymentSummary?.publish_counts?.published ?? 0 }}</strong>
         </article>
         <article class="deployment-card card">
           <span>发布异常</span>
-          <strong>{{
-            tasksStore.deploymentSummary?.publish_counts?.failed ?? 0
-          }}</strong>
+          <strong>{{ tasksStore.deploymentSummary?.publish_counts?.failed ?? 0 }}</strong>
         </article>
         <article class="deployment-card card">
           <span>校验通过</span>
-          <strong>{{
-            tasksStore.deploymentSummary?.verify_counts?.verified ?? 0
-          }}</strong>
+          <strong>{{ tasksStore.deploymentSummary?.verify_counts?.verified ?? 0 }}</strong>
         </article>
         <article class="deployment-card card">
           <span>支持回滚</span>
-          <strong>{{
-            tasksStore.deploymentSummary?.can_rollback ? "是" : "否"
-          }}</strong>
+          <strong>{{ tasksStore.deploymentSummary?.can_rollback ? "是" : "否" }}</strong>
         </article>
       </section>
 
@@ -280,53 +209,30 @@
           <div class="panel-head">
             <div>
               <h3>模型训练作业</h3>
-              <p>数据导出、微调与产物注册任务。</p>
+              <p>集中查看数据导出、微调、评估和产物注册任务。</p>
             </div>
-            <button
-              class="btn btn-secondary btn-sm"
-              @click="$router.push('/admin')"
-            >
-              去管理台查看
-            </button>
+            <button class="btn btn-secondary btn-sm" @click="$router.push('/admin')">前往管理台</button>
           </div>
           <div class="task-list">
-            <article
-              v-for="item in tasksStore.trainingJobs"
-              :key="item.id"
-              class="task-row"
-            >
+            <article v-for="item in tasksStore.trainingJobs" :key="item.id" class="task-row">
               <div class="task-main">
                 <div class="task-line">
-                  <strong>{{
-                    item.target_model_name || item.dataset_name || item.id
-                  }}</strong>
-                  <span class="status-pill" :data-status="item.status">{{
-                    unifiedStatusLabel(item.status)
-                  }}</span>
+                  <strong>{{ item.target_model_name || item.dataset_name || item.id }}</strong>
+                  <span class="status-pill" :data-status="item.status">{{ unifiedStatusLabel(item.status) }}</span>
                 </div>
                 <div class="task-meta">
                   <span>阶段：{{ item.stage || "-" }}</span>
                   <span>渠道：{{ item.provider || "-" }}</span>
-                  <span
-                    >样本：{{ item.train_records ?? 0 }}/{{
-                      item.val_records ?? 0
-                    }}</span
-                  >
+                  <span>样本：{{ item.train_records ?? 0 }}/{{ item.val_records ?? 0 }}</span>
                 </div>
-                <p v-if="item.error_message" class="task-error">
-                  {{ item.error_message }}
-                </p>
+                <p v-if="item.error_message" class="task-error">{{ item.error_message }}</p>
               </div>
               <div class="task-actions">
-                <button class="btn btn-ghost btn-sm" @click="$router.push('/admin?tab=evaluation')">模型治理</button>
-                <span>{{
-                  formatTime(item.updated_at || item.created_at)
-                }}</span>
+                <button class="btn btn-ghost btn-sm" @click="$router.push('/admin?tab=evaluation')">查看评估</button>
+                <span>{{ formatTime(item.updated_at || item.created_at) }}</span>
               </div>
             </article>
-            <p v-if="tasksStore.trainingJobs.length === 0" class="empty-text">
-              当前没有训练任务记录。
-            </p>
+            <p v-if="tasksStore.trainingJobs.length === 0" class="empty-text">当前没有训练任务记录。</p>
           </div>
         </section>
 
@@ -334,33 +240,22 @@
           <div class="panel-head">
             <div>
               <h3>部署异常诊断</h3>
-              <p>最近的服务端模型加载、健康探针异常情况。</p>
+              <p>汇总最近的模型加载、健康探针和发布校验异常。</p>
             </div>
           </div>
           <div class="task-list">
-            <article
-              v-for="item in recentDeploymentFailures"
-              :key="item.model_id"
-              class="task-row"
-            >
+            <article v-for="item in recentDeploymentFailures" :key="item.model_id" class="task-row">
               <div class="task-main">
                 <div class="task-line">
                   <strong>{{ item.model_name }}</strong>
-                  <span class="status-pill" data-status="failed">{{
-                    item.failure_category
-                  }}</span>
+                  <span class="status-pill" data-status="failed">{{ item.failure_category }}</span>
                 </div>
                 <div class="task-meta">
                   <span>状态：{{ unifiedStatusLabel(item.status) }}</span>
                   <span>可恢复：{{ item.recoverable ? "是" : "否" }}</span>
                 </div>
                 <p class="trace-message">
-                  {{
-                    item.recommended_action ||
-                    item.publish_reason ||
-                    item.verify_reason ||
-                    "暂无更多信息"
-                  }}
+                  {{ item.recommended_action || item.publish_reason || item.verify_reason || "暂无更多信息" }}
                 </p>
               </div>
               <div class="task-actions">
@@ -368,24 +263,18 @@
                 <span>{{ formatTime(item.updated_at) }}</span>
               </div>
             </article>
-            <p v-if="recentDeploymentFailures.length === 0" class="empty-text">
-              无最近部署失败记录。
-            </p>
+            <p v-if="recentDeploymentFailures.length === 0" class="empty-text">最近没有部署失败记录。</p>
           </div>
         </section>
       </div>
     </div>
 
-    <!-- TAB: TRACE REPLAY -->
     <div v-if="activeTab === 'trace'" class="tab-content fade-in">
       <section class="panel card" style="min-height: 500px">
         <div class="panel-head">
           <div>
-            <h3>底层运行轨迹定位 (Trace Replay)</h3>
-            <p>
-              输入 `trace_id`
-              获取智能体底层的检索、工具调用、思考链路，用于排查降级和截断。
-            </p>
+            <h3>底层运行轨迹定位</h3>
+            <p>输入 `trace_id`，查看检索、工具调用与回答生成过程，用于定位降级和中断问题。</p>
           </div>
         </div>
 
@@ -394,31 +283,16 @@
             v-model="traceInput"
             class="input trace-input"
             type="text"
-            placeholder="请输入完整的 trace_id..."
+            placeholder="请输入完整 trace_id"
             @keyup.enter="handleTraceReplay"
           />
-          <button
-            class="btn btn-primary"
-            :disabled="tasksStore.replayingTrace || !traceInput.trim()"
-            @click="handleTraceReplay"
-          >
-            {{ tasksStore.replayingTrace ? "检索并回放..." : "拉取轨迹" }}
+          <button class="btn btn-primary" :disabled="tasksStore.replayingTrace || !traceInput.trim()" @click="handleTraceReplay">
+            {{ tasksStore.replayingTrace ? "检索并回放中..." : "拉取轨迹" }}
           </button>
         </div>
 
-        <div
-          v-if="tasksStore.traceError"
-          class="task-error"
-          style="margin-bottom: 24px"
-        >
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-          >
+        <div v-if="tasksStore.traceError" class="task-error" style="margin-bottom: 24px">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="10"></circle>
             <line x1="12" y1="8" x2="12" y2="12"></line>
             <line x1="12" y1="16" x2="12.01" y2="16"></line>
@@ -426,82 +300,44 @@
           {{ tasksStore.traceError }}
         </div>
 
-        <!-- 轨迹内容展示区 -->
-        <div class="trace-content-area" v-if="tasksStore.traceEvents.length">
+        <div v-if="tasksStore.traceEvents.length" class="trace-content-area">
           <div class="trace-header">
             <h4>当前回放链路：{{ traceInput }}</h4>
-            <button class="btn btn-ghost btn-sm" @click="copyTraceId">
-              复制 ID
-            </button>
+            <button class="btn btn-ghost btn-sm" @click="copyTraceId">复制 ID</button>
           </div>
 
           <div class="trace-list">
-            <article
-              v-for="(event, index) in tasksStore.traceEvents"
-              :key="`${event.event_id || event.sequence_num || index}`"
-              class="trace-row"
-            >
+            <article v-for="(event, index) in tasksStore.traceEvents" :key="`${event.event_id || event.sequence_num || index}`" class="trace-row">
               <div class="trace-seq">{{ event.sequence_num ?? index + 1 }}</div>
               <div class="trace-main">
                 <div class="task-line">
-                  <strong>{{
-                    unifiedStatusLabel(event.status || event.type)
-                  }}</strong>
-                  <span
-                    class="status-pill"
-                    :data-status="event.status || event.type"
-                    >{{ event.source || "runtime" }}</span
-                  >
+                  <strong>{{ unifiedStatusLabel(event.status || event.type) }}</strong>
+                  <span class="status-pill" :data-status="event.status || event.type">{{ event.source || "runtime" }}</span>
                 </div>
                 <div class="task-meta">
-                  <span v-if="event.event_id"
-                    >Event ID：{{ event.event_id }}</span
-                  >
-                  <span v-if="event.fallback_reason"
-                    >降级原因：{{ event.fallback_reason }}</span
-                  >
+                  <span v-if="event.event_id">Event ID：{{ event.event_id }}</span>
+                  <span v-if="event.fallback_reason">降级原因：{{ event.fallback_reason }}</span>
                 </div>
                 <p class="trace-message">
-                  {{
-                    event.message ||
-                    event.msg ||
-                    event.answer ||
-                    event.content ||
-                    "无附加报文"
-                  }}
+                  {{ event.message || event.msg || event.answer || event.content || "无附加信息" }}
                 </p>
               </div>
               <div class="task-side">
-                <span>{{
-                  formatTime(event.timestamp || event.created_at)
-                }}</span>
-                <small :class="{ 'text-danger': event.degraded }">{{
-                  event.degraded ? "已触发降级" : "正常执行"
-                }}</small>
+                <span>{{ formatTime(event.timestamp || event.created_at) }}</span>
+                <small :class="{ 'text-danger': event.degraded }">{{ event.degraded ? "已触发降级" : "正常执行" }}</small>
               </div>
             </article>
           </div>
         </div>
 
-        <!-- 空态提示 -->
-        <div
-          class="empty-trace-state"
-          v-else-if="!tasksStore.traceError && !tasksStore.replayingTrace"
-        >
+        <div v-else-if="!tasksStore.traceError && !tasksStore.replayingTrace" class="empty-trace-state">
           <div class="empty-icon">
-            <svg
-              width="48"
-              height="48"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-            >
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
             </svg>
           </div>
           <h4>准备回放</h4>
-          <p>请在上方输入来源任务的 Trace ID 以定位内部执行细节。</p>
+          <p>在上方输入来源任务的 Trace ID，即可定位内部执行细节。</p>
         </div>
       </section>
     </div>
@@ -509,43 +345,29 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { useRouter } from "vue-router";
-import { useTasksStore } from "@/stores/tasks";
+import { computed, onMounted, onUnmounted, ref } from "vue"
+import { useTasksStore } from "@/stores/tasks"
 
-const router = useRouter();
-const tasksStore = useTasksStore();
-const activeTab = ref("runtime");
-const traceInput = ref("");
+const tasksStore = useTasksStore()
+const activeTab = ref("runtime")
+const traceInput = ref("")
 
 const activePipelineJobs = computed(() =>
   tasksStore.pipelineJobs.filter((item) =>
-    [
-      "queued",
-      "parsing",
-      "chunking",
-      "indexing",
-      "retrying",
-      "failed",
-      "partial_failed",
-    ].includes(item.status),
+    ["queued", "parsing", "chunking", "indexing", "retrying", "failed", "partial_failed"].includes(item.status),
   ),
-);
+)
 
 const resumableCheckpointCount = computed(
-  () =>
-    tasksStore.checkpointSummary.filter((item) => Boolean(item.resumable))
-      .length,
-);
+  () => tasksStore.checkpointSummary.filter((item) => Boolean(item.resumable)).length,
+)
 
-const recentDeploymentFailures = computed(
-  () => tasksStore.deploymentSummary?.recent_failures || [],
-);
+const recentDeploymentFailures = computed(() => tasksStore.deploymentSummary?.recent_failures || [])
 
 let refreshTimer: number | null = null
 
 function handleRefresh() {
-  tasksStore.loadDashboard();
+  tasksStore.loadDashboard()
 }
 
 onMounted(() => {
@@ -562,53 +384,52 @@ onUnmounted(() => {
 })
 
 async function handleTraceReplay() {
-  if (!traceInput.value.trim()) return;
-  await tasksStore.replayTrace(traceInput.value.trim());
+  if (!traceInput.value.trim()) return
+  await tasksStore.replayTrace(traceInput.value.trim())
 }
 
 function jumpToTrace(id: string) {
-  traceInput.value = id;
-  activeTab.value = "trace";
-  handleTraceReplay();
+  traceInput.value = id
+  activeTab.value = "trace"
+  void handleTraceReplay()
 }
 
 function copyTraceId() {
-  copyText(traceInput.value);
+  copyText(traceInput.value)
 }
 
 function copyText(text: string) {
-  if (text) {
-    navigator.clipboard
-      .writeText(text)
-      .then(() => alert("已复制"))
-      .catch(() => alert("复制失败"));
-  }
+  if (!text) return
+  navigator.clipboard
+    .writeText(text)
+    .then(() => {
+      window.alert("已复制")
+    })
+    .catch(() => {
+      window.alert("复制失败")
+    })
 }
 
-// Utils
 function percent(value: number | null | undefined) {
-  if (value === null || value === undefined) return "-";
-  return `${(Number(value) * 100).toFixed(1)}%`;
+  if (value === null || value === undefined) return "-"
+  return `${(Number(value) * 100).toFixed(1)}%`
 }
 
 function formatTime(value: string | null | undefined) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
+  if (!value) return "-"
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString()
 }
 
-// Unified Label Translation Map
 function unifiedStatusLabel(status: string | null | undefined) {
-  const normalized = (status || "").toLowerCase();
+  const normalized = (status || "").toLowerCase()
   const map: Record<string, string> = {
-    // runtime
     pending: "待执行",
     running: "运行中",
     completed: "已完成",
     failed: "处理失败",
     killed: "已终止",
-    // pipeline
     queued: "排队中",
     parsing: "解析中",
     chunking: "切块中",
@@ -616,13 +437,11 @@ function unifiedStatusLabel(status: string | null | undefined) {
     retrying: "重试中",
     partial_failed: "部分失败",
     ready: "已入库",
-    // training
     training: "训练中",
     validating: "校验中",
     publishing: "发布中",
     published: "已发布",
     verified: "已校验",
-    // trace
     thinking: "问题理解",
     searching: "知识检索",
     reading: "证据读取",
@@ -630,8 +449,8 @@ function unifiedStatusLabel(status: string | null | undefined) {
     streaming: "回答生成",
     done: "链路结束",
     error: "链路中断",
-  };
-  return map[normalized] || status || "未知状态";
+  }
+  return map[normalized] || status || "未知状态"
 }
 </script>
 
@@ -693,6 +512,7 @@ function unifiedStatusLabel(status: string | null | undefined) {
     opacity: 0;
     transform: translateY(5px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -1011,6 +831,7 @@ function unifiedStatusLabel(status: string | null | undefined) {
   .metric-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+
   .tasks-layout,
   .summary-grid,
   .deployment-grid {

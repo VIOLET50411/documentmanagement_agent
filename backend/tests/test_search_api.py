@@ -1,6 +1,7 @@
 import pytest
 
 import app.api.v1.search as search_api
+import app.api.v1.admin.system as admin_system
 
 
 @pytest.mark.asyncio
@@ -58,3 +59,45 @@ async def test_search_api_uses_search_type_when_mode_missing(monkeypatch):
     )
 
     assert calls["search_type"] == "keyword"
+
+
+@pytest.mark.asyncio
+async def test_admin_retrieval_debug_returns_rewritten_query(monkeypatch):
+    calls = {}
+
+    class FakeSearcher:
+        async def search(self, *, query, user, top_k, search_type, db):
+            calls.update(
+                {
+                    "query": query,
+                    "user": user,
+                    "top_k": top_k,
+                    "search_type": search_type,
+                    "db": db,
+                }
+            )
+            return [{"document_title": "差旅报销制度", "score": 0.92}]
+
+    async def fake_rewriter(state):
+        state["rewritten_query"] = "《差旅报销制度》 审批 流程"
+        state["rewrite_source"] = "context_fallback"
+        return state
+
+    monkeypatch.setattr(admin_system, "_retrieval_debug_searcher", FakeSearcher())
+    monkeypatch.setattr("app.agent.nodes.query_rewriter.query_rewriter", fake_rewriter)
+
+    payload = await admin_system.get_retrieval_debug(
+        q="这个审批怎么走？",
+        top_k=6,
+        search_type="hybrid",
+        current_user=object(),
+        db=object(),
+    )
+
+    assert payload["query"] == "这个审批怎么走？"
+    assert payload["rewritten_query"] == "《差旅报销制度》 审批 流程"
+    assert payload["rewrite_source"] == "context_fallback"
+    assert payload["total"] == 1
+    assert calls["query"] == "《差旅报销制度》 审批 流程"
+    assert calls["top_k"] == 6
+    assert calls["search_type"] == "hybrid"

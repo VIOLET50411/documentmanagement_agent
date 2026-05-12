@@ -15,11 +15,11 @@ export function useAdminPipeline() {
     retryingFailed: false,
     pipelineFailureSummary: [] as GenericMap[],
     retryingSignature: "",
-    error: ""
+    error: "",
   })
 
   const pipelineCards = computed(() => [
-    { label: "活动任务", value: state.pipeline.active ?? 0 },
+    { label: "活跃任务", value: state.pipeline.active ?? 0 },
     { label: "排队任务", value: state.pipeline.queued ?? 0 },
     { label: "失败任务", value: state.pipeline.failed ?? 0 },
     { label: "完成任务", value: state.pipeline.completed ?? 0 },
@@ -123,6 +123,6 @@ export function useAdminPipeline() {
     retryPipelineJob,
     retryFailedJobs,
     retryBySignature,
-    formatDate
+    formatDate,
   }
 }

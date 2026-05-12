@@ -14,7 +14,7 @@
           <button class="btn btn-secondary btn-sm" @click="$router.push('/documents')">前往文档库排查</button>
           <button class="btn btn-secondary btn-sm" @click="$router.push('/tasks?tab=pipeline')">前往任务中心轨迹</button>
           <button class="btn btn-danger btn-sm" :disabled="state.retryingFailed" @click="retryFailedJobs">
-            {{ state.retryingFailed ? '重试中...' : '一键重试失败任务' }}
+            {{ state.retryingFailed ? "重试中..." : "一键重试失败任务" }}
           </button>
         </div>
       </div>
@@ -54,10 +54,14 @@
             <td>{{ job.status }}</td>
             <td>{{ job.percentage }}%</td>
             <td>{{ job.attempt }}</td>
-            <td>{{ job.detail || job.error_message || '-' }}</td>
+            <td>{{ job.detail || job.error_message || "-" }}</td>
             <td>{{ formatDate(job.updated_at) }}</td>
             <td class="action-group">
-              <button class="btn btn-ghost" :disabled="!['failed', 'partial_failed', 'retrying'].includes(job.status)" @click="retryPipelineJob(job)">
+              <button
+                class="btn btn-ghost"
+                :disabled="!['failed', 'partial_failed', 'retrying'].includes(job.status)"
+                @click="retryPipelineJob(job)"
+              >
                 重试
               </button>
             </td>
@@ -70,7 +74,13 @@
         <span class="list-meta">共 {{ state.pipelineTotal }} 条，当前第 {{ state.pipelinePage + 1 }} 页</span>
         <div class="action-group">
           <button class="btn btn-ghost" :disabled="state.pipelinePage === 0 || state.loadingPipeline" @click="changePipelinePage(-1)">上一页</button>
-          <button class="btn btn-ghost" :disabled="(state.pipelinePage + 1) * state.pipelinePageSize >= state.pipelineTotal || state.loadingPipeline" @click="changePipelinePage(1)">下一页</button>
+          <button
+            class="btn btn-ghost"
+            :disabled="(state.pipelinePage + 1) * state.pipelinePageSize >= state.pipelineTotal || state.loadingPipeline"
+            @click="changePipelinePage(1)"
+          >
+            下一页
+          </button>
         </div>
       </div>
 
@@ -92,10 +102,10 @@
             <td>{{ item.count }}</td>
             <td>failed: {{ item.status_breakdown?.failed || 0 }} / partial_failed: {{ item.status_breakdown?.partial_failed || 0 }}</td>
             <td>{{ formatDate(item.latest_at) }}</td>
-            <td>{{ item.example_error || '-' }}</td>
+            <td>{{ item.example_error || "-" }}</td>
             <td class="action-group">
               <button class="btn btn-ghost" :disabled="state.retryingSignature === item.signature" @click="retryBySignature(item.signature)">
-                {{ state.retryingSignature === item.signature ? '重试中...' : '按此错误重试' }}
+                {{ state.retryingSignature === item.signature ? "重试中..." : "按此错误重试" }}
               </button>
             </td>
           </tr>
@@ -107,8 +117,8 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch } from 'vue'
-import { useAdminPipeline } from './composables/useAdminPipeline'
+import { onMounted, onUnmounted, watch } from "vue"
+import { useAdminPipeline } from "./composables/useAdminPipeline"
 
 const {
   state,
@@ -120,7 +130,7 @@ const {
   retryPipelineJob,
   retryFailedJobs,
   retryBySignature,
-  formatDate
+  formatDate,
 } = useAdminPipeline()
 
 let timer: number
@@ -134,9 +144,12 @@ onMounted(() => {
   }, 10000)
 })
 
-watch(() => state.pipelineFilterStatus, () => {
-  applyPipelineFilter()
-})
+watch(
+  () => state.pipelineFilterStatus,
+  () => {
+    applyPipelineFilter()
+  },
+)
 
 onUnmounted(() => {
   if (timer) window.clearInterval(timer)

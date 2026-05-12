@@ -18,7 +18,18 @@
       <p v-if="state.error" class="report-meta error">{{ state.error }}</p>
       <p v-if="state.tempPasswordMessage" class="report-meta temp-password">{{ state.tempPasswordMessage }}</p>
       <table v-if="state.users.length" class="data-table">
-        <thead><tr><th>用户名</th><th>邮箱</th><th>角色</th><th>部门</th><th>级别</th><th>账号状态</th><th>邮箱状态</th><th>操作</th></tr></thead>
+        <thead>
+          <tr>
+            <th>用户名</th>
+            <th>邮箱</th>
+            <th>角色</th>
+            <th>部门</th>
+            <th>级别</th>
+            <th>账号状态</th>
+            <th>邮箱状态</th>
+            <th>操作</th>
+          </tr>
+        </thead>
         <tbody>
           <tr v-for="user in state.users" :key="user.id">
             <td>
@@ -93,7 +104,16 @@
 
       <h2 class="sub-section-title">邀请记录</h2>
       <table v-if="state.invitations.length" class="data-table">
-        <thead><tr><th>邮箱</th><th>角色</th><th>部门</th><th>状态</th><th>到期时间</th><th>操作</th></tr></thead>
+        <thead>
+          <tr>
+            <th>邮箱</th>
+            <th>角色</th>
+            <th>部门</th>
+            <th>状态</th>
+            <th>到期时间</th>
+            <th>操作</th>
+          </tr>
+        </thead>
         <tbody>
           <tr v-for="inv in state.invitations" :key="inv.invitation_id">
             <td>{{ inv.email }}</td>
@@ -114,8 +134,8 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
-import { useAdminUsers } from './composables/useAdminUsers'
+import { onMounted } from "vue"
+import { useAdminUsers } from "./composables/useAdminUsers"
 
 const {
   state,
@@ -129,7 +149,7 @@ const {
   resendInvitation,
   revokeInvitation,
   invitationStatusLabel,
-  formatDate
+  formatDate,
 } = useAdminUsers()
 
 onMounted(() => {

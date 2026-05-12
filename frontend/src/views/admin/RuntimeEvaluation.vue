@@ -4,9 +4,7 @@
       <div class="evaluation-header">
         <div>
           <h2>评估报告</h2>
-          <p class="report-meta">
-            最近一次评估时间：{{ formatDate(state.evaluationLatest?.generated_at) }}
-          </p>
+          <p class="report-meta">最近一次评估时间：{{ formatDate(state.evaluationLatest?.generated_at) }}</p>
         </div>
         <div class="action-group">
           <button class="refresh-btn" @click="runEvaluation" :disabled="state.evaluating">
@@ -54,7 +52,7 @@
       </div>
       <p v-else class="empty-text">暂无评估指标。</p>
 
-      <h2 class="sub-section-title">数据集覆盖</h2>
+      <h2 class="sub-section-title">数据集概览</h2>
       <div v-if="datasetSummary" class="panel-grid summary-grid">
         <div class="card compact-panel">
           <div class="panel-title">样本规模</div>
@@ -148,14 +146,7 @@
 import { computed, onMounted } from "vue"
 import { useAdminEvaluation } from "./composables/useAdminEvaluation"
 
-const {
-  state,
-  loadEvaluation,
-  runEvaluation,
-  downloadRuntimeMetrics,
-  formatPercent,
-  formatDate,
-} = useAdminEvaluation()
+const { state, loadEvaluation, runEvaluation, downloadRuntimeMetrics, formatPercent, formatDate } = useAdminEvaluation()
 
 const datasetSummary = computed(() => state.evaluationLatest?.generated_from?.dataset_summary || null)
 
@@ -166,15 +157,15 @@ const metricCards = computed(() =>
       key,
       label: key,
       value,
-    }))
+    })),
 )
 
 const difficultyEntries = computed(() =>
-  Object.entries(datasetSummary.value?.difficulty_counts || {}).map(([key, value]) => ({ key, value }))
+  Object.entries(datasetSummary.value?.difficulty_counts || {}).map(([key, value]) => ({ key, value })),
 )
 
 const taskTypeEntries = computed(() =>
-  Object.entries(datasetSummary.value?.task_type_counts || {}).map(([key, value]) => ({ key, value }))
+  Object.entries(datasetSummary.value?.task_type_counts || {}).map(([key, value]) => ({ key, value })),
 )
 
 const gateFailures = computed(() => state.evaluationLatest?.gate?.failures || [])

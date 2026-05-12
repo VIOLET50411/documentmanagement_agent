@@ -8,6 +8,39 @@
         </span>
       </div>
 
+      <section v-if="citationGroups.length" class="evidence-board">
+        <button class="evidence-toggle" type="button" @click="evidenceExpanded = !evidenceExpanded">
+          <div class="evidence-head">
+            <strong>{{ evidenceTitle }}</strong>
+            <span>{{ citationSummary }}</span>
+          </div>
+          <span class="evidence-expand">{{ evidenceExpanded ? collapseLabel : expandLabel }}</span>
+        </button>
+
+        <transition name="evidence-collapse">
+          <div v-if="evidenceExpanded" class="evidence-groups">
+            <article v-for="group in citationGroups" :key="group.key" class="evidence-card">
+              <header class="evidence-card-head">
+                <div>
+                  <div class="evidence-doc-title">{{ group.docTitle }}</div>
+                  <div class="evidence-doc-meta">{{ group.sectionSummary }}</div>
+                </div>
+                <span class="evidence-count">{{ group.items.length }} {{ evidenceCountUnit }}</span>
+              </header>
+              <ul class="evidence-list">
+                <li v-for="item in group.items" :key="item.key" class="evidence-item">
+                  <div class="evidence-item-meta">
+                    <span>{{ item.sectionTitle }}</span>
+                    <span>{{ pageLabel }} {{ item.pageNumber }}</span>
+                  </div>
+                  <p>{{ item.snippet }}</p>
+                </li>
+              </ul>
+            </article>
+          </div>
+        </transition>
+      </section>
+
       <div v-if="structured.title || structured.conclusion || structured.sections.length || structured.compareTable" class="answer-outline">
         <div v-if="structured.title" class="outline-title">{{ structured.title }}</div>
         <div v-if="structured.conclusion" class="outline-conclusion">
@@ -23,33 +56,6 @@
           <div class="markdown-body" v-html="renderMarkdown(section.body)"></div>
         </div>
       </div>
-
-      <section v-if="citationGroups.length" class="evidence-board">
-        <div class="evidence-head">
-          <strong>{{ evidenceTitle }}</strong>
-          <span>{{ citationSummary }}</span>
-        </div>
-        <div class="evidence-groups">
-          <article v-for="group in citationGroups" :key="group.key" class="evidence-card">
-            <header class="evidence-card-head">
-              <div>
-                <div class="evidence-doc-title">{{ group.docTitle }}</div>
-                <div class="evidence-doc-meta">{{ group.sectionSummary }}</div>
-              </div>
-              <span class="evidence-count">{{ group.items.length }} {{ evidenceCountUnit }}</span>
-            </header>
-            <ul class="evidence-list">
-              <li v-for="item in group.items" :key="item.key" class="evidence-item">
-                <div class="evidence-item-meta">
-                  <span>{{ item.sectionTitle }}</span>
-                  <span>{{ pageLabel }} {{ item.pageNumber }}</span>
-                </div>
-                <p>{{ item.snippet }}</p>
-              </li>
-            </ul>
-          </article>
-        </div>
-      </section>
 
       <div v-if="structured.remainder" class="assistant-body">
         <div class="assistant-copy markdown-body" v-html="rendered"></div>
@@ -67,7 +73,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue"
+import { computed, ref } from "vue"
 import { marked } from "marked"
 import type { ChatMessage } from "@/stores/chat"
 
@@ -98,17 +104,19 @@ type CitationGroup = {
   items: CitationViewItem[]
 }
 
-const streamingSubtitle = "\u6b63\u5728\u57fa\u4e8e\u68c0\u7d22\u8bc1\u636e\u751f\u6210\u56de\u7b54"
-const readySubtitle = "\u57fa\u4e8e\u5f53\u524d\u77e5\u8bc6\u5e93\u4e0e\u68c0\u7d22\u7ed3\u679c\u751f\u6210"
-const conclusionLabel = "\u7ed3\u8bba"
-const compareLabel = "\u7ed3\u6784\u5316\u5bf9\u6bd4"
-const evidenceTitle = "\u5f15\u7528\u4f9d\u636e"
-const pageLabel = "\u9875\u7801"
-const evidenceCountUnit = "\u6761"
-const copyLabel = "\u590d\u5236"
-const helpfulLabel = "\u6709\u5e2e\u52a9"
-const improveLabel = "\u5f85\u6539\u8fdb"
-const retryLabel = "\u91cd\u8bd5"
+const streamingSubtitle = "正在基于检索证据生成回答"
+const readySubtitle = "基于当前知识库与检索结果生成"
+const conclusionLabel = "结论"
+const compareLabel = "结构化对比"
+const evidenceTitle = "引用依据"
+const pageLabel = "页码"
+const evidenceCountUnit = "条"
+const copyLabel = "复制"
+const helpfulLabel = "有帮助"
+const improveLabel = "待改进"
+const retryLabel = "重试"
+const expandLabel = "展开"
+const collapseLabel = "收起"
 
 const props = defineProps<{
   message: ChatMessage
@@ -121,16 +129,17 @@ defineEmits<{
   retry: []
 }>()
 
+const evidenceExpanded = ref(false)
 const structured = computed(() => parseStructuredAnswer(props.message.content || ""))
 const rendered = computed(() => renderMarkdown(structured.value.remainder))
 
 const citationGroups = computed<CitationGroup[]>(() => {
   const groups = new Map<string, CitationGroup>()
   for (const cite of props.message.citations || []) {
-    const docTitle = (cite.doc_title || "\u672a\u547d\u540d\u6587\u6863").trim()
-    const sectionTitle = (cite.section_title || "\u672a\u547d\u540d\u7ae0\u8282").trim()
+    const docTitle = (cite.doc_title || "未命名文档").trim()
+    const sectionTitle = (cite.section_title || "未命名章节").trim()
     const pageNumber = String(cite.page_number ?? "-")
-    const snippet = String(cite.snippet || "").trim() || "\u672a\u63d0\u4f9b\u7247\u6bb5\u9884\u89c8"
+    const snippet = normalizeEvidenceSnippet(String(cite.snippet || "").trim() || "未提供片段预览")
     const key = `${cite.doc_id || docTitle}:${docTitle}`
     if (!groups.has(key)) {
       groups.set(key, {
@@ -155,8 +164,8 @@ const citationGroups = computed<CitationGroup[]>(() => {
       ...group,
       sectionSummary:
         uniqueSections.length > 1
-          ? uniqueSections.slice(0, 3).join("\u3001")
-          : uniqueSections[0] || "\u672a\u547d\u540d\u7ae0\u8282",
+          ? uniqueSections.slice(0, 3).join("、")
+          : uniqueSections[0] || "未命名章节",
     }
   })
 })
@@ -164,11 +173,11 @@ const citationGroups = computed<CitationGroup[]>(() => {
 const citationSummary = computed(() => {
   const docCount = citationGroups.value.length
   const snippetCount = citationGroups.value.reduce((sum, group) => sum + group.items.length, 0)
-  return `\u5171 ${docCount} \u4efd\u6587\u6863\uff0c${snippetCount} \u6761\u8bc1\u636e`
+  return `共 ${docCount} 份文档，${snippetCount} 条证据`
 })
 
 const documentLayout = computed(() => {
-  const content = (props.message.content || "").trim()
+  const content = normalizeAnswerContent(props.message.content || "").trim()
   if (!content) return false
   if (/```/.test(content)) return true
   if (/^\s{0,3}(#{1,6}\s|[-*+]\s|\d+\.\s|>\s|\|.+\|)/m.test(content)) return true
@@ -180,11 +189,11 @@ const documentLayout = computed(() => {
 })
 
 function renderMarkdown(content: string) {
-  return marked.parse(content || "", { breaks: true }) as string
+  return marked.parse(normalizeAnswerContent(content || ""), { breaks: true }) as string
 }
 
 function parseStructuredAnswer(content: string): StructuredAnswer {
-  const normalized = content.trim()
+  const normalized = normalizeAnswerContent(content).trim()
   if (!normalized) {
     return { title: "", conclusion: "", compareTable: "", sections: [], remainder: "" }
   }
@@ -210,14 +219,17 @@ function parseStructuredAnswer(content: string): StructuredAnswer {
   }
 
   const recognizedTitles = new Set([
-    "\u6458\u8981\u8303\u56f4",
-    "\u5173\u952e\u8981\u70b9",
-    "\u5f85\u786e\u8ba4\u4e8b\u9879",
-    "\u5efa\u8bae\u8ffd\u95ee",
-    "\u76f8\u5173\u4f9d\u636e",
-    "\u4f7f\u7528\u5efa\u8bae",
-    "\u5f15\u7528\u4f9d\u636e",
-    "\u5f85\u8865\u5145\u4fe1\u606f",
+    "摘要范围",
+    "关键要点",
+    "待确认事项",
+    "建议追问",
+    "相关依据",
+    "使用建议",
+    "引用依据",
+    "待补充信息",
+    "提取字段",
+    "关键依据",
+    "提示",
   ])
 
   const sections: StructuredSection[] = []
@@ -252,6 +264,22 @@ function parseStructuredAnswer(content: string): StructuredAnswer {
     sections,
     remainder: working,
   }
+}
+
+function normalizeAnswerContent(content: string) {
+  if (!content) return ""
+  return content
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/([。；：])\s*(\d+\.\s*)/g, "$1\n$2")
+    .replace(/([。；：])\s*(-\s+)/g, "$1\n$2")
+    .replace(/(?<!\n)(所需材料：|办理条件：|时间要求：|关键依据：|关键依据|提取字段|提示：|提示|待确认事项：|建议追问：)/g, "\n$1")
+    .replace(/(\d+\.\s*[^\n]+?)\s+(?=\d+\.\s)/g, "$1\n")
+    .replace(/\n{3,}/g, "\n\n")
+}
+
+function normalizeEvidenceSnippet(content: string) {
+  return content.replace(/\r\n/g, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n")
 }
 </script>
 
@@ -331,8 +359,21 @@ function parseStructuredAnswer(content: string): StructuredAnswer {
   letter-spacing: 0.04em;
 }
 
+.evidence-toggle {
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
+}
+
 .evidence-head {
   justify-content: space-between;
+  flex: 1;
   flex-wrap: wrap;
 }
 
@@ -344,7 +385,8 @@ function parseStructuredAnswer(content: string): StructuredAnswer {
 .evidence-head span,
 .evidence-doc-meta,
 .evidence-count,
-.evidence-item-meta {
+.evidence-item-meta,
+.evidence-expand {
   color: var(--text-secondary);
   font-size: 12px;
 }
@@ -448,6 +490,17 @@ function parseStructuredAnswer(content: string): StructuredAnswer {
   }
 }
 
+.evidence-collapse-enter-active,
+.evidence-collapse-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.evidence-collapse-enter-from,
+.evidence-collapse-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
 :deep(.markdown-body p) {
   margin: 0;
 }
@@ -460,6 +513,10 @@ function parseStructuredAnswer(content: string): StructuredAnswer {
 :deep(.markdown-body ol) {
   margin: 10px 0 0;
   padding-left: 20px;
+}
+
+:deep(.markdown-body li + li) {
+  margin-top: 6px;
 }
 
 :deep(.markdown-body code) {

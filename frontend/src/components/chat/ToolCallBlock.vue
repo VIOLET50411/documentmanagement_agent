@@ -27,9 +27,9 @@
 <script setup lang="ts">
 import type { ChatRuntimeEvent } from "@/stores/chat"
 
-const toolIcon = "\u8c03"
-const title = "\u5de5\u5177\u8c03\u7528"
-const degradedLabel = "\u5df2\u964d\u7ea7"
+const toolIcon = "调"
+const title = "工具调用"
+const degradedLabel = "已降级"
 
 defineProps<{
   event: ChatRuntimeEvent
