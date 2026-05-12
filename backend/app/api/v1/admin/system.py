@@ -47,6 +47,8 @@ async def get_retrieval_debug(
             "rewritten_query": "",
             "rewrite_source": "empty",
             "search_type": search_type,
+            "original_results": [],
+            "original_total": 0,
             "results": [],
             "total": 0,
         }
@@ -58,6 +60,13 @@ async def get_retrieval_debug(
     if _retrieval_debug_searcher is None:
         _retrieval_debug_searcher = HybridSearcher()
 
+    original_results = await _retrieval_debug_searcher.search(
+        query=normalized_query,
+        user=current_user,
+        top_k=max(min(top_k, 20), 1),
+        search_type=search_type,
+        db=db,
+    )
     results = await _retrieval_debug_searcher.search(
         query=rewritten_query,
         user=current_user,
@@ -70,6 +79,8 @@ async def get_retrieval_debug(
         "rewritten_query": rewritten_query,
         "rewrite_source": rewrite_source,
         "search_type": search_type,
+        "original_results": original_results,
+        "original_total": len(original_results),
         "results": results,
         "total": len(results),
     }

@@ -48,6 +48,8 @@ class EvaluationService:
         )
         documents = await self._load_documents(tenant_id, sample_limit=max(sample_limit, 1))
         dataset = await self.dataset_generator.generate(documents, count=max(sample_limit, 1))
+        manual_samples = await self.load_manual_samples(tenant_id)
+        dataset, used_manual_samples = self._merge_manual_samples(dataset, manual_samples, sample_limit=max(sample_limit, 1))
         dataset_summary = self._summarize_dataset(dataset)
         await self._notify_progress(
             progress_callback,
@@ -72,6 +74,9 @@ class EvaluationService:
                 "tenant_id": tenant_id,
                 "sample_limit": max(sample_limit, 1),
                 "document_count": len(documents),
+                "manual_sample_count": len(used_manual_samples),
+                "manual_sample_count_total": len(manual_samples),
+                "manual_sample_count_used": len(used_manual_samples),
                 "dataset_summary": dataset_summary,
             },
         }
@@ -131,6 +136,41 @@ class EvaluationService:
             "dataset_size": dataset_size,
             "report_json": str(json_path),
             "report_markdown": str(markdown_path),
+            "manual_dataset_path": str(self._manual_dataset_path(tenant_id)),
+        }
+
+    async def load_manual_samples(self, tenant_id: str) -> list[dict[str, Any]]:
+        path = self._manual_dataset_path(tenant_id)
+        if not path.exists():
+            return []
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return []
+        if not isinstance(payload, list):
+            return []
+        return [item for item in payload if isinstance(item, dict)]
+
+    async def append_manual_sample(self, tenant_id: str, sample: dict[str, Any]) -> dict[str, Any]:
+        existing = await self.load_manual_samples(tenant_id)
+        normalized = self._normalize_manual_sample(sample)
+        normalized["created_at"] = datetime.now(timezone.utc).isoformat()
+        dedup_key = self._manual_sample_signature(normalized)
+        filtered = [item for item in existing if self._manual_sample_signature(item) != dedup_key]
+        filtered.insert(0, normalized)
+        path = self._manual_dataset_path(tenant_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(filtered, ensure_ascii=False, indent=2), encoding="utf-8")
+        return normalized
+
+    async def list_manual_samples(self, tenant_id: str, *, limit: int = 50) -> dict[str, Any]:
+        items = await self.load_manual_samples(tenant_id)
+        trimmed = items[: max(limit, 1)]
+        return {
+            "items": trimmed,
+            "total": len(items),
+            "limit": max(limit, 1),
+            "path": str(self._manual_dataset_path(tenant_id)),
         }
 
     async def history(self, tenant_id: str, *, limit: int = 30) -> dict[str, Any]:
@@ -401,6 +441,52 @@ class EvaluationService:
             {"id": doc["id"], "title": doc["title"], "chunks": doc["chunks"]}
             for doc in documents[: max(sample_limit, 1)]
         ]
+
+    def _manual_dataset_path(self, tenant_id: str) -> Path:
+        return self.reports_dir / f"evaluation_{tenant_id}.manual.dataset.json"
+
+    def _normalize_manual_sample(self, sample: dict[str, Any]) -> dict[str, Any]:
+        question = str(sample.get("question") or "").strip()
+        answer = str(sample.get("answer") or "").strip()
+        reference = str(sample.get("reference") or answer).strip()
+        contexts = [str(item).strip() for item in (sample.get("contexts") or []) if str(item).strip()]
+        context_doc_ids = [str(item).strip() for item in (sample.get("context_doc_ids") or []) if str(item).strip()]
+        metadata = sample.get("metadata") if isinstance(sample.get("metadata"), dict) else {}
+        return {
+            "question": question,
+            "answer": answer,
+            "reference": reference,
+            "contexts": contexts,
+            "context_doc_ids": context_doc_ids,
+            "difficulty": str(sample.get("difficulty") or "manual"),
+            "task_type": str(sample.get("task_type") or "manual_debug"),
+            "metadata": metadata,
+        }
+
+    def _manual_sample_signature(self, sample: dict[str, Any]) -> str:
+        return f"{str(sample.get('question') or '').strip()}||{str(sample.get('reference') or '').strip()}"
+
+    def _merge_manual_samples(
+        self,
+        generated_dataset: list[dict[str, Any]],
+        manual_samples: list[dict[str, Any]],
+        *,
+        sample_limit: int,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        merged: list[dict[str, Any]] = []
+        used_manual_samples: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in manual_samples + generated_dataset:
+            signature = self._manual_sample_signature(item)
+            if not signature or signature in seen:
+                continue
+            seen.add(signature)
+            merged.append(item)
+            if item in manual_samples:
+                used_manual_samples.append(item)
+            if len(merged) >= max(sample_limit, 1):
+                break
+        return merged, used_manual_samples
 
     def _score_eval_chunk(
         self,

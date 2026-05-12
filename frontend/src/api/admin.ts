@@ -113,6 +113,14 @@ export const adminApi = {
     return apiGet("/admin/system/retrieval-debug", { params: { q: query, top_k: 8, search_type: "hybrid", ...params } })
   },
 
+  saveEvaluationDatasetSample(payload: Record<string, unknown>) {
+    return apiPost("/admin/evaluation/dataset/samples", payload)
+  },
+
+  getEvaluationDatasetSamples(limit = 20) {
+    return apiGet("/admin/evaluation/dataset/samples", { params: { limit } })
+  },
+
   runEvaluation(sampleLimit = 100) {
     return apiPost("/admin/evaluation/run", null, { params: { sample_limit: sampleLimit } })
   },

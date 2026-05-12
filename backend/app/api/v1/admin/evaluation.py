@@ -34,6 +34,35 @@ async def run_evaluation(
     )
 
 
+@router.post("/evaluation/dataset/samples")
+async def save_evaluation_dataset_sample(
+    payload: dict,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    service = EvaluationService(db, get_redis(), reports_dir=REPORTS_DIR)
+    sample = await service.append_manual_sample(current_user.tenant_id, payload)
+    return {
+        "ok": True,
+        "tenant_id": current_user.tenant_id,
+        "sample": sample,
+        "manual_dataset_path": str(service._manual_dataset_path(current_user.tenant_id)),
+    }
+
+
+@router.get("/evaluation/dataset/samples")
+async def list_evaluation_dataset_samples(
+    limit: int = 50,
+    current_user: User = Depends(require_role("ADMIN")),
+):
+    from app.services.evaluation_service import EvaluationService
+
+    return await EvaluationService(None, get_redis(), reports_dir=REPORTS_DIR).list_manual_samples(
+        current_user.tenant_id,
+        limit=max(limit, 1),
+    )
+
+
 @router.post("/evaluation/run-async")
 async def run_evaluation_async(
     sample_limit: int = settings.ci_gate_eval_sample_limit,

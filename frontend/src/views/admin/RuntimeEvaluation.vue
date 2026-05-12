@@ -3,12 +3,12 @@
     <div class="card section-card">
       <div class="evaluation-header">
         <div>
-          <h2>评估报告</h2>
-          <p class="report-meta">最近一次评估时间：{{ formatDate(state.evaluationLatest?.generated_at) }}</p>
+          <h2>评测报告</h2>
+          <p class="report-meta">最近一次评测时间：{{ formatDate(state.evaluationLatest?.generated_at) }}</p>
         </div>
         <div class="action-group">
           <button class="refresh-btn" @click="runEvaluation" :disabled="state.evaluating">
-            {{ state.evaluating ? "运行中..." : "重新评估" }}
+            {{ state.evaluating ? "运行中..." : "重新评测" }}
           </button>
           <button class="btn btn-ghost" @click="downloadRuntimeMetrics">导出运行指标</button>
         </div>
@@ -43,14 +43,14 @@
         </div>
       </div>
 
-      <h2 class="sub-section-title">评估指标</h2>
+      <h2 class="sub-section-title">评测指标</h2>
       <div v-if="metricCards.length" class="stats-grid evaluation-grid">
         <div v-for="item in metricCards" :key="item.key" class="stat-card card compact">
           <span class="stat-value small">{{ item.value }}</span>
           <span class="stat-label">{{ item.label }}</span>
         </div>
       </div>
-      <p v-else class="empty-text">暂无评估指标。</p>
+      <p v-else class="empty-text">暂无评测指标。</p>
 
       <h2 class="sub-section-title">数据集概览</h2>
       <div v-if="datasetSummary" class="panel-grid summary-grid">
@@ -69,7 +69,7 @@
           <div v-if="taskTypeEntries.length" class="tag-list">
             <span v-for="item in taskTypeEntries" :key="item.key" class="summary-tag">{{ item.key }} x {{ item.value }}</span>
           </div>
-          <p v-else class="empty-text">本次评估尚未记录题型统计。</p>
+          <p v-else class="empty-text">本次评测尚未记录题型统计。</p>
         </div>
 
         <div class="card compact-panel">
@@ -77,7 +77,7 @@
           <div v-if="difficultyEntries.length" class="tag-list">
             <span v-for="item in difficultyEntries" :key="item.key" class="summary-tag">{{ item.key }} x {{ item.value }}</span>
           </div>
-          <p v-else class="empty-text">本次评估尚未记录难度分布。</p>
+          <p v-else class="empty-text">本次评测尚未记录难度分布。</p>
         </div>
 
         <div class="card compact-panel">
@@ -95,6 +95,40 @@
       </div>
       <p v-else class="empty-text">暂无数据集摘要。</p>
 
+      <h2 class="sub-section-title">手工评测样本</h2>
+      <div class="panel-grid summary-grid">
+        <div class="card compact-panel">
+          <div class="panel-title">样本沉淀</div>
+          <div class="summary-list">
+            <div class="summary-item"><span>手工样本总数</span><strong>{{ manualSampleTotal }}</strong></div>
+            <div class="summary-item"><span>本次参与评测</span><strong>{{ manualSampleUsed }}</strong></div>
+            <div class="summary-item"><span>最近新增</span><strong>{{ formatDate(latestManualSampleAt) }}</strong></div>
+          </div>
+          <p v-if="state.evaluationDatasetSamplesPath" class="panel-path">{{ state.evaluationDatasetSamplesPath }}</p>
+        </div>
+
+        <div class="card compact-panel wide-panel">
+          <div class="panel-title">最近样本</div>
+          <div v-if="state.evaluationDatasetSamples.length" class="manual-sample-list">
+            <article v-for="(item, index) in state.evaluationDatasetSamples" :key="`${item.question}-${index}`" class="manual-sample-card">
+              <div class="manual-sample-head">
+                <strong>{{ item.question || "未命名问题" }}</strong>
+                <span class="history-badge" :data-passed="isManualSampleUsed(item) ? 'yes' : 'no'">
+                  {{ isManualSampleUsed(item) ? "已参与本次评测" : "尚未参与本次评测" }}
+                </span>
+              </div>
+              <p class="manual-answer">{{ item.reference || item.answer || "-" }}</p>
+              <div class="manual-meta">
+                <span>{{ item.task_type || "manual_debug" }}</span>
+                <span>{{ item.difficulty || "manual" }}</span>
+                <span>{{ formatDate(item.created_at) }}</span>
+              </div>
+            </article>
+          </div>
+          <p v-else class="empty-text">还没有手工评测样本。</p>
+        </div>
+      </div>
+
       <h2 class="sub-section-title">最近趋势</h2>
       <div v-if="historyCards.length" class="history-list">
         <div v-for="item in historyCards" :key="item.generated_at || item.dataset_size" class="history-item">
@@ -110,7 +144,7 @@
           </div>
         </div>
       </div>
-      <p v-else class="empty-text">暂无评估历史。</p>
+      <p v-else class="empty-text">暂无评测历史。</p>
 
       <h2 class="sub-section-title">运行时指标历史</h2>
       <table v-if="state.runtimeMetricsHistory.length" class="data-table">
@@ -137,7 +171,7 @@
 
       <h2 class="sub-section-title">原始报告</h2>
       <pre v-if="state.evaluationLatest?.markdown" class="report-box">{{ state.evaluationLatest.markdown }}</pre>
-      <p v-else class="empty-text">暂无评估报告。</p>
+      <p v-else class="empty-text">暂无评测报告。</p>
     </div>
   </div>
 </template>
@@ -170,6 +204,19 @@ const taskTypeEntries = computed(() =>
 
 const gateFailures = computed(() => state.evaluationLatest?.gate?.failures || [])
 const historyCards = computed(() => state.evaluationHistory || [])
+const manualSampleTotal = computed(
+  () => state.evaluationLatest?.generated_from?.manual_sample_count_total ?? state.evaluationDatasetSamplesTotal ?? 0,
+)
+const manualSampleUsed = computed(() => state.evaluationLatest?.generated_from?.manual_sample_count_used ?? 0)
+const latestManualSampleAt = computed(() => state.evaluationDatasetSamples[0]?.created_at || null)
+
+function isManualSampleUsed(sample: Record<string, any>) {
+  const used = Number(manualSampleUsed.value || 0)
+  if (used <= 0) return false
+  const signature = `${sample.question || ""}||${sample.reference || sample.answer || ""}`
+  const activeDataset = state.evaluationDatasetSamples.slice(0, used)
+  return activeDataset.some((item) => `${item.question || ""}||${item.reference || item.answer || ""}` === signature)
+}
 
 onMounted(() => {
   loadEvaluation()
@@ -183,6 +230,10 @@ onMounted(() => {
 
 .compact-panel {
   padding: 16px;
+}
+
+.wide-panel {
+  grid-column: span 2;
 }
 
 .panel-title {
@@ -206,6 +257,13 @@ onMounted(() => {
 
 .summary-item strong {
   color: var(--text-primary);
+}
+
+.panel-path {
+  margin-top: 12px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  word-break: break-word;
 }
 
 .tag-list {
@@ -249,11 +307,13 @@ onMounted(() => {
   color: var(--text-secondary);
 }
 
+.manual-sample-list,
 .history-list {
   display: grid;
   gap: 12px;
 }
 
+.manual-sample-card,
 .history-item {
   padding: 14px 16px;
   border: 1px solid var(--border-color);
@@ -261,6 +321,7 @@ onMounted(() => {
   background: var(--bg-surface);
 }
 
+.manual-sample-head,
 .history-topline {
   display: flex;
   justify-content: space-between;
@@ -268,10 +329,23 @@ onMounted(() => {
   align-items: center;
 }
 
-.history-meta {
+.manual-answer,
+.history-meta,
+.manual-meta {
   margin-top: 8px;
   color: var(--text-secondary);
   font-size: 13px;
+}
+
+.manual-answer {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.manual-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .history-badge {
@@ -297,5 +371,17 @@ onMounted(() => {
   border-radius: 12px;
   background: rgba(214, 69, 65, 0.12);
   color: #d64541;
+}
+
+@media (max-width: 900px) {
+  .wide-panel {
+    grid-column: span 1;
+  }
+
+  .manual-sample-head,
+  .history-topline {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 </style>

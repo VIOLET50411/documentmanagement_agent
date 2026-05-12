@@ -8,6 +8,9 @@ export function useAdminEvaluation() {
     evaluationLatest: null as GenericMap | null,
     evaluationHistory: [] as GenericMap[],
     evaluationSummary: [] as GenericMap[],
+    evaluationDatasetSamples: [] as GenericMap[],
+    evaluationDatasetSamplesTotal: 0,
+    evaluationDatasetSamplesPath: "",
     runtimeMetricsSummary: null as GenericMap | null,
     runtimeMetricsHistory: [] as GenericMap[],
     evaluating: false,
@@ -18,16 +21,20 @@ export function useAdminEvaluation() {
   async function loadEvaluation() {
     state.error = ""
     try {
-      const [latestRes, historyRes, summaryRes, metricsRes, metricsHistoryRes] = await Promise.all([
+      const [latestRes, historyRes, summaryRes, datasetSamplesRes, metricsRes, metricsHistoryRes] = await Promise.all([
         adminApi.getLatestEvaluation(),
         adminApi.getEvaluationHistory(10),
         adminApi.getEvaluationGateSummary(10),
+        adminApi.getEvaluationDatasetSamples(12),
         adminApi.getRuntimeMetrics(),
         adminApi.getRuntimeMetricsHistory(10),
       ])
       state.evaluationLatest = latestRes || null
       state.evaluationHistory = historyRes || []
       state.evaluationSummary = summaryRes || []
+      state.evaluationDatasetSamples = datasetSamplesRes?.items || []
+      state.evaluationDatasetSamplesTotal = datasetSamplesRes?.total || 0
+      state.evaluationDatasetSamplesPath = datasetSamplesRes?.path || ""
       state.runtimeMetricsSummary = metricsRes || null
       state.runtimeMetricsHistory = metricsHistoryRes || []
     } catch (err: any) {

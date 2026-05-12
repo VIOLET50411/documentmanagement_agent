@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -237,6 +238,110 @@ def test_score_eval_chunk_penalizes_toc_and_rewards_budget_evidence():
     )
 
     assert budget_score > toc_score
+
+
+@pytest.mark.asyncio
+async def test_append_manual_sample_persists_deduped_samples(tmp_path: Path):
+    service = EvaluationService(None, None, reports_dir=tmp_path)
+
+    sample = await service.append_manual_sample(
+        "tenant-debug",
+        {
+            "question": "这个审批怎么走？",
+            "answer": "先提交审批单。",
+            "reference": "先提交审批单。",
+            "contexts": ["审批流程第一步是提交审批单。"],
+            "context_doc_ids": ["doc-1"],
+            "difficulty": "manual",
+            "task_type": "manual_debug",
+        },
+    )
+    await service.append_manual_sample(
+        "tenant-debug",
+        {
+            "question": "这个审批怎么走？",
+            "answer": "先提交审批单。",
+            "reference": "先提交审批单。",
+            "contexts": ["重复样本应覆盖旧版本。"],
+            "context_doc_ids": ["doc-2"],
+        },
+    )
+
+    path = tmp_path / "evaluation_tenant-debug.manual.dataset.json"
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert sample["question"] == "这个审批怎么走？"
+    assert len(saved) == 1
+    assert saved[0]["context_doc_ids"] == ["doc-2"]
+
+
+@pytest.mark.asyncio
+async def test_run_merges_manual_samples_into_dataset(tmp_path: Path):
+    service = EvaluationService(None, None, reports_dir=tmp_path)
+
+    await service.append_manual_sample(
+        "tenant-merge",
+        {
+            "question": "手工样本问题",
+            "answer": "手工样本答案",
+            "reference": "手工样本答案",
+            "contexts": ["手工样本文本"],
+            "context_doc_ids": ["manual-doc"],
+            "difficulty": "manual",
+            "task_type": "manual_debug",
+        },
+    )
+
+    async def fake_load_documents(tenant_id: str, *, sample_limit: int):
+        return [{"id": "doc-1", "title": "制度", "chunks": [{"content": "自动样本上下文"}]}]
+
+    async def fake_generate(documents, count: int = 500):
+        return [
+            {
+                "question": "自动样本问题",
+                "answer": "自动样本答案",
+                "reference": "自动样本答案",
+                "contexts": ["自动样本文本"],
+                "context_doc_ids": ["auto-doc"],
+                "difficulty": "basic",
+                "task_type": "quote",
+            }
+        ]
+
+    async def fake_evaluate(dataset):
+        return {
+            "faithfulness": settings.ci_gate_min_faithfulness,
+            "answer_relevancy": settings.ci_gate_min_answer_relevancy,
+            "context_precision": settings.ci_gate_min_context_precision,
+            "context_recall": settings.ci_gate_min_context_recall,
+            "_meta": {"real_mode": True, "mode": "ragas_api"},
+            "dataset_questions": [item["question"] for item in dataset],
+        }
+
+    service._load_documents = fake_load_documents  # type: ignore[method-assign]
+    service.dataset_generator.generate = fake_generate  # type: ignore[method-assign]
+    service.runner.evaluate = fake_evaluate  # type: ignore[method-assign]
+    service.report_generator.generate_json_report = lambda payload, output_path: Path(output_path).write_text(json.dumps(payload), encoding="utf-8")
+    service.report_generator.generate_markdown_report = lambda payload, output_path: Path(output_path).write_text("# report", encoding="utf-8")
+
+    async def fake_log_event(*args, **kwargs):
+        return None
+
+    async def fake_persist_history_snapshot(tenant_id: str, payload: dict):
+        return None
+
+    async def fake_notify_progress(*args, **kwargs):
+        return None
+
+    service.audit = SimpleNamespace(log_event=fake_log_event)
+    service._persist_history_snapshot = fake_persist_history_snapshot  # type: ignore[method-assign]
+    service._notify_progress = fake_notify_progress  # type: ignore[method-assign]
+
+    result = await service.run("tenant-merge", sample_limit=5, actor=None)
+    dataset = json.loads(Path(result["dataset_path"]).read_text(encoding="utf-8"))
+
+    assert dataset[0]["question"] == "手工样本问题"
+    assert any(item["question"] == "自动样本问题" for item in dataset)
+    assert result["generated_from"]["manual_sample_count"] == 1
 
 
 @pytest.mark.asyncio
