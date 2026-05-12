@@ -20,7 +20,7 @@
     </div>
 
     <div v-if="isStreaming && streamStatus !== 'streaming'" class="status-line">
-      <span class="status-chip">{{ streamStatusMsg || "正在准备回答，请稍候…" }}</span>
+      <span class="status-chip">{{ streamStatusMsg || preparingMessage }}</span>
     </div>
   </div>
 </template>
@@ -30,6 +30,8 @@ import type { ChatMessage, ChatRuntimeEvent } from "@/stores/chat"
 import AssistantMessage from "./AssistantMessage.vue"
 import RuntimeEventList from "./RuntimeEventList.vue"
 import UserMessage from "./UserMessage.vue"
+
+const preparingMessage = "\u6b63\u5728\u51c6\u5907\u56de\u7b54\uff0c\u8bf7\u7a0d\u5019\u2026"
 
 defineProps<{
   messages: ChatMessage[]

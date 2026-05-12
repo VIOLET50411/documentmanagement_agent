@@ -2,15 +2,15 @@
   <div class="chat-page">
     <section v-if="showHeroState" class="hero-state">
       <div class="hero-intro">
-        <h2>您好，今天想了解什么？</h2>
-        <p class="section-copy">我是您的智能文档助手。我可以帮您总结长文档、检索关键信息，并基于企业知识库回答问题。请在下方直接提问，或选择快捷指令开始。</p>
+        <h2>{{ heroTitle }}</h2>
+        <p class="section-copy">{{ heroDescription }}</p>
       </div>
 
       <ChatComposer
         class="hero-composer"
         v-model="inputMessage"
         v-model:selected-model="selectedModel"
-        placeholder="请直接提问，或描述你要检索、总结、对比的文档问题"
+        :placeholder="heroPlaceholder"
         :disabled="chatStore.isStreaming"
         @submit="handleSend"
       />
@@ -42,13 +42,13 @@
           class="hero-composer compact card-shell"
           v-model="inputMessage"
           v-model:selected-model="selectedModel"
-          placeholder="继续追问、补充条件，或要求引用更精确的段落"
+          :placeholder="followupPlaceholder"
           :disabled="chatStore.isStreaming"
           compact
           @submit="handleSend"
         />
 
-        <p class="footer-note">回答会优先附带引用。若证据不足，系统会明确提示置信度和原因。</p>
+        <p class="footer-note">{{ footerNote }}</p>
       </div>
     </section>
   </div>
@@ -63,6 +63,16 @@ import { chatApi } from "@/api/chat"
 import MessageList from "@/components/chat/MessageList.vue"
 import ChatComposer from "@/components/chat/ChatComposer.vue"
 
+const heroTitle = "\u60a8\u597d\uff0c\u4eca\u5929\u60f3\u4e86\u89e3\u4ec0\u4e48\uff1f"
+const heroDescription =
+  "\u6211\u662f\u60a8\u7684\u667a\u80fd\u6587\u6863\u52a9\u624b\u3002\u6211\u53ef\u4ee5\u5e2e\u60a8\u603b\u7ed3\u957f\u6587\u6863\u3001\u68c0\u7d22\u5173\u952e\u4fe1\u606f\uff0c\u5e76\u57fa\u4e8e\u4f01\u4e1a\u77e5\u8bc6\u5e93\u56de\u7b54\u95ee\u9898\u3002\u8bf7\u5728\u4e0b\u65b9\u76f4\u63a5\u63d0\u95ee\uff0c\u6216\u9009\u62e9\u5feb\u6377\u6307\u4ee4\u5f00\u59cb\u3002"
+const heroPlaceholder =
+  "\u8bf7\u76f4\u63a5\u63d0\u95ee\uff0c\u6216\u63cf\u8ff0\u4f60\u8981\u68c0\u7d22\u3001\u603b\u7ed3\u3001\u5bf9\u6bd4\u7684\u6587\u6863\u95ee\u9898"
+const followupPlaceholder =
+  "\u7ee7\u7eed\u8ffd\u95ee\u3001\u8865\u5145\u6761\u4ef6\uff0c\u6216\u8981\u6c42\u5f15\u7528\u66f4\u7cbe\u786e\u7684\u6bb5\u843d"
+const footerNote =
+  "\u56de\u7b54\u4f1a\u4f18\u5148\u9644\u5e26\u5f15\u7528\u3002\u82e5\u8bc1\u636e\u4e0d\u8db3\uff0c\u7cfb\u7edf\u4f1a\u660e\u786e\u63d0\u793a\u7f6e\u4fe1\u5ea6\u548c\u539f\u56e0\u3002"
+
 const chatStore = useChatStore()
 const { sendMessage } = useSSE()
 const messagesRef = ref<HTMLElement | null>(null)
@@ -71,11 +81,26 @@ const selectedModel = ref("qwen2.5:1.5b")
 const { scrollToBottom } = useAutoScroll(messagesRef)
 
 const quickPrompts = [
-  { label: "制度问答", hint: "围绕制度、流程、职责追问", text: "请总结当前差旅制度的审批链路，并说明各角色职责。" },
-  { label: "检索验证", hint: "检查上传与召回链路是否正常", text: "请说明文档上传后是如何进入检索链路的。" },
-  { label: "写作辅助", hint: "生成汇报、说明与总结", text: "请起草一份平台实施进展说明，包含风险与下一步计划。" },
-  { label: "运维检查", hint: "梳理当前平台问题与优先级", text: "请列出当前平台最需要优先处理的三个问题，并给出原因。" },
-  { label: "治理建议", hint: "从风险和管理角度给建议", text: "请从风险视角给出三条平台治理建议。" },
+  {
+    label: "\u5236\u5ea6\u95ee\u7b54",
+    text: "\u8bf7\u603b\u7ed3\u5f53\u524d\u5dee\u65c5\u5236\u5ea6\u7684\u5ba1\u6279\u94fe\u8def\uff0c\u5e76\u8bf4\u660e\u5404\u89d2\u8272\u804c\u8d23\u3002",
+  },
+  {
+    label: "\u68c0\u7d22\u9a8c\u8bc1",
+    text: "\u8bf7\u8bf4\u660e\u6587\u6863\u4e0a\u4f20\u540e\u662f\u5982\u4f55\u8fdb\u5165\u68c0\u7d22\u94fe\u8def\u7684\u3002",
+  },
+  {
+    label: "\u5199\u4f5c\u8f85\u52a9",
+    text: "\u8bf7\u8d77\u8349\u4e00\u4efd\u5e73\u53f0\u5b9e\u65bd\u8fdb\u5c55\u8bf4\u660e\uff0c\u5305\u542b\u98ce\u9669\u4e0e\u4e0b\u4e00\u6b65\u8ba1\u5212\u3002",
+  },
+  {
+    label: "\u8fd0\u7ef4\u68c0\u67e5",
+    text: "\u8bf7\u5217\u51fa\u5f53\u524d\u5e73\u53f0\u6700\u9700\u8981\u4f18\u5148\u5904\u7406\u7684\u4e09\u4e2a\u95ee\u9898\uff0c\u5e76\u7ed9\u51fa\u539f\u56e0\u3002",
+  },
+  {
+    label: "\u6cbb\u7406\u5efa\u8bae",
+    text: "\u8bf7\u4ece\u98ce\u9669\u89c6\u89d2\u7ed9\u51fa\u4e09\u6761\u5e73\u53f0\u6cbb\u7406\u5efa\u8bae\u3002",
+  },
 ]
 
 const hasMessages = computed(() => chatStore.messages.length > 0)
@@ -128,19 +153,11 @@ function retryLastPrompt() {
   box-shadow: var(--shadow-sm);
 }
 
-.section-kicker {
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
-}
-
 .section-copy {
   margin-top: 10px;
   color: var(--text-secondary);
 }
 
-.history-state,
 .hero-state,
 .conversation-state {
   display: flex;
@@ -148,20 +165,6 @@ function retryLastPrompt() {
   gap: 22px;
 }
 
-.history-state {
-  padding: 18px;
-}
-
-.history-header,
-.history-toolbar,
-.onboarding-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-}
-
-.history-header h2,
 .hero-intro h2 {
   font-size: clamp(2rem, 2.5vw + 1rem, 3rem);
   line-height: 1.2;
@@ -173,90 +176,6 @@ function retryLastPrompt() {
   align-items: center;
   justify-content: center;
   gap: 12px;
-}
-
-.history-toolbar {
-  margin-top: 18px;
-  flex-wrap: wrap;
-}
-
-.history-search {
-  position: relative;
-  flex: 1;
-  min-width: 240px;
-}
-
-.history-search span {
-  position: absolute;
-  left: 16px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--text-tertiary);
-}
-
-.history-search-input {
-  padding-left: 40px;
-}
-
-.history-summary {
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.history-list {
-  display: grid;
-  gap: 10px;
-  margin-top: 22px;
-}
-
-.history-item,
-.action-button {
-  border: 1px solid var(--border-color);
-  background: var(--bg-surface);
-  transition: all var(--transition-fast);
-}
-
-.history-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  width: 100%;
-  padding: 16px 20px;
-  text-align: left;
-  border-radius: var(--radius-md);
-}
-
-.history-item:hover,
-.action-button:hover {
-  background: var(--bg-surface-hover);
-  border-color: var(--border-color-strong);
-}
-
-.history-item strong,
-.history-item span,
-.history-item small {
-  display: block;
-}
-
-.history-item span,
-.history-item small {
-  margin-top: 4px;
-  color: var(--text-secondary);
-}
-
-.empty-panel {
-  padding: 24px;
-  border-radius: var(--radius-md);
-  background: var(--bg-surface-hover);
-  color: var(--text-secondary);
-  border: 1px solid var(--border-color);
-}
-
-.empty-panel span {
-  display: block;
-  margin-top: 8px;
-  font-size: 14px;
 }
 
 .hero-state {
@@ -331,10 +250,6 @@ function retryLastPrompt() {
 }
 
 @media (max-width: 900px) {
-  .quick-grid {
-    grid-template-columns: 1fr;
-  }
-
   .conversation-stream,
   .floating-composer,
   .hero-state {
@@ -343,16 +258,8 @@ function retryLastPrompt() {
 }
 
 @media (max-width: 640px) {
-  .history-header,
-  .history-toolbar {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .history-state,
   .conversation-stream,
-  .hero-composer,
-  .onboarding {
+  .hero-composer {
     padding: 16px;
   }
 

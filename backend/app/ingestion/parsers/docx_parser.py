@@ -38,6 +38,7 @@ class DocxParser:
         elements: list[dict] = []
         current_heading = path.stem
         table_index = 0
+        paragraph_count = 0
 
         for block_index, child in enumerate(document.element.body.iterchildren(), start=1):
             if isinstance(child, CT_P):
@@ -45,6 +46,7 @@ class DocxParser:
                 text = (paragraph.text or "").strip()
                 if not text:
                     continue
+                paragraph_count += 1
                 style_name = (paragraph.style.name or "").lower() if paragraph.style else ""
                 element_type = "heading" if "heading" in style_name or "title" in style_name else "paragraph"
                 if element_type == "heading":
@@ -67,6 +69,14 @@ class DocxParser:
                     continue
                 table_index += 1
                 elements.append(
+                    self._build_table_summary_element(
+                        rows=rows,
+                        section_title=current_heading,
+                        block_index=block_index,
+                        parser="python-docx",
+                    )
+                )
+                elements.append(
                     {
                         "type": "table",
                         "text": self._render_markdown_table(rows),
@@ -78,7 +88,12 @@ class DocxParser:
                         },
                     }
                 )
-        return elements
+        return self._prepend_document_overview(
+            elements=elements,
+            document_title=path.stem,
+            paragraph_count=paragraph_count,
+            table_count=table_index,
+        )
 
     def _parse_with_xml(self, path: Path) -> list[dict]:
         with ZipFile(path) as archive:
@@ -93,11 +108,13 @@ class DocxParser:
             return []
 
         table_index = 0
+        paragraph_count = 0
         for block_index, child in enumerate(list(body), start=1):
             if child.tag == self._w_tag("p"):
                 text = self._extract_paragraph_text_xml(child, namespace)
                 if not text:
                     continue
+                paragraph_count += 1
                 style = child.find(".//w:pStyle", namespace)
                 style_value = (style.attrib.get(self._w_tag("val"), "") if style is not None else "").lower()
                 element_type = "heading" if style_value.startswith("heading") or style_value == "title" else "paragraph"
@@ -120,6 +137,14 @@ class DocxParser:
                     continue
                 table_index += 1
                 elements.append(
+                    self._build_table_summary_element(
+                        rows=rows,
+                        section_title=current_heading,
+                        block_index=block_index,
+                        parser="xml",
+                    )
+                )
+                elements.append(
                     {
                         "type": "table",
                         "text": self._render_markdown_table(rows),
@@ -132,7 +157,12 @@ class DocxParser:
                     }
                 )
 
-        return elements
+        return self._prepend_document_overview(
+            elements=elements,
+            document_title=path.stem,
+            paragraph_count=paragraph_count,
+            table_count=table_index,
+        )
 
     def _extract_table_rows(self, rows) -> list[list[str]]:
         extracted: list[list[str]] = []
@@ -171,3 +201,47 @@ class DocxParser:
             padded = row + [""] * max(0, len(header) - len(row))
             rendered.append("| " + " | ".join(padded[: len(header)]) + " |")
         return "\n".join(rendered)
+
+    def _prepend_document_overview(
+        self,
+        *,
+        elements: list[dict],
+        document_title: str,
+        paragraph_count: int,
+        table_count: int,
+    ) -> list[dict]:
+        if not elements:
+            return elements
+        return [
+            {
+                "type": "paragraph",
+                "text": f"文档《{document_title}》概览：包含{paragraph_count}段正文、{table_count}个表格。",
+                "metadata": {
+                    "section_title": document_title,
+                    "block_index": 0,
+                    "parser": "docx_overview",
+                },
+            },
+            *elements,
+        ]
+
+    def _build_table_summary_element(
+        self,
+        *,
+        rows: list[list[str]],
+        section_title: str,
+        block_index: int,
+        parser: str,
+    ) -> dict:
+        headers = [cell for cell in rows[0] if cell][:5]
+        row_count = max(len(rows) - 1, 0)
+        header_text = "、".join(headers) if headers else "未识别列名"
+        return {
+            "type": "paragraph",
+            "text": f"表格摘要：共{row_count}行，字段包括{header_text}。",
+            "metadata": {
+                "section_title": section_title,
+                "block_index": block_index,
+                "parser": f"{parser}_table_summary",
+            },
+        }

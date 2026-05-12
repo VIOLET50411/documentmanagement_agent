@@ -3,11 +3,11 @@
     <button class="runtime-toggle" type="button" @click="expanded = !expanded">
       <div class="runtime-head">
         <span class="runtime-title">
-          本轮运行过程
+          {{ runtimeTitle }}
           <span v-if="activeEvent" class="runtime-live-dots" aria-hidden="true"></span>
         </span>
-        <span class="runtime-count">{{ events.length }} 个阶段</span>
-        <span class="runtime-expand">{{ expanded ? "收起" : "展开" }}</span>
+        <span class="runtime-count">{{ events.length }} {{ stageUnit }}</span>
+        <span class="runtime-expand">{{ expanded ? collapseLabel : expandLabel }}</span>
       </div>
       <p v-if="!expanded" class="runtime-preview">{{ previewText }}</p>
     </button>
@@ -16,25 +16,21 @@
       <div v-if="expanded" class="runtime-list">
         <template v-for="event in events" :key="event.id">
           <ToolCallBlock v-if="event.status === 'tool_call'" :event="event" />
-          <article
-            v-else
-            class="runtime-card"
-            :data-status="event.status"
-          >
+          <article v-else class="runtime-card" :data-status="event.status">
             <div class="runtime-card-head">
               <div class="runtime-card-label">
                 <span class="runtime-icon">{{ statusIcon(event.status) }}</span>
                 <strong>{{ statusLabel(event.status) }}</strong>
               </div>
               <span class="runtime-time">
-                {{ isActiveEvent(event) ? "进行中" : formatTime(event.timestamp) }}
+                {{ isActiveEvent(event) ? runningLabel : formatTime(event.timestamp) }}
               </span>
             </div>
             <p class="runtime-message">{{ event.message }}</p>
             <div class="runtime-meta">
               <span v-if="event.source">{{ event.source }}</span>
               <span v-if="event.sequenceNum">#{{ event.sequenceNum }}</span>
-              <span v-if="event.traceId">Trace：{{ event.traceId }}</span>
+              <span v-if="event.traceId">Trace: {{ event.traceId }}</span>
             </div>
             <FallbackNotice :event="event" />
           </article>
@@ -50,43 +46,48 @@ import type { ChatRuntimeEvent } from "@/stores/chat"
 import FallbackNotice from "./FallbackNotice.vue"
 import ToolCallBlock from "./ToolCallBlock.vue"
 
+const runtimeTitle = "\u672c\u8f6e\u8fd0\u884c\u8fc7\u7a0b"
+const stageUnit = "\u4e2a\u9636\u6bb5"
+const collapseLabel = "\u6536\u8d77"
+const expandLabel = "\u5c55\u5f00"
+const runningLabel = "\u8fdb\u884c\u4e2d"
+
 const props = defineProps<{
   events: ChatRuntimeEvent[]
 }>()
 
 const expanded = ref(false)
-
 const activeEvent = computed(() => props.events[props.events.length - 1] ?? null)
 
 const previewText = computed(() =>
   props.events
     .map((event) => `${statusLabel(event.status)}: ${event.message}`)
     .slice(0, 2)
-    .join(" · ")
+    .join(" | ")
 )
 
 function statusLabel(status: string) {
   const labels: Record<string, string> = {
-    thinking: "问题理解",
-    searching: "知识检索",
-    reading: "证据读取",
-    tool_call: "工具调用",
-    streaming: "回答生成",
-    error: "运行失败",
+    thinking: "\u95ee\u9898\u7406\u89e3",
+    searching: "\u77e5\u8bc6\u68c0\u7d22",
+    reading: "\u8bc1\u636e\u8bfb\u53d6",
+    tool_call: "\u5de5\u5177\u8c03\u7528",
+    streaming: "\u56de\u7b54\u751f\u6210",
+    error: "\u8fd0\u884c\u5931\u8d25",
   }
-  return labels[status] || "处理中"
+  return labels[status] || "\u5904\u7406\u4e2d"
 }
 
 function statusIcon(status: string) {
   const icons: Record<string, string> = {
-    thinking: "思",
-    searching: "检",
-    reading: "读",
-    tool_call: "调",
-    streaming: "答",
-    error: "错",
+    thinking: "\u60f3",
+    searching: "\u68c0",
+    reading: "\u8bfb",
+    tool_call: "\u8c03",
+    streaming: "\u7b54",
+    error: "\u9519",
   }
-  return icons[status] || "态"
+  return icons[status] || "\u5904"
 }
 
 function isActiveEvent(event: ChatRuntimeEvent) {

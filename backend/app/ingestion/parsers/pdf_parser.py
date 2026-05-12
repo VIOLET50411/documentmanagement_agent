@@ -94,6 +94,21 @@ class PDFParser:
             if not text:
                 continue
             blocks = self._split_text_blocks(text)
+            if blocks:
+                parsed.append(
+                    {
+                        "type": "paragraph",
+                        "text": f"PDF第{page_index}页概览：共提取{len(blocks)}个文本块。",
+                        "metadata": {
+                            "page_number": page_index,
+                            "section_title": path.stem,
+                            "block_index": 0,
+                            "char_count": len(blocks),
+                            "file_name": path.name,
+                            "parser": "pypdf_overview",
+                        },
+                    }
+                )
             for block_index, block in enumerate(blocks, start=1):
                 element_type = self._infer_block_type(block)
                 parsed.append(

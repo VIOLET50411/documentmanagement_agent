@@ -1,12 +1,14 @@
 <template>
   <div v-if="event.degraded && event.fallbackReason" class="fallback-notice">
-    <strong>已触发降级路径</strong>
+    <strong>{{ title }}</strong>
     <span>{{ event.fallbackReason }}</span>
   </div>
 </template>
 
 <script setup lang="ts">
 import type { ChatRuntimeEvent } from "@/stores/chat"
+
+const title = "\u5df2\u89e6\u53d1\u964d\u7ea7\u8def\u5f84"
 
 defineProps<{
   event: ChatRuntimeEvent

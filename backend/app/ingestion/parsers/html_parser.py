@@ -27,25 +27,25 @@ REMOVABLE_TAGS = ("script", "style", "noscript", "iframe", "svg")
 CONTAINER_REMOVABLE_SELECTORS = ("nav", "footer", "header", "aside", "form")
 
 BOILERPLATE_PATTERNS = (
-    "版权所有",
-    "上一篇",
-    "下一篇",
-    "返回首页",
-    "信息公开",
-    "打印本页",
-    "关闭窗口",
-    "地址：",
-    "邮编：",
-    "电话：",
-    "传真：",
-    "Email：",
-    "浏览次数",
-    "当前位置：",
+    "\u7248\u6743\u6240\u6709",
+    "\u4e0a\u4e00\u7bc7",
+    "\u4e0b\u4e00\u7bc7",
+    "\u8fd4\u56de\u9996\u9875",
+    "\u4fe1\u606f\u516c\u5f00",
+    "\u6253\u5370\u672c\u9875",
+    "\u5173\u95ed\u7a97\u53e3",
+    "\u5730\u5740\uff1a",
+    "\u90ae\u7f16\uff1a",
+    "\u7535\u8bdd\uff1a",
+    "\u4f20\u771f\uff1a",
+    "Email\uff1a",
+    "\u6d4f\u89c8\u6b21\u6570",
+    "\u5f53\u524d\u4f4d\u7f6e\uff1a",
 )
 
 LOW_SIGNAL_PATTERNS = (
-    r"^附件【.+】已下载\d+次$",
-    r"^发布时间[:：]?\s*\d{4}-\d{2}-\d{2}",
+    r"^\u9644\u4ef6\u3010?.+\u3011?\u5df2\u4e0b\u8f7d\d+\u6b21$",
+    r"^\u53d1\u5e03\u65f6\u95f4[:\uff1a]?\s*\d{4}-\d{2}-\d{2}",
     r"^[0-9/: \-]+$",
 )
 
@@ -76,7 +76,23 @@ class HTMLParser:
             return self._fallback_notice(path, "html_no_blocks")
 
         document_title = self._extract_document_title(soup, path)
-        parsed: list[dict] = []
+        parsed: list[dict] = [
+            {
+                "type": "paragraph",
+                "text": (
+                    f"\u7f51\u9875\u6587\u6863\u300a{document_title}\u300b\u6982\u89c8\uff1a"
+                    f"\u5171\u63d0\u53d6{len(blocks)}\u4e2a\u6b63\u6587\u5757\u3002"
+                ),
+                "metadata": {
+                    "page_number": 1,
+                    "section_title": document_title,
+                    "block_index": 0,
+                    "char_count": len(document_title),
+                    "file_name": path.name,
+                    "parser": "html_overview",
+                },
+            }
+        ]
         for idx, block in enumerate(blocks, start=1):
             parsed.append(
                 {
@@ -213,18 +229,16 @@ class HTMLParser:
         )
 
     def _has_substantive_elements(self, elements: list[dict]) -> bool:
-        substantive_count = 0
         for item in elements:
             metadata = item.get("metadata") or {}
             text = self._normalize_text(str(item.get("text") or ""))
             if metadata.get("parser") in {"fallback", "html_fallback"}:
                 continue
-            if "暂时无法提取可用文本" in text or "待人工复核" in text:
+            if "\u6682\u65f6\u65e0\u6cd5\u63d0\u53d6\u53ef\u7528\u6587\u672c" in text:
                 continue
-            if len(text) < 20:
+            if "\u5f85 OCR \u6216\u4eba\u5de5\u590d\u6838" in text:
                 continue
-            substantive_count += 1
-            if substantive_count >= 1:
+            if len(text) >= 20:
                 return True
         return False
 
@@ -274,13 +288,17 @@ class HTMLParser:
             return None
         normalized = re.sub(r"^\d+\s*", "", normalized)
         heading_match = re.match(
-            r"((?:[一二三四五六七八九十]+、)?[^。；;]{2,40}?(?:说明|情况说明|总表|目标表|表|概况|目录))",
+            (
+                r"((?:[\u4e00\u4e8c\u4e09\u56db\u4e94\u516d\u4e03\u516b\u4e5d\u5341]+\u3001)?"
+                r"[^\u3002\uff1b;]{2,40}?"
+                r"(?:\u8bf4\u660e|\u60c5\u51b5\u8bf4\u660e|\u603b\u8868|\u76ee\u6807\u8868|\u6982\u51b5|\u76ee\u5f55))"
+            ),
             normalized,
         )
         if heading_match:
             return heading_match.group(1).strip()
 
-        first_line = re.split(r"[。！？\n]", normalized, maxsplit=1)[0].strip()
+        first_line = re.split(r"[\u3002\uff01\uff1f\n]", normalized, maxsplit=1)[0].strip()
         if 4 <= len(first_line) <= 40:
             return first_line
         return None
@@ -317,14 +335,14 @@ class HTMLParser:
         compact = text.strip()
         if not compact:
             return "paragraph"
-        if re.fullmatch(r"[\u4e00-\u9fffA-Za-z0-9\-.、()（）《》：: ]{1,50}", compact):
+        if re.fullmatch(r"[\u4e00-\u9fffA-Za-z0-9\-.、()（）《》“”：: ]{1,50}", compact):
             return "heading"
         if "|" in compact and compact.count("|") >= 2:
             return "table"
         return "paragraph"
 
     def _guess_section(self, text: str, fallback: str) -> str:
-        first_line = re.split(r"[。！？\n]", text, maxsplit=1)[0].strip()
+        first_line = re.split(r"[\u3002\uff01\uff1f\n]", text, maxsplit=1)[0].strip()
         if 2 <= len(first_line) <= 40:
             return first_line
         return fallback
@@ -333,7 +351,10 @@ class HTMLParser:
         return [
             {
                 "type": "ocr_notice",
-                "text": f"文件 {path.name} 的 HTML 内容暂时无法提取，已标记为待人工复核。",
+                "text": (
+                    f"\u6587\u4ef6 {path.name} \u7684 HTML \u5185\u5bb9"
+                    "\u6682\u65f6\u65e0\u6cd5\u63d0\u53d6\uff0c\u5df2\u6807\u8bb0\u4e3a\u5f85\u4eba\u5de5\u590d\u6838\u3002"
+                ),
                 "metadata": {
                     "page_number": 1,
                     "requires_ocr": False,

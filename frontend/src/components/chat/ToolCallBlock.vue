@@ -2,9 +2,9 @@
   <article class="tool-card" :data-degraded="event.degraded ? 'true' : 'false'">
     <div class="tool-head">
       <div class="tool-title-row">
-        <span class="tool-icon">调</span>
+        <span class="tool-icon">{{ toolIcon }}</span>
         <div>
-          <strong>工具调用</strong>
+          <strong>{{ title }}</strong>
           <p class="tool-source">{{ event.source || "agent_runtime_v2" }}</p>
         </div>
       </div>
@@ -14,18 +14,22 @@
     <p class="tool-message">{{ event.message }}</p>
 
     <div class="tool-meta">
-      <span v-if="event.traceId">Trace：{{ event.traceId }}</span>
+      <span v-if="event.traceId">Trace: {{ event.traceId }}</span>
       <span>{{ formatTime(event.timestamp) }}</span>
     </div>
 
     <p v-if="event.degraded && event.fallbackReason" class="tool-fallback">
-      已降级：{{ event.fallbackReason }}
+      {{ degradedLabel }}：{{ event.fallbackReason }}
     </p>
   </article>
 </template>
 
 <script setup lang="ts">
 import type { ChatRuntimeEvent } from "@/stores/chat"
+
+const toolIcon = "\u8c03"
+const title = "\u5de5\u5177\u8c03\u7528"
+const degradedLabel = "\u5df2\u964d\u7ea7"
 
 defineProps<{
   event: ChatRuntimeEvent

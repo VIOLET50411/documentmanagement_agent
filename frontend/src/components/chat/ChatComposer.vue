@@ -14,13 +14,13 @@
 
       <div class="composer-bottom">
         <div class="composer-tools">
-          <button class="tool-btn" type="button" @click="focusTextarea">
-            <span class="icon">＋</span>
+          <button class="tool-btn" type="button" :title="focusLabel" @click="focusTextarea">
+            <span class="icon">⌕</span>
           </button>
         </div>
         <div class="composer-actions">
           <label class="model-selector">
-            <span class="sr-only">选择模型</span>
+            <span class="sr-only">{{ modelSelectorLabel }}</span>
             <select
               :value="selectedModel"
               class="model-select"
@@ -38,6 +38,9 @@
 
 <script setup lang="ts">
 import { nextTick, ref, watch } from "vue"
+
+const focusLabel = "\u805a\u7126\u8f93\u5165\u6846"
+const modelSelectorLabel = "\u9009\u62e9\u6a21\u578b"
 
 const props = defineProps<{
   modelValue: string

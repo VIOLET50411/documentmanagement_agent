@@ -7,7 +7,7 @@
           <button
             class="sidebar-toggle"
             :class="{ active: isSidebarOpen }"
-            aria-label="切换侧边栏"
+            :aria-label="toggleSidebarLabel"
             @click="toggleSidebar"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -167,6 +167,8 @@ type NavItem = {
   action?: 'new'
   adminOnly?: boolean
 }
+
+const toggleSidebarLabel = '切换侧边栏'
 
 const route = useRoute()
 const router = useRouter()
@@ -366,15 +368,6 @@ onBeforeUnmount(() => {
   transition: opacity var(--transition-fast);
   cursor: pointer;
   color: var(--text-secondary);
-}
-
-.sidebar-toggle span {
-  display: block;
-  width: 14px;
-  height: 1.5px;
-  border-radius: 999px;
-  background: currentColor;
-  transition: transform var(--transition-fast), opacity var(--transition-fast);
 }
 
 .sidebar-toggle:hover {
@@ -691,8 +684,6 @@ onBeforeUnmount(() => {
   background: var(--bg-surface-hover);
 }
 
-
-
 .topbar {
   position: sticky;
   top: 0;
@@ -755,10 +746,6 @@ onBeforeUnmount(() => {
   background: rgba(255, 255, 255, 0.6);
   color: var(--text-primary);
 }
-
-
-
-
 
 .content-shell {
   min-width: 0;

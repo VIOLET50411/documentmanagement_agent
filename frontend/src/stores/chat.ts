@@ -32,6 +32,7 @@ export interface ChatRuntimeEvent {
 }
 
 const ACTIVE_SESSION_STORAGE_KEY = "docmind.chat.activeSessionId"
+const DEFAULT_SESSION_TITLE = "\u65b0\u5bf9\u8bdd"
 
 export const useChatStore = defineStore("chat", () => {
   const sessions: Ref<ChatSession[]> = ref([])
@@ -65,7 +66,7 @@ export const useChatStore = defineStore("chat", () => {
 
   function formatSessionTitle(content: string) {
     const normalized = content.replace(/\s+/g, " ").trim()
-    if (!normalized) return "新对话"
+    if (!normalized) return DEFAULT_SESSION_TITLE
     const firstChunk = normalized.split(/[。！？\n]/).map((item) => item.trim()).find(Boolean) || normalized
     const compact = firstChunk.replace(/^[#>*\-\d.\s]+/, "").trim()
     const title = compact || normalized
@@ -77,7 +78,7 @@ export const useChatStore = defineStore("chat", () => {
     if (!session) return
     const now = new Date().toISOString()
     session.updatedAt = now
-    if (content && session.title === "新对话") {
+    if (content && session.title === DEFAULT_SESSION_TITLE) {
       session.title = formatSessionTitle(content)
     }
     sessions.value = [...sessions.value].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
@@ -93,7 +94,7 @@ export const useChatStore = defineStore("chat", () => {
   function createSession(): ChatSession {
     const now = new Date().toISOString()
     const id = createSessionId()
-    const session: ChatSession = { id, title: "新对话", createdAt: now, updatedAt: now }
+    const session: ChatSession = { id, title: DEFAULT_SESSION_TITLE, createdAt: now, updatedAt: now }
     sessions.value = [session, ...sessions.value.filter((item) => item.id !== id)]
     activeSessionId.value = id
     saveActiveSessionId(id)
@@ -228,13 +229,13 @@ export const useChatStore = defineStore("chat", () => {
 
   function defaultRuntimeMessage(status: string) {
     const labels: Record<string, string> = {
-      thinking: "正在理解问题",
-      searching: "正在检索知识库",
-      reading: "正在读取证据内容",
-      tool_call: "正在执行工具调用",
-      error: "本轮回答失败",
+      thinking: "\u6b63\u5728\u7406\u89e3\u95ee\u9898",
+      searching: "\u6b63\u5728\u68c0\u7d22\u77e5\u8bc6\u5e93",
+      reading: "\u6b63\u5728\u8bfb\u53d6\u8bc1\u636e\u5185\u5bb9",
+      tool_call: "\u6b63\u5728\u6267\u884c\u5de5\u5177\u8c03\u7528",
+      error: "\u672c\u8f6e\u56de\u7b54\u5931\u8d25",
     }
-    return labels[status] || "正在处理"
+    return labels[status] || "\u6b63\u5728\u5904\u7406"
   }
 
   function ensureSessionById(sessionId: string | null | undefined) {
@@ -242,7 +243,7 @@ export const useChatStore = defineStore("chat", () => {
     const exists = sessions.value.some((session) => session.id === sessionId)
     if (!exists) {
       const now = new Date().toISOString()
-      sessions.value.unshift({ id: sessionId, title: "新对话", createdAt: now, updatedAt: now })
+      sessions.value.unshift({ id: sessionId, title: DEFAULT_SESSION_TITLE, createdAt: now, updatedAt: now })
     }
     activeSessionId.value = sessionId
     saveActiveSessionId(sessionId)
@@ -253,7 +254,7 @@ export const useChatStore = defineStore("chat", () => {
     const res = await chatApi.getSessions()
     sessions.value = res.items.map((item) => ({
       id: item.id,
-      title: item.title || "新对话",
+      title: item.title || DEFAULT_SESSION_TITLE,
       createdAt: item.created_at,
       updatedAt: item.updated_at,
     }))

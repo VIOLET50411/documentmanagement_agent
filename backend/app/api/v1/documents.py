@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from pathlib import Path
 import shutil
 import tempfile
@@ -23,9 +22,9 @@ from app.dependencies import get_db, get_minio_client, get_redis
 from app.models.db.document import Document
 from app.models.db.user import User
 from app.models.schemas.document import DocumentListResponse, DocumentResponse, UploadSessionRequest
+from app.security.file_scanner import FileScanner
 from app.services.document_service import DocumentService
 from app.services.security_audit_service import SecurityAuditService
-from app.security.file_scanner import FileScanner
 
 router = APIRouter()
 UPLOAD_TMP_ROOT = Path(tempfile.gettempdir()) / "docmind_chunk_uploads"
@@ -33,7 +32,13 @@ UPLOAD_COMPLETE_SEMAPHORE = asyncio.Semaphore(2)
 
 
 @router.post("/upload", response_model=DocumentResponse, status_code=202)
-async def upload_document(file: UploadFile = File(...), department: str | None = None, access_level: int = 1, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def upload_document(
+    file: UploadFile = File(...),
+    department: str | None = None,
+    access_level: int = 1,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     await rate_limit_check(None, f"upload:{current_user.id}", limit=40, window=60)
 
     allowed_types = {
@@ -71,7 +76,10 @@ async def upload_document(file: UploadFile = File(...), department: str | None =
             result="blocked",
             metadata={"file_name": file.filename, "size": size},
         )
-        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=f"File too large. Max allowed: {settings.max_upload_size_mb}MB")
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large. Max allowed: {settings.max_upload_size_mb}MB",
+        )
 
     scan_result = await _scan_upload_sample(file, size)
     if not scan_result.get("safe", True):
@@ -89,7 +97,14 @@ async def upload_document(file: UploadFile = File(...), department: str | None =
 
     doc_id = str(uuid.uuid4())
     doc_service = DocumentService(db, get_minio_client())
-    return await doc_service.store_and_enqueue(doc_id=doc_id, file=file, uploader_id=current_user.id, tenant_id=current_user.tenant_id, department=department or current_user.department or "public", access_level=access_level or current_user.level)
+    return await doc_service.store_and_enqueue(
+        doc_id=doc_id,
+        file=file,
+        uploader_id=current_user.id,
+        tenant_id=current_user.tenant_id,
+        department=department or current_user.department or "public",
+        access_level=access_level or current_user.level,
+    )
 
 
 @router.post("/upload/session")
@@ -117,7 +132,7 @@ async def create_upload_session(
     if redis is None:
         raise HTTPException(status_code=503, detail="上传会话存储不可用")
 
-    payload = {
+    response_payload = {
         "upload_id": upload_id,
         "file_name": payload.file_name,
         "content_type": payload.content_type,
@@ -129,8 +144,8 @@ async def create_upload_session(
         "uploader_id": current_user.id,
         "upload_dir": str(upload_dir),
     }
-    await redis.set(f"upload:session:{upload_id}", json.dumps(payload, ensure_ascii=False), ex=24 * 3600)
-    return payload
+    await redis.set(f"upload:session:{upload_id}", json.dumps(response_payload, ensure_ascii=False), ex=24 * 3600)
+    return response_payload
 
 
 @router.post("/upload/chunk")
@@ -160,7 +175,13 @@ async def upload_document_chunk(
     await redis.expire(f"upload:parts:{upload_id}", 24 * 3600)
     uploaded_count = await redis.scard(f"upload:parts:{upload_id}")
     percentage = int(uploaded_count * 100 / max(total_parts, 1))
-    return {"upload_id": upload_id, "part_number": part_number, "uploaded_parts": int(uploaded_count or 0), "total_parts": total_parts, "percentage": percentage}
+    return {
+        "upload_id": upload_id,
+        "part_number": part_number,
+        "uploaded_parts": int(uploaded_count or 0),
+        "total_parts": total_parts,
+        "percentage": percentage,
+    }
 
 
 @router.post("/upload/complete", response_model=DocumentResponse, status_code=202)
@@ -232,8 +253,21 @@ async def complete_chunk_upload(
 
 
 @router.get("/", response_model=DocumentListResponse)
-async def list_documents(page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100), department: str | None = None, status: str | None = None, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    return await DocumentService(db, get_minio_client()).list_documents(user=current_user, page=page, size=size, department=department, status=status)
+async def list_documents(
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    department: str | None = None,
+    status: str | None = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await DocumentService(db, get_minio_client()).list_documents(
+        user=current_user,
+        page=page,
+        size=size,
+        department=department,
+        status=status,
+    )
 
 
 @router.get("/{doc_id}/status")
@@ -244,7 +278,13 @@ async def get_processing_status(doc_id: str, current_user: User = Depends(get_cu
 
     redis = get_redis()
     if redis is None:
-        return {"doc_id": doc_id, "status": document.status, "percentage": 0, "chunk_count": document.chunk_count, "error_message": document.error_message}
+        return {
+            "doc_id": doc_id,
+            "status": document.status,
+            "percentage": 0,
+            "chunk_count": document.chunk_count,
+            "error_message": document.error_message,
+        }
 
     progress = await redis.hgetall(f"doc_progress:{doc_id}")
     return {
@@ -269,7 +309,6 @@ async def get_processing_events(doc_id: str, current_user: User = Depends(get_cu
     if redis is None:
         return {"doc_id": doc_id, "events": []}
     rows = await redis.lrange(f"doc_progress_events:{doc_id}", 0, 49)
-    import json
     events = []
     for row in rows:
         try:
@@ -354,7 +393,10 @@ def _validate_upload_constraints(*, file_name: str, content_type: str, file_size
     if content_type not in allowed_types:
         raise HTTPException(status_code=400, detail=f"Unsupported file type: {content_type}")
     if file_size > settings.max_upload_size_mb * 1024 * 1024:
-        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=f"File too large. Max allowed: {settings.max_upload_size_mb}MB")
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large. Max allowed: {settings.max_upload_size_mb}MB",
+        )
 
 
 async def _get_upload_session(redis, upload_id: str, tenant_id: str) -> dict:

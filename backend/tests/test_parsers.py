@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 
 import pytest
 
@@ -6,6 +6,7 @@ from app.ingestion.parsers.docx_parser import DocxParser
 from app.ingestion.parsers.excel_parser import ExcelParser
 from app.ingestion.parsers.ocr_parser import OCRParser
 from app.ingestion.parsers.pdf_parser import PDFParser
+from app.ingestion.parsers.pptx_parser import PptxParser
 
 
 def test_pdf_parser_fallback_notice_is_clean_text(tmp_path: Path):
@@ -177,8 +178,8 @@ startxref
     rows = parser._parse_with_pypdf(pdf_path)
 
     assert rows
+    assert rows[0]["metadata"]["parser"] == "pypdf_overview"
     assert any("Hello PDF" in row["text"] for row in rows)
-    assert all(row["metadata"]["parser"] == "pypdf" for row in rows)
     assert all("char_count" in row["metadata"] for row in rows)
 
 
@@ -242,13 +243,15 @@ def test_excel_parser_reads_xlsx_with_openpyxl(tmp_path: Path):
     rows = ExcelParser().parse(str(path))
 
     assert rows
-    assert rows[0]["metadata"]["parser"] == "openpyxl"
+    assert rows[0]["metadata"]["parser"] == "openpyxl_overview"
     assert rows[0]["metadata"]["sheet"] == "预算"
-    assert "差旅" in rows[0]["text"]
-    assert "1200" in rows[0]["text"]
+    assert "字段包括项目、金额、备注" in rows[0]["text"]
+    assert rows[1]["metadata"]["parser"] == "openpyxl"
+    assert "差旅" in rows[1]["text"]
+    assert "1200" in rows[1]["text"]
 
 
-def test_docx_parser_preserves_block_order_for_paragraphs_and_tables(tmp_path: Path):
+def test_docx_parser_adds_overview_and_table_summary(tmp_path: Path):
     pytest.importorskip("docx")
     from docx import Document
 
@@ -266,9 +269,82 @@ def test_docx_parser_preserves_block_order_for_paragraphs_and_tables(tmp_path: P
 
     rows = DocxParser().parse(str(path))
 
-    assert [item["type"] for item in rows] == ["heading", "paragraph", "table", "paragraph"]
-    assert rows[0]["text"] == "总则"
-    assert rows[1]["text"] == "第一段说明"
-    assert "字段" in rows[2]["text"]
-    assert rows[3]["text"] == "第二段说明"
-    assert [item["metadata"]["block_index"] for item in rows] == sorted(item["metadata"]["block_index"] for item in rows)
+    assert rows[0]["metadata"]["parser"] == "docx_overview"
+    assert rows[1]["type"] == "heading"
+    assert rows[2]["text"] == "第一段说明"
+    assert rows[3]["metadata"]["parser"] == "python-docx_table_summary"
+    assert "字段包括字段、说明" in rows[3]["text"]
+    assert rows[4]["type"] == "table"
+    assert rows[5]["text"] == "第二段说明"
+
+
+def test_pptx_parser_uses_clean_slide_fallback_and_summaries():
+    parser = PptxParser()
+
+    class DummyParagraph:
+        def __init__(self, text: str, level: int = 0):
+            self.text = text
+            self.level = level
+            self.font = None
+
+    class DummyTextFrame:
+        def __init__(self, paragraphs):
+            self.paragraphs = paragraphs
+
+    class DummyShape:
+        def __init__(self, name="", text_frame=None, table=None):
+            self.name = name
+            self.text_frame = text_frame
+            self.table = table
+            self.has_text_frame = text_frame is not None
+            self.has_table = table is not None
+
+    class DummyCell:
+        def __init__(self, text):
+            self.text = text
+
+    class DummyRow:
+        def __init__(self, cells):
+            self.cells = [DummyCell(cell) for cell in cells]
+
+    class DummyTable:
+        def __init__(self, rows):
+            self.rows = [DummyRow(row) for row in rows]
+
+    class DummyShapes(list):
+        @property
+        def title(self):
+            return None
+
+    class DummySlide:
+        def __init__(self):
+            self.shapes = DummyShapes(
+                [
+                    DummyShape(text_frame=DummyTextFrame([DummyParagraph("汇报主题"), DummyParagraph("重点事项说明", level=1)])),
+                    DummyShape(table=DummyTable([["项目", "进度"], ["文档解析", "已完成"]])),
+                ]
+            )
+
+    class DummyPresentation:
+        def __init__(self, _path):
+            self.slides = [DummySlide()]
+
+    import sys
+    import types
+
+    fake_pptx = types.ModuleType("pptx")
+    fake_pptx.Presentation = DummyPresentation
+    fake_util = types.ModuleType("pptx.util")
+    fake_util.Inches = lambda value: value
+    sys.modules["pptx"] = fake_pptx
+    sys.modules["pptx.util"] = fake_util
+    try:
+        rows = parser._parse_with_python_pptx(Path("demo.pptx"))
+    finally:
+        del sys.modules["pptx"]
+        del sys.modules["pptx.util"]
+
+    assert rows[0]["metadata"]["parser"] == "pptx_overview"
+    assert "第1页幻灯片《第1页幻灯片》概览" in rows[0]["text"]
+    assert any(item["metadata"]["parser"] == "python-pptx_table_summary" for item in rows)
+    assert any(item["type"] == "table" and "文档解析" in item["text"] for item in rows)

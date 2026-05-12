@@ -29,7 +29,7 @@ def test_html_parser_promotes_local_attachment_pdf(tmp_path, monkeypatch):
         return [
             {
                 "type": "paragraph",
-                "text": "这是附件 PDF 的真实正文内容，包含预算说明和执行要求。",
+                "text": "这是附件 PDF 的正文内容，包含预算说明和执行要求。",
                 "metadata": {"page_number": 2, "parser": "pypdf", "section_title": "正文"},
             }
         ]
@@ -39,7 +39,7 @@ def test_html_parser_promotes_local_attachment_pdf(tmp_path, monkeypatch):
     elements = parser.parse(str(html_path))
 
     assert len(elements) == 1
-    assert elements[0]["text"].startswith("这是附件 PDF 的真实正文内容")
+    assert elements[0]["text"].startswith("这是附件 PDF 的正文内容")
     assert elements[0]["metadata"]["parser"] == "html_attachment_pdf"
     assert elements[0]["metadata"]["source_html"] == "notice.html"
     assert elements[0]["metadata"]["attachment_file_name"] == "notice__download.jsp.pdf"
@@ -82,8 +82,9 @@ def test_html_parser_falls_back_to_html_when_attachment_is_not_substantive(tmp_p
 
     elements = parser.parse(str(html_path))
 
+    assert elements[0]["metadata"]["parser"] == "html_overview"
     assert any("出差申请应至少提前两个工作日提交审批" in item["text"] for item in elements)
-    assert all(item["metadata"]["parser"] == "html" for item in elements)
+    assert any(item["metadata"]["parser"] == "html" for item in elements)
 
 
 def test_html_parser_extracts_main_content_and_strips_boilerplate(tmp_path):
@@ -111,6 +112,7 @@ def test_html_parser_extracts_main_content_and_strips_boilerplate(tmp_path):
     elements = HTMLParser().parse(str(html_path))
     joined = "\n".join(item["text"] for item in elements)
 
+    assert elements[0]["text"].startswith("网页文档《请假制度》概览")
     assert "请假申请需由部门负责人审批后生效。" in joined
     assert "请假结束后应及时销假并补全系统记录。" in joined
     assert "打印本页" not in joined
@@ -146,7 +148,7 @@ def test_html_parser_rewrites_attachment_stem_to_natural_section_title(tmp_path,
         lambda _file_path: [
             {
                 "type": "paragraph",
-                "text": "11 三、部门预算情况说明 （一）收支预算情况说明 我校2023年收支总预算557,259.13万元。",
+                "text": "11 三、部门预算情况说明（一）收支预算情况说明 我校2023年收支总预算57,259.13万元。",
                 "metadata": {"page_number": 11, "parser": "pypdf", "section_title": "budget_notice__download.jsp"},
             }
         ],

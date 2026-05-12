@@ -41,6 +41,7 @@ class ExcelParser:
             rows = self._extract_rows_from_sheet(worksheet)
             if not rows:
                 continue
+            elements.append(self._build_sheet_overview_element(sheet_name=sheet_name, rows=rows, parser="openpyxl"))
             elements.append(
                 {
                     "type": "table",
@@ -77,6 +78,7 @@ class ExcelParser:
             rows.extend([list(map(str, row)) for row in clean_frame.values.tolist()[:500]])
             if len(rows) == 1 and not any(rows[0]):
                 continue
+            elements.append(self._build_sheet_overview_element(sheet_name=sheet_name, rows=rows, parser="pandas"))
             elements.append(
                 {
                     "type": "table",
@@ -101,6 +103,7 @@ class ExcelParser:
             return []
 
         return [
+            self._build_sheet_overview_element(sheet_name=path.stem, rows=rows[:501], parser="csv"),
             {
                 "type": "table",
                 "text": self._render_markdown_table(rows[:501]),
@@ -176,3 +179,20 @@ class ExcelParser:
         if isinstance(value, str):
             return value.strip()
         return str(value)
+
+    def _build_sheet_overview_element(self, *, sheet_name: str, rows: list[list[str]], parser: str) -> dict:
+        header = [cell for cell in (rows[0] if rows else []) if cell][:6]
+        row_count = max(len(rows) - 1, 0)
+        column_count = max((len(row) for row in rows), default=0)
+        header_text = "、".join(header) if header else "未识别列名"
+        return {
+            "type": "paragraph",
+            "text": f"工作表《{sheet_name}》概览：共{row_count}行、{column_count}列，字段包括{header_text}。",
+            "metadata": {
+                "sheet": sheet_name,
+                "section_title": sheet_name,
+                "row_count": row_count,
+                "column_count": column_count,
+                "parser": f"{parser}_overview",
+            },
+        }
