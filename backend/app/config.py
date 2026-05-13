@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     redis_port: int = 6379
     redis_password: str = ""
     redis_db: int = 0
+    redis_socket_connect_timeout_seconds: float = 0.2
+    redis_socket_timeout_seconds: float = 0.2
+    redis_health_check_interval_seconds: int = 30
+    admin_summary_cache_ttl_seconds: int = 15
+    slow_request_threshold_ms: int = 800
+    slow_admin_request_threshold_ms: int = 400
 
     @property
     def redis_url(self) -> str:

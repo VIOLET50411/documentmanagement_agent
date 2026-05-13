@@ -1,9 +1,15 @@
-﻿<template>
+<template>
   <div class="login-page">
     <div class="login-container animate-fade-in">
       <div class="login-header">
-        <h1 class="login-logo-text">DocMind</h1>
-        <p class="login-subtitle">企业文档管理与智能问答平台</p>
+        <div class="brand-lockup">
+          <img :src="brandLogoUrl" alt="DocMind 平台标志" class="login-logo" />
+          <div>
+            <p class="brand-eyebrow">DocMind</p>
+            <h1 class="login-logo-text">企业文档管理与智能问答平台</h1>
+          </div>
+        </div>
+        <p class="login-subtitle">统一文档资产、知识检索、运行监控与安全治理。</p>
       </div>
 
       <form class="login-form" @submit.prevent="handleSubmit">
@@ -57,8 +63,8 @@
           </div>
         </template>
 
-        <p v-if="message" class="success-msg">{{ message }}</p>
-        <p v-if="errorMsg" class="error-msg">{{ errorMsg }}</p>
+        <StatusMessage v-if="message" tone="success" :message="message" />
+        <StatusMessage v-if="errorMsg" tone="error" :message="errorMsg" />
 
         <button type="submit" class="btn btn-primary btn-lg login-btn" :disabled="isLoading">
           {{ submitButtonText }}
@@ -86,10 +92,12 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import StatusMessage from '@/components/common/StatusMessage.vue'
 import { useAuthStore } from '@/stores/auth'
 
 type ViewMode = 'login' | 'register' | 'reset'
 
+const brandLogoUrl = new URL('../../../logo.jpg', import.meta.url).href
 const router = useRouter()
 const authStore = useAuthStore()
 
@@ -217,33 +225,61 @@ async function sendCode() {
   align-items: center;
   justify-content: center;
   padding: 24px;
+  background:
+    radial-gradient(circle at top, rgba(79, 124, 255, 0.08), transparent 38%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.96));
 }
 
 .login-container {
-  width: 400px;
+  width: 440px;
   max-width: 100%;
   padding: 40px;
-  background: var(--bg-surface);
+  background: color-mix(in srgb, var(--bg-surface) 94%, white);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
+  border-radius: 20px;
   box-shadow: var(--shadow-lg);
 }
 
 .login-header {
-  text-align: center;
   margin-bottom: 32px;
 }
 
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.login-logo {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 16px;
+  border: 1px solid var(--border-color-subtle);
+  box-shadow: 0 10px 24px rgba(79, 124, 255, 0.14);
+  flex-shrink: 0;
+}
+
+.brand-eyebrow {
+  margin: 0 0 6px;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
 .login-logo-text {
-  font-size: 2.25rem;
-  margin-bottom: 8px;
+  margin: 0;
+  font-size: 1.85rem;
+  line-height: 1.15;
   font-family: var(--font-heading);
   font-weight: 500;
 }
 
 .login-subtitle {
+  margin: 14px 0 0;
   color: var(--text-secondary);
   font-size: 0.95rem;
+  line-height: 1.6;
 }
 
 .login-form {
@@ -316,19 +352,22 @@ async function sendCode() {
   font-family: var(--font-mono);
 }
 
-.success-msg {
-  color: var(--color-success);
-  font-size: 14px;
-}
-
-.error-msg {
-  color: var(--color-danger);
-  font-size: 14px;
-}
-
 @media (max-width: 640px) {
   .login-container {
     padding: 24px;
+  }
+
+  .brand-lockup {
+    align-items: flex-start;
+  }
+
+  .login-logo {
+    width: 56px;
+    height: 56px;
+  }
+
+  .login-logo-text {
+    font-size: 1.55rem;
   }
 
   .form-row {

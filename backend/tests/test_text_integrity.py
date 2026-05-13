@@ -2,16 +2,16 @@ from pathlib import Path
 
 
 MOJIBAKE_MARKERS = (
-    "\u9a9e\u6751",        # 骞村
-    "\u5bb8\ue1bd\u68be",  # 宸梾
+    "\u9a9e\u6751",        # 楠炴潙
+    "\u5bb8\ue1bd\u68be",  # 瀹割喗姊
     "\u9352\u8dfa\u5bb3",  # 鍒跺害
     "\u93c2\u56e8\u3002",  # 鏂囨。
     "\u93c8\ue046\u7161",  # 鏈煡
     "\u9359\u509d\u20ac",  # 鍙傝€
     "\u7f01\u64b9\ue191",  # 缁撹
     "\u93bd\u6a3f\ue6e6",  # 鎽樿
-    "\u9365\u70fd\u74df",  # 鍥炵瓟
-    "\u6fc0\u7fe1\u80f6\u922b",  # 娴佺▼
+    "\u9365\u70fd\u74df",  # 鍥烽瓟
+    "\u6fc0\u7fe1\u80f6\u922b",  # 激翡胶鈫
 )
 
 SCAN_ROOTS = (

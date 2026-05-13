@@ -1,6 +1,7 @@
 import { defineStore } from "pinia"
 import { computed, ref } from "vue"
 import { adminApi } from "@/api/admin"
+import { getApiErrorMessage } from "@/utils/adminUi"
 
 type GenericRecord = Record<string, any>
 
@@ -33,7 +34,7 @@ export const useRuntimeStore = defineStore("runtime", () => {
     try {
       toolDecisionSummary.value = await adminApi.getRuntimeToolDecisionSummary(toolFilters.value)
     } catch (caught: any) {
-      error.value = caught?.response?.data?.detail || "加载运行时工具治理统计失败。"
+      error.value = getApiErrorMessage(caught, "运行过程的工具使用情况暂时没加载出来，请稍后再试。")
     } finally {
       loadingToolSummary.value = false
     }
@@ -48,7 +49,7 @@ export const useRuntimeStore = defineStore("runtime", () => {
       const response = await adminApi.getRuntimeCheckpointSummary(limit)
       checkpointSummary.value = response?.items || []
     } catch (caught: any) {
-      error.value = caught?.response?.data?.detail || "加载运行时检查点摘要失败。"
+      error.value = getApiErrorMessage(caught, "恢复点信息暂时没加载出来，请稍后再试。")
     } finally {
       loadingCheckpointSummary.value = false
     }
@@ -62,16 +63,16 @@ export const useRuntimeStore = defineStore("runtime", () => {
     replayTraceId.value = target
     try {
       if (!target) {
-        error.value = "请先输入 trace_id。"
+        error.value = "请先输入一条运行记录编号。"
         return
       }
       const response = await adminApi.replayRuntimeTrace(target)
       replayEvents.value = response?.events || []
       if (!replayEvents.value.length) {
-        error.value = "没有找到对应运行轨迹，或该轨迹不属于当前租户。"
+        error.value = "没有找到这条运行记录，或者它不属于当前空间。"
       }
     } catch (caught: any) {
-      error.value = caught?.response?.data?.detail || "加载运行轨迹失败。"
+      error.value = getApiErrorMessage(caught, "运行记录没有加载出来，请确认编号后再试。")
     } finally {
       loadingReplay.value = false
     }

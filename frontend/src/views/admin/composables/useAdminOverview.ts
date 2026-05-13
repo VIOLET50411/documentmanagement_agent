@@ -1,5 +1,6 @@
 import { computed, reactive } from "vue"
 import { adminApi } from "@/api/admin"
+import { getApiErrorMessage } from "@/utils/adminUi"
 
 type GenericMap = Record<string, any>
 
@@ -34,7 +35,7 @@ export function useAdminOverview() {
     try {
       state.retrievalIntegrity = (await adminApi.getRetrievalIntegrity(12)) || null
     } catch {
-      // 即使完整性采样较慢，也保持概览页可交互。
+      // 即使完整性采样较慢，也保持总览页可交互。
     } finally {
       state.loadingIntegrity = false
     }
@@ -52,7 +53,7 @@ export function useAdminOverview() {
       state.readiness = readinessRes || null
       void loadRetrievalIntegrity()
     } catch (err: any) {
-      state.error = err?.response?.data?.detail || "加载平台概览失败。"
+      state.error = getApiErrorMessage(err, "加载平台总览失败，请稍后重试。")
     } finally {
       state.loadingOverview = false
     }
@@ -68,16 +69,16 @@ export function useAdminOverview() {
         state.actionMessage = "已触发全租户索引重建。"
       } else if (action === "retry_failed") {
         await adminApi.retryFailedPipelineJobs(20, true)
-        state.actionMessage = "已触发失败与部分失败文档的批量重试。"
+        state.actionMessage = "已触发失败和部分失败文档的批量重试。"
       } else if (action === "evaluation") {
         const result = await adminApi.runEvaluationAsync()
         state.actionMessage = result?.task_id ? `已启动评估任务：${result.task_id}` : "已启动评估任务。"
       } else {
-        state.actionMessage = "已刷新平台 readiness 与检索体检数据。"
+        state.actionMessage = "已刷新平台就绪度和检索体检数据。"
       }
       await loadOverview()
     } catch (err: any) {
-      state.error = err?.response?.data?.detail || "执行平台运营动作失败。"
+      state.error = getApiErrorMessage(err, "平台操作没有成功，请稍后再试。")
     } finally {
       state.runningAction = ""
     }

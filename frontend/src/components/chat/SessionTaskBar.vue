@@ -6,7 +6,7 @@
         <h3>当前平台异步任务</h3>
       </div>
       <button class="taskbar-refresh" type="button" :disabled="loading" @click="loadTasks">
-        {{ loading ? "刷新中" : "刷新" }}
+        {{ loading ? "刷新中..." : "刷新" }}
       </button>
     </div>
 
@@ -18,7 +18,7 @@
           <span class="task-type">{{ taskTypeLabel(item.type) }}</span>
           <span class="task-status" :data-status="item.status">{{ statusLabel(item.status) }}</span>
         </div>
-        <p class="task-desc">{{ item.description || "暂无描述" }}</p>
+        <p class="task-desc">{{ item.description || "暂无任务说明" }}</p>
         <div class="task-meta">
           <span>阶段：{{ item.stage || "-" }}</span>
           <span>更新时间：{{ formatTime(item.updated_at || item.end_time || item.start_time) }}</span>
@@ -26,9 +26,7 @@
       </article>
     </div>
 
-    <div v-else-if="!loading" class="taskbar-empty">
-      当前没有需要关注的运行任务。
-    </div>
+    <div v-else-if="!loading" class="taskbar-empty">当前没有需要重点关注的运行任务。</div>
   </section>
 </template>
 
@@ -79,10 +77,22 @@ async function loadTasks() {
     const ranked = [...rawItems].sort((a, b) => scoreTask(b) - scoreTask(a))
     items.value = ranked.slice(0, 4)
   } catch (caught: any) {
-    error.value = caught?.response?.data?.detail || "加载运行任务失败。"
+    error.value = normalizeTaskError(caught)
   } finally {
     loading.value = false
   }
+}
+
+function normalizeTaskError(caught: any) {
+  const detail = String(caught?.response?.data?.detail || caught?.message || "").trim()
+  if (!detail) return "运行任务加载失败，请稍后再试。"
+  if (/401|403|forbidden|unauthorized/i.test(detail)) {
+    return "当前账号没有查看运行任务的权限。"
+  }
+  if (/timeout|timed out/i.test(detail)) {
+    return "运行任务加载超时，请稍后刷新。"
+  }
+  return `运行任务加载失败：${detail}`
 }
 
 function scoreTask(item: RuntimeTask) {

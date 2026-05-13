@@ -87,6 +87,10 @@ function formatTime(value: string) {
   font-size: 12px;
 }
 
+.tool-source {
+  margin: 2px 0 0;
+}
+
 .tool-message {
   margin: 12px 0 0;
   color: var(--text-primary);

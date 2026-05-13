@@ -12,10 +12,11 @@ from app.api.middleware.rbac import require_role
 from app.config import settings
 from app.dependencies import get_db, get_redis
 from app.models.db.user import User
+from app.observability.metrics import metrics_registry
 
 from app.api.v1.admin._helpers import (
     _parse_runtime_iso, _normalize_tool_decision_item,
-    _merge_tool_decision_items,
+    _merge_tool_decision_items, _admin_cache_key, _load_admin_cached_payload,
 )
 
 router = APIRouter()
@@ -26,6 +27,14 @@ async def get_retrieval_metrics(current_user: User = Depends(require_role("ADMIN
     from app.services.retrieval_observability_service import RetrievalObservabilityService
 
     return await RetrievalObservabilityService(get_redis()).summary(current_user.tenant_id)
+
+
+@router.get("/system/request-metrics")
+async def get_request_metrics(
+    limit: int = 10,
+    current_user: User = Depends(require_role("ADMIN")),
+):
+    return {"items": metrics_registry.snapshot_request_metrics(limit=max(limit, 1)), "limit": max(limit, 1)}
 
 
 @router.get("/system/retrieval-debug")
@@ -90,7 +99,10 @@ async def get_retrieval_debug(
 async def get_platform_readiness(current_user: User = Depends(require_role("ADMIN")), db: AsyncSession = Depends(get_db)):
     from app.services.platform_readiness_service import PlatformReadinessService
 
-    return await PlatformReadinessService(db, get_redis()).evaluate(current_user.tenant_id)
+    return await _load_admin_cached_payload(
+        _admin_cache_key(current_user.tenant_id, "platform_readiness"),
+        lambda: PlatformReadinessService(db, get_redis()).evaluate(current_user.tenant_id),
+    )
 
 
 @router.get("/system/gap-report")
@@ -400,7 +412,18 @@ async def list_runtime_checkpoint_summary(
 ):
     from app.services.runtime_checkpoint_service import RuntimeCheckpointService
 
-    items = await RuntimeCheckpointService(db).summarize_sessions(current_user.tenant_id, limit=max(limit, 1))
+    items = await _load_admin_cached_payload(
+        _admin_cache_key(current_user.tenant_id, "runtime_checkpoint_summary", max(limit, 1)),
+        lambda: _load_runtime_checkpoint_summary(db, current_user.tenant_id, max(limit, 1)),
+        ttl_seconds=10,
+    )
+    return {"items": items.get("items", []), "count": items.get("count", 0), "limit": max(limit, 1)}
+
+
+async def _load_runtime_checkpoint_summary(db: AsyncSession, tenant_id: str, limit: int) -> dict:
+    from app.services.runtime_checkpoint_service import RuntimeCheckpointService
+
+    items = await RuntimeCheckpointService(db).summarize_sessions(tenant_id, limit=limit)
     return {"items": items, "count": len(items), "limit": max(limit, 1)}
 
 
@@ -412,4 +435,8 @@ async def get_retrieval_integrity(
 ):
     from app.services.retrieval_integrity_service import RetrievalIntegrityService
 
-    return await RetrievalIntegrityService(db).evaluate(current_user.tenant_id, sample_size=max(sample_size, 1))
+    normalized_size = max(sample_size, 1)
+    return await _load_admin_cached_payload(
+        _admin_cache_key(current_user.tenant_id, "retrieval_integrity", normalized_size),
+        lambda: RetrievalIntegrityService(db).evaluate(current_user.tenant_id, sample_size=normalized_size),
+    )

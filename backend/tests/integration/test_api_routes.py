@@ -162,6 +162,17 @@ async def test_health_route_returns_payload(api_client: AsyncClient):
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "healthy"
+    assert "startup_timings" in payload
+    assert payload["startup_complete"] is True
+
+
+@pytest.mark.asyncio
+async def test_ready_route_returns_ai_readiness_payload(api_client: AsyncClient):
+    response = await api_client.get("/ready")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] in {"ready", "degraded"}
     assert "llm_available" in payload
     assert "embedding_available" in payload
 
@@ -412,7 +423,7 @@ async def test_chat_replay_route_falls_back_to_checkpoint_resume(api_client: Asy
                 "event_id": "evt-r1",
                 "sequence_num": 1,
                 "source": "agent_runtime_v2_resume",
-                "msg": "宸蹭粠妫€鏌ョ偣鎭㈠",
+                "msg": "已从检查点恢复",
             }
             yield {
                 "status": "done",
@@ -427,7 +438,7 @@ async def test_chat_replay_route_falls_back_to_checkpoint_resume(api_client: Asy
 
     class DummyMasker:
         def mask(self, text):
-            assert text == "鎭㈠浼氳瘽"
+            assert text == "恢复会话"
             return "[MASKED]", {"[PHONE_1]": "13800138000"}
 
         def restore(self, text, mapping):
@@ -487,7 +498,7 @@ async def test_chat_replay_route_falls_back_to_checkpoint_resume(api_client: Asy
     async with api_client.stream(
         "POST",
         f"/api/v1/chat/stream?resume_trace_id={trace_id}&last_sequence=0",
-        json={"message": "鎭㈠浼氳瘽", "thread_id": "thread-1", "search_type": "hybrid"},
+        json={"message": "恢复会话", "thread_id": "thread-1", "search_type": "hybrid"},
     ) as response:
         assert response.status_code == 200
         body = ""
@@ -2675,7 +2686,7 @@ async def test_admin_run_evaluation_async_route(api_client: AsyncClient, monkeyp
 
     class FakeCeleryTask:
         def apply_async(self, args=(), queue=None):
-            assert args == ("tenant-1", 5, "user-1")
+            assert args == ("tenant-1", 5, "user-1", False, 1.0)
             assert queue is not None
             return DummyTask()
 
@@ -2689,6 +2700,8 @@ async def test_admin_run_evaluation_async_route(api_client: AsyncClient, monkeyp
     payload = response.json()
     assert payload["task_id"] == "eval-task-1"
     assert payload["sample_limit"] == 5
+    assert payload["prioritize_all_manual_samples"] is False
+    assert payload["manual_sample_ratio"] == 1.0
     assert seeded[0]["task_type"] == "evaluation"
 
 

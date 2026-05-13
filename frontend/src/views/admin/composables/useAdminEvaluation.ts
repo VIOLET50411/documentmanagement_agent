@@ -1,7 +1,17 @@
 import { reactive } from "vue"
 import { adminApi } from "@/api/admin"
+import { getApiErrorMessage } from "@/utils/adminUi"
 
 type GenericMap = Record<string, any>
+
+function getFriendlyTaskError(rawError: string | null | undefined) {
+  if (!rawError) return "这次检查没有成功完成，请稍后再试。"
+  const text = String(rawError)
+  if (/timeout|timed out|超时/i.test(text)) return "这次检查超时了。通常是样本太多，或者模型响应太慢。可以先减少样本量再试一次。"
+  if (/connection|network|redis|postgres|database|connect/i.test(text)) return "这次检查没有跑起来，更像是服务连接异常。请稍后再试，或检查后台服务是否正常。"
+  if (/permission|forbidden|unauthorized|403|401/i.test(text)) return "当前账号没有权限执行这一步。"
+  return `这次检查没有成功完成：${text}`
+}
 
 export function useAdminEvaluation() {
   const state = reactive({
@@ -11,6 +21,13 @@ export function useAdminEvaluation() {
     evaluationDatasetSamples: [] as GenericMap[],
     evaluationDatasetSamplesTotal: 0,
     evaluationDatasetSamplesPath: "",
+    updatingSampleId: "",
+    deletingSampleId: "",
+    evaluationRunConfig: {
+      sampleLimit: 100,
+      prioritizeAllManualSamples: false,
+      manualSampleRatio: 1,
+    },
     runtimeMetricsSummary: null as GenericMap | null,
     runtimeMetricsHistory: [] as GenericMap[],
     evaluating: false,
@@ -35,10 +52,14 @@ export function useAdminEvaluation() {
       state.evaluationDatasetSamples = datasetSamplesRes?.items || []
       state.evaluationDatasetSamplesTotal = datasetSamplesRes?.total || 0
       state.evaluationDatasetSamplesPath = datasetSamplesRes?.path || ""
+      const generatedFrom = latestRes?.generated_from || {}
+      state.evaluationRunConfig.sampleLimit = Number(generatedFrom.sample_limit || 100)
+      state.evaluationRunConfig.prioritizeAllManualSamples = Boolean(generatedFrom.prioritize_all_manual_samples)
+      state.evaluationRunConfig.manualSampleRatio = Number(generatedFrom.manual_sample_ratio ?? 1)
       state.runtimeMetricsSummary = metricsRes || null
       state.runtimeMetricsHistory = metricsHistoryRes || []
     } catch (err: any) {
-      state.error = err?.response?.data?.detail || "加载评估指标失败。"
+      state.error = getApiErrorMessage(err, "检查数据暂时没有加载出来，请稍后刷新页面再试。")
     }
   }
 
@@ -53,12 +74,12 @@ export function useAdminEvaluation() {
       }
       if (status === "failed" || status === "killed") {
         state.evaluating = false
-        state.evalError = payload?.item?.error || "评估失败"
+        state.evalError = getFriendlyTaskError(payload?.item?.error)
         return
       }
       window.setTimeout(() => void pollEvaluationTask(taskId), 3000)
     } catch (err: any) {
-      state.evalError = err?.response?.data?.detail || "轮询评估任务失败"
+      state.evalError = getApiErrorMessage(err, "检查已经发起，但暂时拿不到进度。请稍后刷新页面确认结果。")
       state.evaluating = false
     }
   }
@@ -67,7 +88,11 @@ export function useAdminEvaluation() {
     state.evaluating = true
     state.evalError = ""
     try {
-      const result = await adminApi.runEvaluationAsync()
+      const result = await adminApi.runEvaluationAsync(
+        Math.max(Number(state.evaluationRunConfig.sampleLimit || 100), 1),
+        Boolean(state.evaluationRunConfig.prioritizeAllManualSamples),
+        Math.min(Math.max(Number(state.evaluationRunConfig.manualSampleRatio ?? 1), 0), 1),
+      )
       if (result?.task_id) {
         await pollEvaluationTask(result.task_id)
       } else {
@@ -75,8 +100,35 @@ export function useAdminEvaluation() {
         state.evaluating = false
       }
     } catch (err: any) {
-      state.evalError = err?.response?.data?.detail || "触发评估失败。"
+      state.evalError = getApiErrorMessage(err, "检查没有成功发起。请检查配置后再试。")
       state.evaluating = false
+    }
+  }
+
+  async function refreshManualSamples(limit = 12) {
+    const datasetSamplesRes = await adminApi.getEvaluationDatasetSamples(limit)
+    state.evaluationDatasetSamples = datasetSamplesRes?.items || []
+    state.evaluationDatasetSamplesTotal = datasetSamplesRes?.total || 0
+    state.evaluationDatasetSamplesPath = datasetSamplesRes?.path || ""
+  }
+
+  async function updateManualSample(sampleId: string, payload: GenericMap) {
+    state.updatingSampleId = sampleId
+    try {
+      await adminApi.updateEvaluationDatasetSample(sampleId, payload)
+      await refreshManualSamples()
+    } finally {
+      state.updatingSampleId = ""
+    }
+  }
+
+  async function deleteManualSample(sampleId: string) {
+    state.deletingSampleId = sampleId
+    try {
+      await adminApi.deleteEvaluationDatasetSample(sampleId)
+      await refreshManualSamples()
+    } finally {
+      state.deletingSampleId = ""
     }
   }
 
@@ -88,13 +140,13 @@ export function useAdminEvaluation() {
       const url = URL.createObjectURL(blob)
       const link = document.createElement("a")
       link.href = url
-      link.download = "runtime_metrics_history.json"
+      link.download = "qa_check_runtime_history.json"
       document.body.appendChild(link)
       link.click()
       link.remove()
       URL.revokeObjectURL(url)
     } catch {
-      state.evalError = "导出评估数据失败。"
+      state.evalError = "导出运行记录失败，请稍后再试。"
     }
   }
 
@@ -113,6 +165,9 @@ export function useAdminEvaluation() {
     state,
     loadEvaluation,
     runEvaluation,
+    refreshManualSamples,
+    updateManualSample,
+    deleteManualSample,
     downloadRuntimeMetrics,
     formatPercent,
     formatDate,

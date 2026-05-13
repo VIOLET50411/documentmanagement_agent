@@ -72,7 +72,17 @@ describe("settings store", () => {
 
     await store.loadAdminDiagnostics(false)
 
-    expect(getLLMDomainConfigMock).not.toHaveBeenCalled()
+    expect(getRuntimeMetricsMock).not.toHaveBeenCalled()
     expect(store.llmDomainConfig).toBeNull()
+  })
+
+  it("stores a message when admin diagnostics loading fails", async () => {
+    getLLMDomainConfigMock.mockRejectedValue(new Error("service unavailable"))
+
+    const { useSettingsStore } = await import("../settings")
+    const store = useSettingsStore()
+
+    await expect(store.loadAdminDiagnostics(true)).rejects.toThrow("service unavailable")
+    expect(store.adminDiagnosticsMessage).toBe("service unavailable")
   })
 })

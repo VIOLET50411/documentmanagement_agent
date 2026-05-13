@@ -32,7 +32,7 @@ export interface ChatRuntimeEvent {
 }
 
 const ACTIVE_SESSION_STORAGE_KEY = "docmind.chat.activeSessionId"
-const DEFAULT_SESSION_TITLE = "\u65b0\u5bf9\u8bdd"
+const DEFAULT_SESSION_TITLE = "新对话"
 
 export const useChatStore = defineStore("chat", () => {
   const sessions: Ref<ChatSession[]> = ref([])
@@ -43,6 +43,7 @@ export const useChatStore = defineStore("chat", () => {
   const streamStatus = ref("")
   const streamStatusMsg = ref("")
   const initialized = ref(false)
+  const historyLoadedSessionId = ref<string | null>(null)
 
   const activeSession = computed(() => sessions.value.find((session) => session.id === activeSessionId.value) ?? null)
 
@@ -120,6 +121,7 @@ export const useChatStore = defineStore("chat", () => {
     } catch {
       messages.value = []
     }
+    historyLoadedSessionId.value = sessionId
     touchActiveSession()
   }
 
@@ -229,13 +231,13 @@ export const useChatStore = defineStore("chat", () => {
 
   function defaultRuntimeMessage(status: string) {
     const labels: Record<string, string> = {
-      thinking: "\u6b63\u5728\u7406\u89e3\u95ee\u9898",
-      searching: "\u6b63\u5728\u68c0\u7d22\u77e5\u8bc6\u5e93",
-      reading: "\u6b63\u5728\u8bfb\u53d6\u8bc1\u636e\u5185\u5bb9",
-      tool_call: "\u6b63\u5728\u6267\u884c\u5de5\u5177\u8c03\u7528",
-      error: "\u672c\u8f6e\u56de\u7b54\u5931\u8d25",
+      thinking: "正在理解问题",
+      searching: "正在检索知识库",
+      reading: "正在读取证据内容",
+      tool_call: "正在执行工具调用",
+      error: "本轮回答失败",
     }
-    return labels[status] || "\u6b63\u5728\u5904\u7406"
+    return labels[status] || "正在处理"
   }
 
   function ensureSessionById(sessionId: string | null | undefined) {
@@ -260,7 +262,7 @@ export const useChatStore = defineStore("chat", () => {
     }))
   }
 
-  async function initialize() {
+  async function initialize(options: { loadActiveHistory?: boolean } = {}) {
     if (initialized.value) return
     try {
       await loadSessions()
@@ -268,16 +270,29 @@ export const useChatStore = defineStore("chat", () => {
       const firstAvailableId = sessions.value[0]?.id || null
       const nextSessionId = storedId && sessions.value.some((item) => item.id === storedId) ? storedId : firstAvailableId
       if (nextSessionId) {
-        await setActiveSession(nextSessionId)
+        activeSessionId.value = nextSessionId
+        saveActiveSessionId(nextSessionId)
+        if (options.loadActiveHistory) {
+          await setActiveSession(nextSessionId)
+        } else {
+          touchActiveSession()
+        }
       } else {
         activeSessionId.value = null
         saveActiveSessionId(null)
         messages.value = []
         runtimeEvents.value = []
+        historyLoadedSessionId.value = null
       }
     } finally {
       initialized.value = true
     }
+  }
+
+  async function ensureActiveSessionLoaded() {
+    if (!activeSessionId.value) return
+    if (historyLoadedSessionId.value === activeSessionId.value) return
+    await setActiveSession(activeSessionId.value)
   }
 
   return {
@@ -291,6 +306,7 @@ export const useChatStore = defineStore("chat", () => {
     initialized,
     activeSession,
     initialize,
+    ensureActiveSessionLoaded,
     loadSessions,
     createSession,
     setActiveSession,

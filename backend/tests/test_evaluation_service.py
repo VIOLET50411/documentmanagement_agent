@@ -270,8 +270,142 @@ async def test_append_manual_sample_persists_deduped_samples(tmp_path: Path):
     path = tmp_path / "evaluation_tenant-debug.manual.dataset.json"
     saved = json.loads(path.read_text(encoding="utf-8"))
     assert sample["question"] == "这个审批怎么走？"
+    assert sample["sample_id"]
     assert len(saved) == 1
     assert saved[0]["context_doc_ids"] == ["doc-2"]
+
+
+@pytest.mark.asyncio
+async def test_update_and_delete_manual_sample(tmp_path: Path):
+    service = EvaluationService(None, None, reports_dir=tmp_path)
+    created = await service.append_manual_sample(
+        "tenant-edit",
+        {
+            "question": "原始问题",
+            "answer": "原始答案",
+            "reference": "原始答案",
+            "contexts": ["原始上下文"],
+        },
+    )
+
+    updated = await service.update_manual_sample(
+        "tenant-edit",
+        created["sample_id"],
+        {"reference": "修订答案", "metadata": {"notes": "人工修订"}},
+    )
+    listed = await service.list_manual_samples("tenant-edit", limit=10)
+    deleted = await service.delete_manual_sample("tenant-edit", created["sample_id"])
+    listed_after_delete = await service.list_manual_samples("tenant-edit", limit=10)
+
+    assert updated is not None
+    assert updated["reference"] == "修订答案"
+    assert updated["metadata"]["notes"] == "人工修订"
+    assert listed["items"][0]["sample_id"] == created["sample_id"]
+    assert deleted is True
+    assert listed_after_delete["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_list_manual_samples_includes_source_and_last_used_at(tmp_path: Path):
+    service = EvaluationService(None, None, reports_dir=tmp_path)
+    await service.append_manual_sample(
+        "tenant-usage",
+        {
+            "question": "调试问题",
+            "answer": "标准答案",
+            "reference": "标准答案",
+            "contexts": ["上下文"],
+            "task_type": "manual_debug",
+            "metadata": {"source": "retrieval_debug"},
+        },
+    )
+    (tmp_path / "evaluation_tenant-usage.json").write_text(
+        json.dumps(
+            {
+                "metrics": {},
+                "gate": {"passed": True, "failures": []},
+                "dataset_size": 1,
+                "generated_at": "2026-05-13T10:00:00+00:00",
+                "generated_from": {"tenant_id": "tenant-usage"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "evaluation_tenant-usage.dataset.json").write_text(
+        json.dumps(
+            [
+                {
+                    "question": "调试问题",
+                    "answer": "标准答案",
+                    "reference": "标准答案",
+                    "contexts": ["上下文"],
+                    "task_type": "manual_debug",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    listed = await service.list_manual_samples("tenant-usage", limit=10)
+
+    assert listed["items"][0]["source"] == "retrieval_debug"
+    assert listed["items"][0]["last_used_at"] == "2026-05-13T10:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_list_manual_samples_reports_sample_limit_exclusion(tmp_path: Path):
+    service = EvaluationService(None, None, reports_dir=tmp_path)
+    await service.append_manual_sample("tenant-limit", {"question": "问题A", "answer": "答案A", "reference": "答案A"})
+    await service.append_manual_sample("tenant-limit", {"question": "问题B", "answer": "答案B", "reference": "答案B"})
+    (tmp_path / "evaluation_tenant-limit.json").write_text(
+        json.dumps(
+            {
+                "metrics": {},
+                "gate": {"passed": True, "failures": []},
+                "dataset_size": 1,
+                "generated_at": "2026-05-13T10:00:00+00:00",
+                "generated_from": {"tenant_id": "tenant-limit", "sample_limit": 1, "manual_sample_count_used": 1, "manual_sample_count_total": 2},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "evaluation_tenant-limit.dataset.json").write_text(
+        json.dumps([{"question": "问题B", "answer": "答案B", "reference": "答案B", "task_type": "manual_debug"}]),
+        encoding="utf-8",
+    )
+
+    listed = await service.list_manual_samples("tenant-limit", limit=10)
+    excluded = next(item for item in listed["items"] if item["question"] == "问题A")
+
+    assert excluded["last_exclusion_reason"] == "excluded_by_sample_limit"
+
+
+@pytest.mark.asyncio
+async def test_list_manual_samples_reports_changed_after_latest_evaluation(tmp_path: Path):
+    service = EvaluationService(None, None, reports_dir=tmp_path)
+    created = await service.append_manual_sample("tenant-stale", {"question": "新问题", "answer": "新答案", "reference": "新答案"})
+    path = tmp_path / "evaluation_tenant-stale.manual.dataset.json"
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    saved[0]["created_at"] = "2026-05-13T11:00:00+00:00"
+    path.write_text(json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8")
+    (tmp_path / "evaluation_tenant-stale.json").write_text(
+        json.dumps(
+            {
+                "metrics": {},
+                "gate": {"passed": True, "failures": []},
+                "dataset_size": 0,
+                "generated_at": "2026-05-13T10:00:00+00:00",
+                "generated_from": {"tenant_id": "tenant-stale", "sample_limit": 10, "manual_sample_count_used": 0, "manual_sample_count_total": 1},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "evaluation_tenant-stale.dataset.json").write_text(json.dumps([]), encoding="utf-8")
+
+    listed = await service.list_manual_samples("tenant-stale", limit=10)
+
+    assert created["sample_id"] == listed["items"][0]["sample_id"]
+    assert listed["items"][0]["last_exclusion_reason"] == "changed_after_latest_evaluation"
 
 
 @pytest.mark.asyncio
@@ -686,6 +820,52 @@ async def test_run_includes_dataset_summary_in_payload(tmp_path: Path):
     assert result["generated_from"]["dataset_summary"]["unique_doc_count"] == 1
     assert result["generated_from"]["dataset_summary"]["difficulty_counts"]["basic"] == 1
     assert result["generated_from"]["dataset_summary"]["task_type_counts"]["summary"] == 1
+
+
+def test_merge_manual_samples_uses_ratio_before_backfill():
+    service = EvaluationService(None, None, reports_dir=Path("."))
+    generated = [
+        {"question": "auto-1", "reference": "a1"},
+        {"question": "auto-2", "reference": "a2"},
+        {"question": "auto-3", "reference": "a3"},
+    ]
+    manual = [
+        {"question": "manual-1", "reference": "m1"},
+        {"question": "manual-2", "reference": "m2"},
+        {"question": "manual-3", "reference": "m3"},
+    ]
+
+    merged, used = service._merge_manual_samples(
+        generated,
+        manual,
+        sample_limit=4,
+        prioritize_all_manual_samples=False,
+        manual_sample_ratio=0.5,
+    )
+
+    assert [item["question"] for item in merged] == ["manual-1", "manual-2", "auto-1", "auto-2"]
+    assert [item["question"] for item in used] == ["manual-1", "manual-2"]
+
+
+def test_merge_manual_samples_can_expand_to_include_all_manual():
+    service = EvaluationService(None, None, reports_dir=Path("."))
+    generated = [{"question": "auto-1", "reference": "a1"}]
+    manual = [
+        {"question": "manual-1", "reference": "m1"},
+        {"question": "manual-2", "reference": "m2"},
+        {"question": "manual-3", "reference": "m3"},
+    ]
+
+    merged, used = service._merge_manual_samples(
+        generated,
+        manual,
+        sample_limit=2,
+        prioritize_all_manual_samples=True,
+        manual_sample_ratio=0.5,
+    )
+
+    assert [item["question"] for item in merged] == ["manual-1", "manual-2", "manual-3"]
+    assert [item["question"] for item in used] == ["manual-1", "manual-2", "manual-3"]
 
 
 def _async_return(value):

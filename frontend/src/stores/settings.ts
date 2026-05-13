@@ -34,6 +34,7 @@ export const useSettingsStore = defineStore("settings", () => {
   const statusHintsEnabled = ref(readBoolean(STATUS_HINTS_ENABLED_KEY, true))
 
   const loadingAdminDiagnostics = ref(false)
+  const adminDiagnosticsMessage = ref("")
   const llmDomainConfig = ref<Record<string, any> | null>(null)
   const runtimeMetrics = ref<Record<string, any> | null>(null)
   const retrievalIntegrity = ref<Record<string, any> | null>(null)
@@ -66,10 +67,15 @@ export const useSettingsStore = defineStore("settings", () => {
     localStorage.setItem(STATUS_HINTS_ENABLED_KEY, String(value))
   }
 
+  function clearAdminDiagnosticsMessage() {
+    adminDiagnosticsMessage.value = ""
+  }
+
   async function loadAdminDiagnostics(isAdmin: boolean) {
     if (!isAdmin) return
 
     loadingAdminDiagnostics.value = true
+    adminDiagnosticsMessage.value = ""
     try {
       const [
         llmDomainResponse,
@@ -93,6 +99,9 @@ export const useSettingsStore = defineStore("settings", () => {
       mobileAuthStatus.value = mobileAuthResponse
       pushProviderStatus.value = pushProviderResponse
       backendStatus.value = backendStatusResponse
+    } catch (error) {
+      adminDiagnosticsMessage.value = error instanceof Error ? error.message : "加载管理员诊断信息失败。"
+      throw error
     } finally {
       loadingAdminDiagnostics.value = false
     }
@@ -100,7 +109,7 @@ export const useSettingsStore = defineStore("settings", () => {
     try {
       retrievalIntegrity.value = await adminApi.getRetrievalIntegrity(12)
     } catch {
-      // Keep the settings page responsive even if integrity sampling is slow.
+      adminDiagnosticsMessage.value = "检索完整性采样暂时不可用，其余诊断信息已刷新。"
     }
   }
 
@@ -111,6 +120,7 @@ export const useSettingsStore = defineStore("settings", () => {
     notificationsEnabled,
     statusHintsEnabled,
     loadingAdminDiagnostics,
+    adminDiagnosticsMessage,
     llmDomainConfig,
     runtimeMetrics,
     retrievalIntegrity,
@@ -123,6 +133,7 @@ export const useSettingsStore = defineStore("settings", () => {
     setResponseLanguage,
     setNotificationsEnabled,
     setStatusHintsEnabled,
+    clearAdminDiagnosticsMessage,
     loadAdminDiagnostics,
   }
 })

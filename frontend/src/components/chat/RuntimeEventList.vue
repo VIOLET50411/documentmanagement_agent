@@ -61,9 +61,9 @@ const activeEvent = computed(() => props.events[props.events.length - 1] ?? null
 
 const previewText = computed(() =>
   props.events
-    .map((event) => `${statusLabel(event.status)}: ${event.message}`)
+    .map((event) => `${statusLabel(event.status)}：${event.message}`)
     .slice(0, 2)
-    .join(" | ")
+    .join(" · ")
 )
 
 function statusLabel(status: string) {

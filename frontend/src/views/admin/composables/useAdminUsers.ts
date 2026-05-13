@@ -1,5 +1,6 @@
 import { reactive } from "vue"
 import { adminApi } from "@/api/admin"
+import { getApiErrorMessage, invitationStatusLabel as readableInvitationStatusLabel, roleLabel as readableRoleLabel, userLevelLabel } from "@/utils/adminUi"
 
 type GenericMap = Record<string, any>
 
@@ -45,7 +46,7 @@ export function useAdminUsers() {
       state.users = usersRes
       state.invitations = invitationsRes
     } catch (err: any) {
-      state.error = err?.response?.data?.detail || "加载用户数据失败。"
+      state.error = getApiErrorMessage(err, "用户数据暂时没加载出来，请稍后刷新页面再试。")
     } finally {
       state.loadingUsers = false
     }
@@ -70,13 +71,13 @@ export function useAdminUsers() {
         expires_hours: 72,
       }
       const result = await adminApi.inviteUser(payload)
-      state.inviteMessage = `邀请已发送，令牌：${result.token}`
-      state.success = `已向 ${payload.email} 发送邀请`
+      state.inviteMessage = `邀请已发送，对方会收到邮件。邀请码：${result.token}`
+      state.success = `已向 ${payload.email} 发送邀请。`
       state.inviteForm.email = ""
       state.inviteForm.department = ""
       await loadUsers()
     } catch (err: any) {
-      state.error = err?.response?.data?.detail || "发送邀请失败。"
+      state.error = getApiErrorMessage(err, "邀请没有发送成功，请检查邮箱地址后再试。")
     } finally {
       state.inviting = false
     }
@@ -87,11 +88,11 @@ export function useAdminUsers() {
     state.success = ""
     try {
       const result = await adminApi.resendInvitation(invitation.invitation_id, 72)
-      state.inviteMessage = `已重新发送邀请：${result.email}`
-      state.success = `已重发邀请：${result.email}`
+      state.inviteMessage = `邀请已重新发送给 ${result.email}。`
+      state.success = `已重新发送邀请：${result.email}`
       await loadUsers()
     } catch (err: any) {
-      state.error = err?.response?.data?.detail || "重发邀请失败。"
+      state.error = getApiErrorMessage(err, "邀请重发失败，请稍后再试。")
     }
   }
 
@@ -100,11 +101,11 @@ export function useAdminUsers() {
     state.success = ""
     try {
       await adminApi.revokeInvitation(invitation.invitation_id)
-      state.inviteMessage = `已撤销邀请：${invitation.email}`
-      state.success = `已撤销邀请：${invitation.email}`
+      state.inviteMessage = `已撤销发给 ${invitation.email} 的邀请。`
+      state.success = `邀请已撤销：${invitation.email}`
       await loadUsers()
     } catch (err: any) {
-      state.error = err?.response?.data?.detail || "撤销邀请失败。"
+      state.error = getApiErrorMessage(err, "邀请撤销失败，请稍后再试。")
     }
   }
 
@@ -142,7 +143,7 @@ export function useAdminUsers() {
       state.editingUserId = ""
       await loadUsers()
     } catch (err: any) {
-      state.error = err?.response?.data?.detail || "更新用户失败。"
+      state.error = getApiErrorMessage(err, "用户信息没有保存成功，请检查填写内容后再试。")
     } finally {
       state.savingUserId = ""
     }
@@ -158,7 +159,7 @@ export function useAdminUsers() {
       state.success = `已重置 ${result.username} 的密码。`
       state.tempPasswordMessage = `临时密码：${result.temporary_password}`
     } catch (err: any) {
-      state.error = err?.response?.data?.detail || "重置密码失败。"
+      state.error = getApiErrorMessage(err, "密码重置失败，请稍后再试。")
     } finally {
       state.passwordResetUserId = ""
     }
@@ -174,20 +175,22 @@ export function useAdminUsers() {
       state.success = `已删除用户：${user.username}`
       await loadUsers()
     } catch (err: any) {
-      state.error = err?.response?.data?.detail || "删除用户失败。"
+      state.error = getApiErrorMessage(err, "用户删除失败，请稍后再试。")
     } finally {
       state.deletingUserId = ""
     }
   }
 
   function invitationStatusLabel(status: string) {
-    const map: Record<string, string> = {
-      pending: "待使用",
-      used: "已使用",
-      expired: "已过期",
-      revoked: "已撤销",
-    }
-    return map[status] || status || "未知"
+    return readableInvitationStatusLabel(status)
+  }
+
+  function roleLabel(role: string) {
+    return readableRoleLabel(role)
+  }
+
+  function levelLabel(level: number | string | null | undefined) {
+    return userLevelLabel(level)
   }
 
   function formatDate(value: string | null | undefined) {
@@ -208,6 +211,8 @@ export function useAdminUsers() {
     resendInvitation,
     revokeInvitation,
     invitationStatusLabel,
+    roleLabel,
+    levelLabel,
     formatDate,
   }
 }

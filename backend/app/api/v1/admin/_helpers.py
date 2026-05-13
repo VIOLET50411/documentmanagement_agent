@@ -8,6 +8,7 @@ import re
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Awaitable, Callable
 
 from app.config import settings
 from app.dependencies import get_redis
@@ -144,6 +145,58 @@ def _serialize_registry_model(item) -> dict:
         "updated_at": item.updated_at.isoformat() if item.updated_at else None,
         "activated_at": item.activated_at.isoformat() if item.activated_at else None,
     }
+
+
+def _admin_cache_key(tenant_id: str, scope: str, *parts: object) -> str:
+    suffix = ":".join(str(part) for part in parts if part is not None and str(part) != "")
+    if suffix:
+        return f"admin:cache:{tenant_id}:{scope}:{suffix}"
+    return f"admin:cache:{tenant_id}:{scope}"
+
+
+async def _get_admin_cached_payload(key: str) -> dict | None:
+    redis_client = get_redis()
+    if redis_client is None:
+        return None
+    try:
+        raw = await redis_client.get(key)
+    except Exception:
+        return None
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+async def _set_admin_cached_payload(key: str, payload: dict, ttl_seconds: int | None = None) -> dict:
+    redis_client = get_redis()
+    if redis_client is None:
+        return payload
+    try:
+        await redis_client.set(
+            key,
+            json.dumps(payload, ensure_ascii=False),
+            ex=max(int(ttl_seconds or settings.admin_summary_cache_ttl_seconds), 1),
+        )
+    except Exception:
+        return payload
+    return payload
+
+
+async def _load_admin_cached_payload(
+    key: str,
+    loader: Callable[[], Awaitable[dict]],
+    *,
+    ttl_seconds: int | None = None,
+) -> dict:
+    cached = await _get_admin_cached_payload(key)
+    if cached is not None:
+        return cached
+    payload = await loader()
+    return await _set_admin_cached_payload(key, payload, ttl_seconds=ttl_seconds)
 
 
 async def _seed_runtime_task(task_id: str, *, tenant_id: str, task_type: str, description: str, stage: str = "queued") -> None:

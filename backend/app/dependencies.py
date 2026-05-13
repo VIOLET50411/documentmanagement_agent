@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy import event, text
 from sqlalchemy.orm import Session
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 import structlog
 
 from app.config import settings
@@ -114,11 +115,28 @@ async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
 
 async def init_redis(app=None):
     """Initialize async Redis connection."""
+    logger = structlog.get_logger("docmind.dependencies")
     redis_client = Redis.from_url(
         settings.redis_url,
         encoding="utf-8",
         decode_responses=True,
+        socket_connect_timeout=settings.redis_socket_connect_timeout_seconds,
+        socket_timeout=settings.redis_socket_timeout_seconds,
+        health_check_interval=settings.redis_health_check_interval_seconds,
+        retry_on_timeout=False,
     )
+    try:
+        await redis_client.ping()
+    except (RedisError, OSError, RuntimeError, ValueError) as exc:
+        logger.warning(
+            "redis.init_failed",
+            url=settings.redis_url,
+            error=str(exc),
+            connect_timeout_seconds=settings.redis_socket_connect_timeout_seconds,
+            socket_timeout_seconds=settings.redis_socket_timeout_seconds,
+        )
+        await redis_client.aclose()
+        redis_client = None
     _write_app_state(app, redis=redis_client)
 
 
@@ -181,16 +199,9 @@ async def init_milvus(app=None):
 
 
 async def init_elasticsearch(app=None):
-    """Initialize Elasticsearch connection check."""
+    """Initialize Elasticsearch client without blocking startup on connectivity probes."""
     try:
         es_client = AsyncElasticsearch(hosts=[settings.es_url], request_timeout=5)
-        await es_client.ping()
-        from app.retrieval.es_client import ESClient
-
-        exists = await es_client.indices.exists(index=settings.es_index)
-        if not exists:
-            await es_client.indices.create(index=settings.es_index, mappings=ESClient()._mapping())
-        ESClient._index_ready = True
     except (TransportError, OSError, RuntimeError, ValueError) as exc:
         structlog.get_logger("docmind.dependencies").warning(
             "elasticsearch.init_failed",
@@ -216,15 +227,13 @@ def get_elasticsearch(request: Request | None = None) -> AsyncElasticsearch:
 
 
 async def init_minio(app=None) -> None:
-    """Initialize MinIO client and ensure the bucket exists."""
+    """Initialize MinIO client without blocking startup on bucket checks."""
     client = Minio(
         settings.minio_endpoint,
         access_key=settings.minio_access_key,
         secret_key=settings.minio_secret_key,
         secure=settings.minio_secure,
     )
-    if not client.bucket_exists(settings.minio_bucket):
-        client.make_bucket(settings.minio_bucket)
     _write_app_state(app, minio_client=client)
 
 

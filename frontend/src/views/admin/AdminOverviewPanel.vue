@@ -42,7 +42,7 @@
         <div v-if="state.analytics.document_status_distribution?.length" class="bar-list">
           <div v-for="item in state.analytics.document_status_distribution" :key="item.status" class="bar-row">
             <div class="bar-head">
-              <span class="list-title">{{ item.status }}</span>
+              <span class="list-title">{{ documentStatusLabel(item.status) }}</span>
               <span class="list-meta">{{ item.count }}</span>
             </div>
             <div class="bar-track">
@@ -58,7 +58,7 @@
         <div v-if="state.analytics.role_distribution?.length" class="bar-list">
           <div v-for="item in state.analytics.role_distribution" :key="item.role" class="bar-row">
             <div class="bar-head">
-              <span class="list-title">{{ item.role }}</span>
+              <span class="list-title">{{ roleLabel(item.role) }}</span>
               <span class="list-meta">{{ item.count }}</span>
             </div>
             <div class="bar-track">
@@ -96,23 +96,23 @@
             </div>
           </div>
         </div>
-        <p v-else class="empty-text">暂无反馈分布数据。</p>
+        <p v-else class="empty-text">暂无反馈评分数据。</p>
       </section>
 
       <section class="card section-card">
-        <h2>平台运营动作</h2>
+        <h2>平台运维动作</h2>
         <div class="action-group ops-actions">
           <button class="btn btn-primary" :disabled="state.runningAction === 'reindex'" @click="runOpsAction('reindex')">
-            {{ state.runningAction === 'reindex' ? "重建中..." : "重建索引" }}
+            {{ state.runningAction === "reindex" ? "重建中..." : "重建索引" }}
           </button>
           <button class="btn btn-ghost" :disabled="state.runningAction === 'retry_failed'" @click="runOpsAction('retry_failed')">
-            {{ state.runningAction === 'retry_failed' ? "处理中..." : "批量重试失败任务" }}
+            {{ state.runningAction === "retry_failed" ? "处理中..." : "批量重试失败任务" }}
           </button>
           <button class="btn btn-ghost" :disabled="state.runningAction === 'evaluation'" @click="runOpsAction('evaluation')">
-            {{ state.runningAction === 'evaluation' ? "启动中..." : "启动运行评估" }}
+            {{ state.runningAction === "evaluation" ? "启动中..." : "启动运行评估" }}
           </button>
           <button class="btn btn-ghost" :disabled="state.runningAction === 'refresh_health'" @click="runOpsAction('refresh_health')">
-            {{ state.runningAction === 'refresh_health' ? "刷新中..." : "刷新平台体检" }}
+            {{ state.runningAction === "refresh_health" ? "刷新中..." : "刷新平台体检" }}
           </button>
         </div>
         <p v-if="state.actionMessage" class="report-meta success">{{ state.actionMessage }}</p>
@@ -120,15 +120,15 @@
         <ul class="list compact-list">
           <li class="list-item">
             <span class="list-title">平台就绪度</span>
-            <span class="list-meta">{{ state.readiness?.status || state.readiness?.overall_status || "未知" }}</span>
+            <span class="list-meta">{{ readinessLabel(state.readiness?.status || state.readiness?.overall_status) }}</span>
           </li>
           <li class="list-item">
             <span class="list-title">检索健康度</span>
-            <span class="list-meta">{{ state.retrievalIntegrity?.healthy ? "healthy" : "needs attention" }}</span>
+            <span class="list-meta">{{ state.retrievalIntegrity?.healthy ? "正常" : "需要关注" }}</span>
           </li>
           <li class="list-item">
             <span class="list-title">Milvus 样本召回</span>
-            <span class="list-meta">{{ state.retrievalIntegrity?.stats?.milvus_sample_recall ?? "-" }}</span>
+            <span class="list-meta">{{ formatPercentValue(state.retrievalIntegrity?.stats?.milvus_sample_recall) }}</span>
           </li>
           <li class="list-item">
             <span class="list-title">ES 文档量</span>
@@ -143,6 +143,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from "vue"
 import { useAdminOverview } from "./composables/useAdminOverview"
+import { pipelineStatusLabel, readinessStatusLabel, roleLabel as readableRoleLabel } from "@/utils/adminUi"
 
 const { state, statCards, loadOverview, runOpsAction, formatDate } = useAdminOverview()
 
@@ -169,6 +170,23 @@ function calcBarWidth(value: number, maxValue: number) {
 
 function calcTrendHeight(value: number, maxValue: number) {
   return `${Math.max(16, Math.round((Number(value || 0) / Math.max(maxValue, 1)) * 140))}px`
+}
+
+function documentStatusLabel(value?: string | null) {
+  return pipelineStatusLabel(value)
+}
+
+function roleLabel(value?: string | null) {
+  return readableRoleLabel(value)
+}
+
+function readinessLabel(value?: string | null) {
+  return readinessStatusLabel(value)
+}
+
+function formatPercentValue(value?: number | null) {
+  if (value === null || value === undefined) return "-"
+  return `${(Number(value) * 100).toFixed(1)}%`
 }
 </script>
 
@@ -238,33 +256,5 @@ function calcTrendHeight(value: number, maxValue: number) {
 
 .bar-fill.warning {
   background: #f59e0b;
-}
-
-.trend-grid {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 12px;
-  align-items: end;
-  min-height: 220px;
-}
-
-.trend-col {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-}
-
-.trend-bar-wrap {
-  width: 100%;
-  min-height: 150px;
-  display: flex;
-  align-items: flex-end;
-}
-
-.trend-bar {
-  width: 100%;
-  border-radius: 10px 10px 0 0;
-  background: linear-gradient(180deg, #4f7cff 0%, #7aa2ff 100%);
 }
 </style>

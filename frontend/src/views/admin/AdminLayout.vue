@@ -6,32 +6,29 @@
       </button>
     </div>
 
-    <AdminOverviewPanel v-if="activeTab === 'overview'" />
-    <UserManagement v-else-if="activeTab === 'users'" />
-    <IngestionDashboard v-else-if="activeTab === 'pipeline'" />
-    <SystemMonitor v-else-if="activeTab === 'backends'" />
-    <RetrievalDebug v-else-if="activeTab === 'retrieval'" />
-    <RuntimeInspect v-else-if="activeTab === 'inspect'" :format-date="formatDate" />
-    <SecurityAudit v-else-if="activeTab === 'security'" />
-    <RuntimeEvaluation v-else />
+    <KeepAlive>
+      <component :is="currentTabComponent" :format-date="formatDate" />
+    </KeepAlive>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from "vue"
+import { KeepAlive, computed, defineAsyncComponent, onMounted, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router"
-import AdminOverviewPanel from "./AdminOverviewPanel.vue"
-import IngestionDashboard from "./IngestionDashboard.vue"
-import RetrievalDebug from "./RetrievalDebug.vue"
-import RuntimeEvaluation from "./RuntimeEvaluation.vue"
-import RuntimeInspect from "./RuntimeInspect.vue"
-import SecurityAudit from "./SecurityAudit.vue"
-import SystemMonitor from "./SystemMonitor.vue"
-import UserManagement from "./UserManagement.vue"
 
 const route = useRoute()
 const router = useRouter()
 const activeTab = ref("overview")
+const tabComponents = {
+  overview: defineAsyncComponent(() => import("./AdminOverviewPanel.vue")),
+  users: defineAsyncComponent(() => import("./UserManagement.vue")),
+  pipeline: defineAsyncComponent(() => import("./IngestionDashboard.vue")),
+  backends: defineAsyncComponent(() => import("./SystemMonitor.vue")),
+  retrieval: defineAsyncComponent(() => import("./RetrievalDebug.vue")),
+  inspect: defineAsyncComponent(() => import("./RuntimeInspect.vue")),
+  security: defineAsyncComponent(() => import("./SecurityAudit.vue")),
+  evaluation: defineAsyncComponent(() => import("./RuntimeEvaluation.vue")),
+} as const
 
 const tabs = [
   { key: "overview", label: "总览" },
@@ -41,8 +38,10 @@ const tabs = [
   { key: "retrieval", label: "检索调试" },
   { key: "inspect", label: "运行排查" },
   { key: "security", label: "安全审计" },
-  { key: "evaluation", label: "评测报告" },
+  { key: "evaluation", label: "检查报告" },
 ]
+
+const currentTabComponent = computed(() => tabComponents[activeTab.value as keyof typeof tabComponents] || tabComponents.evaluation)
 
 onMounted(() => {
   const tab = route.query.tab

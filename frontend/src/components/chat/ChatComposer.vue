@@ -15,7 +15,7 @@
       <div class="composer-bottom">
         <div class="composer-tools">
           <button class="tool-btn" type="button" :title="focusLabel" @click="focusTextarea">
-            <span class="icon">⌕</span>
+            <span class="icon">+</span>
           </button>
         </div>
         <div class="composer-actions">
@@ -39,8 +39,8 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from "vue"
 
-const focusLabel = "\u805a\u7126\u8f93\u5165\u6846"
-const modelSelectorLabel = "\u9009\u62e9\u6a21\u578b"
+const focusLabel = "聚焦输入框"
+const modelSelectorLabel = "选择模型"
 
 const props = defineProps<{
   modelValue: string

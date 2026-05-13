@@ -41,7 +41,10 @@
         </transition>
       </section>
 
-      <div v-if="structured.title || structured.conclusion || structured.sections.length || structured.compareTable" class="answer-outline">
+      <div
+        v-if="structured.title || structured.conclusion || structured.sections.length || structured.compareTable"
+        class="answer-outline"
+      >
         <div v-if="structured.title" class="outline-title">{{ structured.title }}</div>
         <div v-if="structured.conclusion" class="outline-conclusion">
           <span class="outline-label">{{ conclusionLabel }}</span>
@@ -107,7 +110,7 @@ type CitationGroup = {
 const streamingSubtitle = "正在基于检索证据生成回答"
 const readySubtitle = "基于当前知识库与检索结果生成"
 const conclusionLabel = "结论"
-const compareLabel = "结构化对比"
+const compareLabel = "对比结果"
 const evidenceTitle = "引用依据"
 const pageLabel = "页码"
 const evidenceCountUnit = "条"
@@ -117,6 +120,9 @@ const improveLabel = "待改进"
 const retryLabel = "重试"
 const expandLabel = "展开"
 const collapseLabel = "收起"
+const defaultDocTitle = "未命名文档"
+const defaultSectionTitle = "未命名章节"
+const defaultSnippet = "未提供可展示的证据片段。"
 
 const props = defineProps<{
   message: ChatMessage
@@ -136,10 +142,10 @@ const rendered = computed(() => renderMarkdown(structured.value.remainder))
 const citationGroups = computed<CitationGroup[]>(() => {
   const groups = new Map<string, CitationGroup>()
   for (const cite of props.message.citations || []) {
-    const docTitle = (cite.doc_title || "未命名文档").trim()
-    const sectionTitle = (cite.section_title || "未命名章节").trim()
+    const docTitle = (cite.doc_title || defaultDocTitle).trim()
+    const sectionTitle = (cite.section_title || defaultSectionTitle).trim()
     const pageNumber = String(cite.page_number ?? "-")
-    const snippet = normalizeEvidenceSnippet(String(cite.snippet || "").trim() || "未提供片段预览")
+    const snippet = normalizeEvidenceSnippet(String(cite.snippet || "").trim() || defaultSnippet)
     const key = `${cite.doc_id || docTitle}:${docTitle}`
     if (!groups.has(key)) {
       groups.set(key, {
@@ -151,7 +157,7 @@ const citationGroups = computed<CitationGroup[]>(() => {
     }
     const group = groups.get(key)!
     group.items.push({
-      key: `${key}:${sectionTitle}:${pageNumber}:${snippet.slice(0, 20)}`,
+      key: `${key}:${sectionTitle}:${pageNumber}:${snippet.slice(0, 24)}`,
       sectionTitle,
       pageNumber,
       snippet,
@@ -165,7 +171,7 @@ const citationGroups = computed<CitationGroup[]>(() => {
       sectionSummary:
         uniqueSections.length > 1
           ? uniqueSections.slice(0, 3).join("、")
-          : uniqueSections[0] || "未命名章节",
+          : uniqueSections[0] || defaultSectionTitle,
     }
   })
 })
@@ -273,9 +279,10 @@ function normalizeAnswerContent(content: string) {
     .replace(/[ \t]+\n/g, "\n")
     .replace(/([。；：])\s*(\d+\.\s*)/g, "$1\n$2")
     .replace(/([。；：])\s*(-\s+)/g, "$1\n$2")
-    .replace(/(?<!\n)(所需材料：|办理条件：|时间要求：|关键依据：|关键依据|提取字段|提示：|提示|待确认事项：|建议追问：)/g, "\n$1")
+    .replace(/(?<!\n)(所需材料：|办理条件：|时间要求：|关键依据：|提取字段|提示：|待确认事项：|建议追问：)/g, "\n$1")
     .replace(/(\d+\.\s*[^\n]+?)\s+(?=\d+\.\s)/g, "$1\n")
     .replace(/\n{3,}/g, "\n\n")
+    .trim()
 }
 
 function normalizeEvidenceSnippet(content: string) {
@@ -293,10 +300,6 @@ function normalizeEvidenceSnippet(content: string) {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  width: 100%;
-}
-
-.assistant-shell[data-layout="document"] {
   width: 100%;
 }
 
@@ -423,8 +426,10 @@ function normalizeEvidenceSnippet(content: string) {
 }
 
 .evidence-item {
+  display: grid;
+  gap: 6px;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--bg-surface);
 }
 
@@ -432,24 +437,23 @@ function normalizeEvidenceSnippet(content: string) {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 6px;
+  flex-wrap: wrap;
 }
 
 .evidence-item p {
   margin: 0;
-  color: var(--text-primary);
-  line-height: 1.6;
   white-space: pre-wrap;
-}
-
-.assistant-copy {
-  font-size: 1rem;
-  line-height: 1.78;
   color: var(--text-primary);
+  line-height: 1.65;
 }
 
 .assistant-body {
   position: relative;
+}
+
+.assistant-copy {
+  color: var(--text-primary);
+  line-height: 1.75;
 }
 
 .assistant-actions {
@@ -457,37 +461,23 @@ function normalizeEvidenceSnippet(content: string) {
 }
 
 .action-button {
-  border: 0;
-  padding: 8px 12px;
+  border: 1px solid var(--border-color);
   border-radius: 999px;
+  background: var(--bg-surface);
   color: var(--text-secondary);
-  background: transparent;
-  transition: transform var(--transition-fast), background-color var(--transition-fast);
+  padding: 7px 12px;
+  font-size: 13px;
 }
 
-.action-button:hover {
-  transform: translateY(-1px);
-  background: var(--bg-surface-hover);
-}
-
-.streaming-cursor {
+.streaming-cursor::after {
+  content: "";
   display: inline-block;
-  width: 2px;
-  height: 1.05em;
+  width: 8px;
+  height: 18px;
   margin-left: 4px;
-  vertical-align: text-bottom;
+  border-radius: 999px;
   background: var(--color-primary);
-  animation: assistant-cursor-blink 1s step-end infinite;
-}
-
-@keyframes assistant-cursor-blink {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0;
-  }
+  animation: blink 1s ease-in-out infinite;
 }
 
 .evidence-collapse-enter-active,
@@ -501,49 +491,13 @@ function normalizeEvidenceSnippet(content: string) {
   transform: translateY(-4px);
 }
 
-:deep(.markdown-body p) {
-  margin: 0;
-}
-
-:deep(.markdown-body p + p) {
-  margin-top: 12px;
-}
-
-:deep(.markdown-body ul),
-:deep(.markdown-body ol) {
-  margin: 10px 0 0;
-  padding-left: 20px;
-}
-
-:deep(.markdown-body li + li) {
-  margin-top: 6px;
-}
-
-:deep(.markdown-body code) {
-  font-family: var(--font-mono);
-  padding: 2px 6px;
-  border-radius: 8px;
-  background: var(--bg-code);
-}
-
-:deep(.markdown-body pre) {
-  overflow-x: auto;
-  padding: 14px 16px;
-  border-radius: 18px;
-  background: var(--bg-code);
-}
-
-:deep(.markdown-body table) {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 12px;
-  font-size: 14px;
-}
-
-:deep(.markdown-body th),
-:deep(.markdown-body td) {
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border-color-subtle);
-  text-align: left;
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 0.15;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 </style>

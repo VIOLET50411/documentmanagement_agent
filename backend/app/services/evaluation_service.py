@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -38,18 +40,33 @@ class EvaluationService:
         tenant_id: str,
         *,
         sample_limit: int = 100,
+        prioritize_all_manual_samples: bool = False,
+        manual_sample_ratio: float = 1.0,
         actor: User | None = None,
         progress_callback: Callable[[str, dict[str, Any]], Awaitable[None] | None] | None = None,
     ) -> dict[str, Any]:
+        normalized_sample_limit = max(sample_limit, 1)
+        normalized_manual_ratio = min(max(float(manual_sample_ratio), 0.0), 1.0)
         await self._notify_progress(
             progress_callback,
             "dataset_building",
-            {"tenant_id": tenant_id, "sample_limit": max(sample_limit, 1)},
+            {
+                "tenant_id": tenant_id,
+                "sample_limit": normalized_sample_limit,
+                "prioritize_all_manual_samples": prioritize_all_manual_samples,
+                "manual_sample_ratio": normalized_manual_ratio,
+            },
         )
-        documents = await self._load_documents(tenant_id, sample_limit=max(sample_limit, 1))
-        dataset = await self.dataset_generator.generate(documents, count=max(sample_limit, 1))
+        documents = await self._load_documents(tenant_id, sample_limit=normalized_sample_limit)
+        dataset = await self.dataset_generator.generate(documents, count=normalized_sample_limit)
         manual_samples = await self.load_manual_samples(tenant_id)
-        dataset, used_manual_samples = self._merge_manual_samples(dataset, manual_samples, sample_limit=max(sample_limit, 1))
+        dataset, used_manual_samples = self._merge_manual_samples(
+            dataset,
+            manual_samples,
+            sample_limit=normalized_sample_limit,
+            prioritize_all_manual_samples=prioritize_all_manual_samples,
+            manual_sample_ratio=normalized_manual_ratio,
+        )
         dataset_summary = self._summarize_dataset(dataset)
         await self._notify_progress(
             progress_callback,
@@ -72,11 +89,15 @@ class EvaluationService:
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "generated_from": {
                 "tenant_id": tenant_id,
-                "sample_limit": max(sample_limit, 1),
+                "sample_limit": normalized_sample_limit,
+                "prioritize_all_manual_samples": prioritize_all_manual_samples,
+                "manual_sample_ratio": normalized_manual_ratio,
                 "document_count": len(documents),
                 "manual_sample_count": len(used_manual_samples),
                 "manual_sample_count_total": len(manual_samples),
                 "manual_sample_count_used": len(used_manual_samples),
+                "manual_sample_count_skipped": max(len(manual_samples) - len(used_manual_samples), 0),
+                "effective_dataset_size_target": max(normalized_sample_limit, len(used_manual_samples)) if prioritize_all_manual_samples else normalized_sample_limit,
                 "dataset_summary": dataset_summary,
             },
         }
@@ -163,12 +184,70 @@ class EvaluationService:
         path.write_text(json.dumps(filtered, ensure_ascii=False, indent=2), encoding="utf-8")
         return normalized
 
+    async def update_manual_sample(self, tenant_id: str, sample_id: str, patch: dict[str, Any]) -> dict[str, Any] | None:
+        items = await self.load_manual_samples(tenant_id)
+        updated: dict[str, Any] | None = None
+        rewritten: list[dict[str, Any]] = []
+        for item in items:
+            if str(item.get("sample_id") or "") != sample_id:
+                rewritten.append(item)
+                continue
+            merged = dict(item)
+            merged.update(patch)
+            normalized = self._normalize_manual_sample(merged)
+            normalized["sample_id"] = sample_id
+            normalized["created_at"] = item.get("created_at")
+            normalized["updated_at"] = datetime.now(timezone.utc).isoformat()
+            updated = normalized
+            rewritten.append(normalized)
+        if updated is None:
+            return None
+        path = self._manual_dataset_path(tenant_id)
+        path.write_text(json.dumps(rewritten, ensure_ascii=False, indent=2), encoding="utf-8")
+        return updated
+
+    async def delete_manual_sample(self, tenant_id: str, sample_id: str) -> bool:
+        items = await self.load_manual_samples(tenant_id)
+        rewritten = [item for item in items if str(item.get("sample_id") or "") != sample_id]
+        if len(rewritten) == len(items):
+            return False
+        path = self._manual_dataset_path(tenant_id)
+        path.write_text(json.dumps(rewritten, ensure_ascii=False, indent=2), encoding="utf-8")
+        return True
+
     async def list_manual_samples(self, tenant_id: str, *, limit: int = 50) -> dict[str, Any]:
         items = await self.load_manual_samples(tenant_id)
-        trimmed = items[: max(limit, 1)]
+        latest_info = self._latest_manual_sample_usage(tenant_id)
+        usage_signatures = latest_info.get("usage_signatures") or set()
+        latest_generated_at = latest_info.get("generated_at")
+        latest_generated_from = latest_info.get("generated_from") or {}
+        latest_generated_at_dt = self._parse_iso_datetime(latest_generated_at)
+        enriched: list[dict[str, Any]] = []
+        for item in items:
+            normalized = self._normalize_manual_sample(item)
+            signature = self._manual_sample_signature(normalized)
+            metadata = normalized.get("metadata") if isinstance(normalized.get("metadata"), dict) else {}
+            exclusion_reason, exclusion_detail = self._manual_sample_exclusion_reason(
+                normalized,
+                signature=signature,
+                usage_signatures=usage_signatures,
+                latest_generated_at=latest_generated_at,
+                latest_generated_at_dt=latest_generated_at_dt,
+                latest_generated_from=latest_generated_from,
+            )
+            enriched.append(
+                normalized
+                | {
+                    "source": str(metadata.get("source") or "manual_entry"),
+                    "last_used_at": latest_generated_at if signature in usage_signatures else None,
+                    "last_exclusion_reason": exclusion_reason,
+                    "last_exclusion_detail": exclusion_detail,
+                }
+            )
+        trimmed = enriched[: max(limit, 1)]
         return {
             "items": trimmed,
-            "total": len(items),
+            "total": len(enriched),
             "limit": max(limit, 1),
             "path": str(self._manual_dataset_path(tenant_id)),
         }
@@ -452,7 +531,11 @@ class EvaluationService:
         contexts = [str(item).strip() for item in (sample.get("contexts") or []) if str(item).strip()]
         context_doc_ids = [str(item).strip() for item in (sample.get("context_doc_ids") or []) if str(item).strip()]
         metadata = sample.get("metadata") if isinstance(sample.get("metadata"), dict) else {}
+        metadata = {"source": metadata.get("source") or "manual_entry", **metadata}
+        signature = f"{question}||{reference}"
+        sample_id = str(sample.get("sample_id") or self._manual_sample_id(signature)).strip()
         return {
+            "sample_id": sample_id,
             "question": question,
             "answer": answer,
             "reference": reference,
@@ -461,10 +544,74 @@ class EvaluationService:
             "difficulty": str(sample.get("difficulty") or "manual"),
             "task_type": str(sample.get("task_type") or "manual_debug"),
             "metadata": metadata,
+            "created_at": sample.get("created_at"),
+            "updated_at": sample.get("updated_at"),
         }
 
     def _manual_sample_signature(self, sample: dict[str, Any]) -> str:
         return f"{str(sample.get('question') or '').strip()}||{str(sample.get('reference') or '').strip()}"
+
+    def _manual_sample_id(self, signature: str) -> str:
+        return hashlib.sha1(signature.encode("utf-8")).hexdigest()[:16]
+
+    def _latest_manual_sample_usage(self, tenant_id: str) -> dict[str, Any]:
+        json_path = self.reports_dir / f"evaluation_{tenant_id}.json"
+        dataset_path = self.reports_dir / f"evaluation_{tenant_id}.dataset.json"
+        generated_at = None
+        generated_from: dict[str, Any] = {}
+        if json_path.exists():
+            try:
+                payload = json.loads(json_path.read_text(encoding="utf-8"))
+                normalized_payload = self._normalize_saved_payload(payload) if payload else {}
+                generated_at = normalized_payload.get("generated_at")
+                generated_from = normalized_payload.get("generated_from") or {}
+            except (json.JSONDecodeError, OSError):
+                generated_at = None
+                generated_from = {}
+        if not dataset_path.exists():
+            return {"generated_at": generated_at, "generated_from": generated_from, "usage_signatures": set()}
+        try:
+            dataset = json.loads(dataset_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return {"generated_at": generated_at, "generated_from": generated_from, "usage_signatures": set()}
+        if not isinstance(dataset, list):
+            return {"generated_at": generated_at, "generated_from": generated_from, "usage_signatures": set()}
+        usage_signatures = {
+            self._manual_sample_signature(item)
+            for item in dataset
+            if isinstance(item, dict) and str(item.get("task_type") or "") == "manual_debug"
+        }
+        return {"generated_at": generated_at, "generated_from": generated_from, "usage_signatures": usage_signatures}
+
+    def _manual_sample_exclusion_reason(
+        self,
+        sample: dict[str, Any],
+        *,
+        signature: str,
+        usage_signatures: set[str],
+        latest_generated_at: str | None,
+        latest_generated_at_dt: datetime | None,
+        latest_generated_from: dict[str, Any],
+    ) -> tuple[str | None, str | None]:
+        if signature in usage_signatures:
+            return None, None
+        if latest_generated_at_dt is None:
+            return "no_recent_evaluation", "最近还没有可用评测结果，样本尚未进入回归。"
+
+        sample_changed_at = self._parse_iso_datetime(str(sample.get("updated_at") or sample.get("created_at") or ""))
+        if sample_changed_at is not None and sample_changed_at > latest_generated_at_dt:
+            return "changed_after_latest_evaluation", "样本在最近一次评测之后新增或修改，需要重新运行评测。"
+
+        used_count = int(latest_generated_from.get("manual_sample_count_used") or latest_generated_from.get("manual_sample_count") or 0)
+        total_count = int(latest_generated_from.get("manual_sample_count_total") or 0)
+        sample_limit = int(latest_generated_from.get("sample_limit") or 0)
+        if total_count > used_count:
+            return (
+                "excluded_by_sample_limit",
+                f"最近一次评测只纳入了 {used_count}/{total_count} 条手工样本，当前 sample_limit={sample_limit or '-'}。",
+            )
+
+        return "not_in_latest_dataset", "最近一次评测结果中未发现该样本，建议重新运行评测确认。"
 
     def _merge_manual_samples(
         self,
@@ -472,20 +619,43 @@ class EvaluationService:
         manual_samples: list[dict[str, Any]],
         *,
         sample_limit: int,
+        prioritize_all_manual_samples: bool,
+        manual_sample_ratio: float,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         merged: list[dict[str, Any]] = []
         used_manual_samples: list[dict[str, Any]] = []
         seen: set[str] = set()
-        for item in manual_samples + generated_dataset:
+        effective_limit = max(sample_limit, len(manual_samples)) if prioritize_all_manual_samples else max(sample_limit, 1)
+        manual_target = len(manual_samples) if prioritize_all_manual_samples else min(len(manual_samples), int(math.ceil(max(sample_limit, 1) * manual_sample_ratio)))
+
+        for item in manual_samples[:manual_target]:
             signature = self._manual_sample_signature(item)
             if not signature or signature in seen:
                 continue
             seen.add(signature)
             merged.append(item)
-            if item in manual_samples:
-                used_manual_samples.append(item)
-            if len(merged) >= max(sample_limit, 1):
+            used_manual_samples.append(item)
+            if len(merged) >= effective_limit:
                 break
+        if len(merged) < effective_limit:
+            for item in generated_dataset:
+                signature = self._manual_sample_signature(item)
+                if not signature or signature in seen:
+                    continue
+                seen.add(signature)
+                merged.append(item)
+                if len(merged) >= effective_limit:
+                    break
+        if len(merged) < effective_limit:
+            for item in manual_samples[manual_target:]:
+                signature = self._manual_sample_signature(item)
+                if not signature or signature in seen:
+                    continue
+                seen.add(signature)
+                merged.append(item)
+                used_manual_samples.append(item)
+                if len(merged) >= effective_limit:
+                    break
         return merged, used_manual_samples
 
     def _score_eval_chunk(

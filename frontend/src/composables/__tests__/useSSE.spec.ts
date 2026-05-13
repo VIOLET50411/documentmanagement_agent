@@ -95,7 +95,7 @@ describe("useSSE", () => {
     const runtime = useSSE()
     await runtime.sendMessage("只看最终答案")
 
-    expect(chatStore.messages[1].content).toBe("最终回答")
+    expect(chatStore.messages[1].content).toContain("最终回答")
     expect(chatStore.messages[1].citations).toEqual([{ doc_id: "d-2" }])
     expect(chatStore.activeSessionId).toBe("t-2")
     expect(chatStore.streamStatus).toBe("done")

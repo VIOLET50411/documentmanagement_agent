@@ -16,7 +16,11 @@
             </svg>
           </button>
           <button class="brand-button" @click="$router.push('/chat')">
-            <span class="brand-text">DocMind</span>
+            <img :src="brandLogoUrl" alt="DocMind 平台标志" class="brand-logo" />
+            <div class="brand-copy">
+              <span class="brand-text">DocMind</span>
+              <span class="brand-subtitle">企业文档平台</span>
+            </div>
           </button>
         </div>
 
@@ -30,7 +34,10 @@
             @click="handleNav(item)"
           >
             <span class="nav-icon" v-html="item.icon"></span>
-            <span class="nav-label">{{ item.label }}</span>
+            <span class="nav-copy">
+              <span class="nav-label">{{ item.label }}</span>
+              <span class="nav-description">{{ item.description }}</span>
+            </span>
           </button>
         </nav>
 
@@ -44,13 +51,11 @@
               v-for="session in recentSessions"
               :key="session.id"
               class="recent-item-wrapper"
-              style="display: flex; gap: 4px; align-items: center;"
             >
               <button
                 class="recent-item"
                 :class="{ active: route.name === 'Chat' && chatStore.activeSessionId === session.id }"
                 @click="openRecentSession(session.id)"
-                style="flex: 1; min-width: 0;"
               >
                 <strong>{{ session.title }}</strong>
                 <span>{{ formatTime(session.updatedAt) }}</span>
@@ -58,9 +63,6 @@
               <button
                 class="delete-session-btn"
                 @click.stop="chatStore.deleteSession(session.id)"
-                style="padding: 6px; background: transparent; border: none; cursor: pointer; color: var(--text-secondary); transition: color var(--transition-fast);"
-                onmouseover="this.style.color='var(--text-primary)'"
-                onmouseout="this.style.color='var(--text-secondary)'"
                 title="删除会话"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -87,7 +89,7 @@
 
             <teleport to="body">
               <transition name="menu-pop">
-                <div v-if="accountMenuOpen" class="account-menu" :style="{ left: isSidebarOpen ? '20px' : '10px' }" @click.stop>
+                <div v-if="accountMenuOpen" class="account-menu" :style="accountMenuStyle" @click.stop>
                   <div class="menu-email">
                     {{ user?.email || user?.username || 'admin_demo@docmind.local' }}
                   </div>
@@ -157,6 +159,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useChatStore } from '@/stores/chat'
 import { useThemeStore } from '@/stores/theme'
+import { roleLabel as readableRoleLabel } from '@/utils/adminUi'
 
 type NavItem = {
   key: string
@@ -168,6 +171,7 @@ type NavItem = {
   adminOnly?: boolean
 }
 
+const brandLogoUrl = new URL('../../../logo.jpg', import.meta.url).href
 const toggleSidebarLabel = '切换侧边栏'
 
 const route = useRoute()
@@ -181,15 +185,13 @@ const initials = computed(() => (user.value?.username || 'D').slice(0, 1).toUppe
 const recentSessions = computed(() => chatStore.sessions.slice(0, 8))
 const isSidebarOpen = ref(true)
 const accountMenuOpen = ref(false)
+const accountMenuStyle = computed(() => ({ left: isSidebarOpen.value ? '20px' : '10px' }))
 
 const svgIcons = {
-  chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>',
   new: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>',
   tasks: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>',
   search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>',
   documents: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>',
-  settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-2.82.13 1.65 1.65 0 0 0-.13 2.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>',
-  admin: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"></path><path d="M22 12A10 10 0 0 0 12 2v10z"></path></svg>'
 }
 
 const navItems: NavItem[] = [
@@ -207,7 +209,7 @@ const pageTitle = computed(() => {
   }
   const routeLabels: Record<string, string> = {
     '/settings': '个人设置',
-    '/admin': '平台管理'
+    '/admin': '平台管理',
   }
   if (routeLabels[route.path]) {
     return routeLabels[route.path]
@@ -223,14 +225,14 @@ watch(
       isSidebarOpen.value = false
     }
   },
-  { immediate: true }
+  { immediate: true },
 )
 
 watch(
   () => route.fullPath,
   () => {
     accountMenuOpen.value = false
-  }
+  },
 )
 
 function toggleSidebar() {
@@ -277,13 +279,7 @@ function openSettings(section: string) {
 }
 
 function roleLabel(role?: string) {
-  const map: Record<string, string> = {
-    ADMIN: '管理员',
-    MANAGER: '经理',
-    EMPLOYEE: '成员',
-    VIEWER: '访客',
-  }
-  return map[role || ''] || role || '未登录'
+  return readableRoleLabel(role) || '-'
 }
 
 function formatTime(value: string) {
@@ -306,7 +302,7 @@ function handleGlobalClick() {
 
 onMounted(() => {
   window.addEventListener('click', handleGlobalClick)
-  void chatStore.initialize()
+  void chatStore.initialize({ loadActiveHistory: route.name === 'Chat' })
 })
 
 onBeforeUnmount(() => {
@@ -338,8 +334,8 @@ onBeforeUnmount(() => {
 }
 
 .sidebar.expanded {
-  width: 260px;
-  min-width: 260px;
+  width: 280px;
+  min-width: 280px;
 }
 
 .sidebar-inner {
@@ -379,18 +375,46 @@ onBeforeUnmount(() => {
   flex: 1;
   display: flex;
   align-items: center;
+  gap: 12px;
+  padding: 8px;
   border: 0;
   background: transparent;
   text-align: left;
   cursor: pointer;
+  border-radius: 12px;
+}
+
+.brand-button:hover {
+  background: var(--bg-surface-hover);
+}
+
+.brand-logo {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  object-fit: cover;
+  border-radius: 12px;
+  border: 1px solid var(--border-color-subtle);
+  box-shadow: 0 8px 18px rgba(79, 124, 255, 0.16);
+}
+
+.brand-copy {
+  min-width: 0;
 }
 
 .brand-text {
+  display: block;
   font-family: var(--font-heading);
-  font-size: 1.25rem;
-  font-weight: 400;
+  font-size: 1.15rem;
+  font-weight: 500;
   color: var(--text-primary);
-  letter-spacing: -0.02em;
+}
+
+.brand-subtitle {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: 12px;
 }
 
 .account-avatar,
@@ -410,8 +434,8 @@ onBeforeUnmount(() => {
 
 .account-meta,
 .menu-profile-copy,
-.nav-label,
-.brand-button,
+.nav-copy,
+.brand-copy,
 .sidebar-section {
   min-width: 0;
   white-space: nowrap;
@@ -464,7 +488,7 @@ onBeforeUnmount(() => {
 
 .nav-item.current {
   font-weight: 500;
-  background: var(--bg-surface-hover);
+  background: color-mix(in srgb, var(--bg-surface-hover) 76%, rgba(79, 124, 255, 0.12));
 }
 
 .nav-icon {
@@ -488,9 +512,22 @@ onBeforeUnmount(() => {
   height: 100%;
 }
 
-.account-meta strong,
-.menu-profile-copy strong,
 .nav-label {
+  display: block;
+  font-weight: 500;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+}
+
+.nav-description {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.account-meta strong,
+.menu-profile-copy strong {
   display: block;
   font-weight: 400;
   font-size: 0.9rem;
@@ -508,8 +545,8 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 
-.nav-label,
-.brand-button,
+.nav-copy,
+.brand-copy,
 .sidebar-section,
 .account-meta {
   transition: max-width var(--transition-slow), opacity var(--transition-slow), margin var(--transition-slow), padding var(--transition-slow);
@@ -519,8 +556,8 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
-.sidebar:not(.expanded) .nav-label,
-.sidebar:not(.expanded) .brand-button,
+.sidebar:not(.expanded) .nav-copy,
+.sidebar:not(.expanded) .brand-copy,
 .sidebar:not(.expanded) .sidebar-section,
 .sidebar:not(.expanded) .account-meta {
   max-width: 0;
@@ -555,7 +592,15 @@ onBeforeUnmount(() => {
   border-radius: 999px;
 }
 
+.recent-item-wrapper {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
 .recent-item {
+  flex: 1;
+  min-width: 0;
   width: 100%;
   padding: 8px 12px;
   text-align: left;
@@ -591,6 +636,21 @@ onBeforeUnmount(() => {
 .recent-item.active {
   background: var(--bg-surface-hover);
   font-weight: 500;
+}
+
+.delete-session-btn {
+  padding: 6px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: color var(--transition-fast), background-color var(--transition-fast);
+  border-radius: 8px;
+}
+
+.delete-session-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-surface-hover);
 }
 
 .account-menu {
@@ -742,6 +802,7 @@ onBeforeUnmount(() => {
   cursor: pointer;
   transition: all var(--transition-fast);
 }
+
 .theme-chip:hover {
   background: rgba(255, 255, 255, 0.6);
   color: var(--text-primary);
@@ -772,10 +833,12 @@ onBeforeUnmount(() => {
 .page-fade-leave-active {
   transition: opacity 250ms ease, transform 250ms ease;
 }
+
 .page-fade-enter-from {
   opacity: 0;
   transform: translateY(8px);
 }
+
 .page-fade-leave-to {
   opacity: 0;
   transform: translateY(-8px);

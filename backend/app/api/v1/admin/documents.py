@@ -14,7 +14,7 @@ from app.models.db.document import Document
 from app.models.db.user import User
 from app.models.schemas.user import AdminResetPasswordResponse, AdminUpdateUserRequest, UserResponse
 
-from app.api.v1.admin._helpers import _error_signature
+from app.api.v1.admin._helpers import _error_signature, _admin_cache_key, _load_admin_cached_payload
 
 router = APIRouter()
 
@@ -97,31 +97,41 @@ async def delete_user(
 async def get_analytics_overview(current_user: User = Depends(require_role("ADMIN")), db: AsyncSession = Depends(get_db)):
     from app.services.analytics_service import AnalyticsService
 
-    return await AnalyticsService(db).get_overview(tenant_id=current_user.tenant_id)
+    return await _load_admin_cached_payload(
+        _admin_cache_key(current_user.tenant_id, "analytics_overview"),
+        lambda: AnalyticsService(db).get_overview(tenant_id=current_user.tenant_id),
+    )
 
 
 @router.get("/pipeline/status")
 async def get_pipeline_status(current_user: User = Depends(require_role("ADMIN"))):
-    redis = get_redis()
-    if redis is None:
-        return {"active": 0, "queued": 0, "failed": 0, "completed": 0}
+    async def load_pipeline_status() -> dict:
+        redis = get_redis()
+        if redis is None:
+            return {"active": 0, "queued": 0, "failed": 0, "completed": 0}
 
-    active = queued = failed = completed = 0
-    cursor = 0
-    while True:
-        cursor, keys = await redis.scan(cursor=cursor, match="doc_progress:*", count=200)
-        for key in keys or []:
-            status = await redis.hget(key, "status")
-            if status in ("queued", "parsing", "chunking", "indexing", "retrying"):
-                active += 1
-                queued += 1 if status == "queued" else 0
-            elif status in ("failed", "partial_failed"):
-                failed += 1
-            elif status == "ready":
-                completed += 1
-        if cursor == 0:
-            break
-    return {"active": active, "queued": queued, "failed": failed, "completed": completed}
+        active = queued = failed = completed = 0
+        cursor = 0
+        while True:
+            cursor, keys = await redis.scan(cursor=cursor, match="doc_progress:*", count=200)
+            for key in keys or []:
+                status = await redis.hget(key, "status")
+                if status in ("queued", "parsing", "chunking", "indexing", "retrying"):
+                    active += 1
+                    queued += 1 if status == "queued" else 0
+                elif status in ("failed", "partial_failed"):
+                    failed += 1
+                elif status == "ready":
+                    completed += 1
+            if cursor == 0:
+                break
+        return {"active": active, "queued": queued, "failed": failed, "completed": completed}
+
+    return await _load_admin_cached_payload(
+        _admin_cache_key(current_user.tenant_id, "pipeline_status"),
+        load_pipeline_status,
+        ttl_seconds=5,
+    )
 
 
 @router.get("/pipeline/jobs")

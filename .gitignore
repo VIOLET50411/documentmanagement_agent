@@ -1,9 +1,9 @@
 # ============================================
 # DocMind ignore policy
-# 目标：
-# 1. 保留源码、说明文档、必要模板
-# 2. 拦截本地私密配置、密钥、运行产物、缓存、训练结果
-# 3. 避免把大体量原始语料和临时调试文件继续上传
+# Goals:
+# 1. Keep source code, docs, and required templates under version control.
+# 2. Exclude local secrets, runtime outputs, caches, and training artifacts.
+# 3. Avoid committing large raw corpora and temporary debugging files.
 # ============================================
 
 # ---------- OS / editor ----------
@@ -90,8 +90,8 @@ backend/reports/**
 !backend/reports/
 
 # ---------- Local datasets / corpora ----------
-# 默认不提交新增原始语料、抓取结果和派生数据。
-# 仅保留仓库内用于说明来源的轻量元数据文件。
+# By default, do not commit new raw corpora, crawl outputs, or derived datasets.
+# Keep only lightweight metadata files that explain dataset provenance.
 datasets/**
 !datasets/
 !datasets/**/

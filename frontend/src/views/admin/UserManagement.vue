@@ -1,22 +1,41 @@
 <template>
   <div class="tab-content animate-fade-in">
     <div class="card section-card">
-      <h2>租户用户</h2>
+      <h2>用户与邀请</h2>
+
       <form class="invite-form" @submit.prevent="inviteUser">
-        <input v-model="state.inviteForm.email" class="input" type="email" placeholder="受邀人邮箱" required />
+        <input v-model="state.inviteForm.email" class="input" type="email" placeholder="被邀请人的邮箱" required />
         <select v-model="state.inviteForm.role" class="input">
-          <option value="VIEWER">VIEWER</option>
-          <option value="EMPLOYEE">EMPLOYEE</option>
-          <option value="MANAGER">MANAGER</option>
-          <option value="ADMIN">ADMIN</option>
+          <option value="VIEWER">只读</option>
+          <option value="EMPLOYEE">普通成员</option>
+          <option value="MANAGER">管理员</option>
+          <option value="ADMIN">超级管理员</option>
         </select>
-        <input v-model="state.inviteForm.department" class="input" type="text" placeholder="部门（可选）" />
+        <input v-model="state.inviteForm.department" class="input" type="text" placeholder="部门，可不填" />
         <button class="btn btn-primary" :disabled="state.inviting">{{ state.inviting ? "发送中..." : "发送邀请" }}</button>
       </form>
+
       <p v-if="state.inviteMessage" class="report-meta">{{ state.inviteMessage }}</p>
-      <p v-if="state.success" class="report-meta success">{{ state.success }}</p>
-      <p v-if="state.error" class="report-meta error">{{ state.error }}</p>
+      <StatusMessage
+        v-if="state.success"
+        tone="success"
+        title="操作已完成"
+        :message="state.success"
+        dismissible
+        @dismiss="state.success = ''"
+      />
+      <StatusMessage
+        v-if="state.error"
+        tone="error"
+        title="操作未成功"
+        :message="state.error"
+        dismissible
+        action-label="重新加载用户列表"
+        @dismiss="state.error = ''"
+        @action="loadUsers"
+      />
       <p v-if="state.tempPasswordMessage" class="report-meta temp-password">{{ state.tempPasswordMessage }}</p>
+
       <table v-if="state.users.length" class="data-table">
         <thead>
           <tr>
@@ -42,13 +61,13 @@
             <td>
               <template v-if="state.editingUserId === user.id">
                 <select v-model="state.editForm.role" class="input table-input">
-                  <option value="VIEWER">VIEWER</option>
-                  <option value="EMPLOYEE">EMPLOYEE</option>
-                  <option value="MANAGER">MANAGER</option>
-                  <option value="ADMIN">ADMIN</option>
+                  <option value="VIEWER">只读</option>
+                  <option value="EMPLOYEE">普通成员</option>
+                  <option value="MANAGER">管理员</option>
+                  <option value="ADMIN">超级管理员</option>
                 </select>
               </template>
-              <template v-else>{{ user.role }}</template>
+              <template v-else>{{ roleLabel(user.role) }}</template>
             </td>
             <td>
               <template v-if="state.editingUserId === user.id">
@@ -60,7 +79,7 @@
               <template v-if="state.editingUserId === user.id">
                 <input v-model.number="state.editForm.level" class="input table-input level-input" type="number" min="1" max="9" />
               </template>
-              <template v-else>{{ user.level }}</template>
+              <template v-else>{{ levelLabel(user.level) }}</template>
             </td>
             <td>
               <template v-if="state.editingUserId === user.id">
@@ -82,25 +101,19 @@
             </td>
             <td class="action-group">
               <template v-if="state.editingUserId === user.id">
-                <button class="btn btn-primary" :disabled="state.savingUserId === user.id" @click="saveUser(user.id)">
-                  {{ state.savingUserId === user.id ? "保存中..." : "保存" }}
-                </button>
+                <button class="btn btn-primary" :disabled="state.savingUserId === user.id" @click="saveUser(user.id)">{{ state.savingUserId === user.id ? "保存中..." : "保存" }}</button>
                 <button class="btn btn-ghost" :disabled="state.savingUserId === user.id" @click="cancelEditUser">取消</button>
               </template>
               <template v-else>
                 <button class="btn btn-ghost" @click="startEditUser(user)">编辑</button>
-                <button class="btn btn-ghost" :disabled="state.passwordResetUserId === user.id" @click="resetPassword(user)">
-                  {{ state.passwordResetUserId === user.id ? "重置中..." : "重置密码" }}
-                </button>
-                <button class="btn btn-danger" :disabled="state.deletingUserId === user.id" @click="deleteUser(user)">
-                  {{ state.deletingUserId === user.id ? "删除中..." : "删除用户" }}
-                </button>
+                <button class="btn btn-ghost" :disabled="state.passwordResetUserId === user.id" @click="resetPassword(user)">{{ state.passwordResetUserId === user.id ? "重置中..." : "重置密码" }}</button>
+                <button class="btn btn-danger" :disabled="state.deletingUserId === user.id" @click="deleteUser(user)">{{ state.deletingUserId === user.id ? "删除中..." : "删除用户" }}</button>
               </template>
             </td>
           </tr>
         </tbody>
       </table>
-      <p v-else class="empty-text">暂无用户数据。</p>
+      <EmptyState v-else title="当前还没有用户数据。" description="你可以先通过上方表单邀请第一位成员加入。" />
 
       <h2 class="sub-section-title">邀请记录</h2>
       <table v-if="state.invitations.length" class="data-table">
@@ -117,7 +130,7 @@
         <tbody>
           <tr v-for="inv in state.invitations" :key="inv.invitation_id">
             <td>{{ inv.email }}</td>
-            <td>{{ inv.role }}</td>
+            <td>{{ roleLabel(inv.role) }}</td>
             <td>{{ inv.department || "未设置" }}</td>
             <td>{{ invitationStatusLabel(inv.status) }}</td>
             <td>{{ formatDate(inv.expires_at) }}</td>
@@ -128,13 +141,15 @@
           </tr>
         </tbody>
       </table>
-      <p v-else class="empty-text">暂无邀请记录。</p>
+      <EmptyState v-else title="当前还没有邀请记录。" description="发送过邀请后，这里会显示处理状态和到期时间。" />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted } from "vue"
+import EmptyState from "@/components/common/EmptyState.vue"
+import StatusMessage from "@/components/common/StatusMessage.vue"
 import { useAdminUsers } from "./composables/useAdminUsers"
 
 const {
@@ -149,6 +164,8 @@ const {
   resendInvitation,
   revokeInvitation,
   invitationStatusLabel,
+  roleLabel,
+  levelLabel,
   formatDate,
 } = useAdminUsers()
 
@@ -158,14 +175,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.success {
-  color: #18794e;
-}
-
-.error {
-  color: #c0392b;
-}
-
 .temp-password {
   color: #8a5cf6;
   font-weight: 600;

@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="content-block">
     <div class="block-head">
       <div>
@@ -15,7 +15,7 @@
         <div class="status-card">
           <span>运行环境</span>
           <strong>{{ isNativeRuntime ? nativePlatformLabel : "Web 浏览器" }}</strong>
-          <small>{{ isNativeRuntime ? "支持自动注册与心跳续期。" : "仅支持手动登记推送设备。" }}</small>
+          <small>{{ isNativeRuntime ? "支持自动注册与设备心跳续期。" : "仅支持手动登记推送设备。" }}</small>
         </div>
         <div class="status-card">
           <span>本地记录</span>
@@ -60,7 +60,14 @@
           {{ isNativeRuntime ? `当前运行环境：${nativePlatformLabel}` : "当前不是原生 App 环境，自动注册不可用。" }}
         </span>
       </div>
-      <p v-if="nativePushMessage" class="feedback-message">{{ nativePushMessage }}</p>
+      <StatusMessage
+        v-if="nativePushMessage"
+        :tone="messageTone(nativePushMessage)"
+        :title="messageTitle(nativePushMessage, '当前设备推送')"
+        :message="nativePushMessage"
+        dismissible
+        @dismiss="clearNativePushMessage"
+      />
     </section>
 
     <section class="settings-panel">
@@ -86,7 +93,7 @@
             v-model="deviceForm.device_token"
             class="input large-input"
             rows="3"
-            placeholder="请输入移动端、WebPush 或小程序的真实设备 token"
+            placeholder="请输入移动端、Web Push 或小程序的真实设备 token"
           ></textarea>
         </label>
 
@@ -103,7 +110,14 @@
         </div>
       </form>
 
-      <p v-if="deviceMessage" class="feedback-message">{{ deviceMessage }}</p>
+      <StatusMessage
+        v-if="deviceMessage"
+        :tone="messageTone(deviceMessage)"
+        :title="messageTitle(deviceMessage, '设备登记')"
+        :message="deviceMessage"
+        dismissible
+        @dismiss="clearDeviceMessage"
+      />
     </section>
 
     <section class="settings-panel">
@@ -140,12 +154,15 @@
           </tr>
         </tbody>
       </table>
-      <p v-else class="empty-text">当前还没有登记过推送设备。</p>
+      <EmptyState v-else title="当前还没有登记过推送设备。" description="登记成功后，这里会显示平台、版本、状态和最近活跃时间。" />
     </section>
   </div>
 </template>
 
 <script setup lang="ts">
+import EmptyState from "@/components/common/EmptyState.vue"
+import StatusMessage from "@/components/common/StatusMessage.vue"
+
 defineProps<{
   isNativeRuntime: boolean
   nativePlatformLabel: string
@@ -167,11 +184,29 @@ defineProps<{
   formatDate: (value?: string | null) => string
   maskToken: (token?: string) => string
   loadPushData: () => Promise<void>
+  clearDeviceMessage: () => void
+  clearNativePushMessage: () => void
   registerCurrentDevicePush: () => Promise<void>
   heartbeatCurrentDevicePush: () => Promise<void>
   registerDevice: () => Promise<void>
   unregisterDevice: (device: any) => Promise<void>
 }>()
+
+function messageTone(message: string) {
+  const errorKeywords = ["失败", "无法", "未能", "未授予", "请先", "不是原生", "不可用"]
+  const successKeywords = ["成功", "已发送", "已刷新", "已注销", "已自动注册", "已同步", "已登记"]
+  if (errorKeywords.some((keyword) => message.includes(keyword))) return "error"
+  if (successKeywords.some((keyword) => message.includes(keyword))) return "success"
+  return "info"
+}
+
+function messageTitle(message: string, fallback: string) {
+  const errorKeywords = ["失败", "无法", "未能", "未授予", "请先", "不是原生", "不可用"]
+  const successKeywords = ["成功", "已发送", "已刷新", "已注销", "已自动注册", "已同步", "已登记"]
+  if (errorKeywords.some((keyword) => message.includes(keyword))) return `${fallback}没有成功`
+  if (successKeywords.some((keyword) => message.includes(keyword))) return `${fallback}已完成`
+  return fallback
+}
 </script>
 
 <style scoped>
@@ -301,12 +336,6 @@ defineProps<{
   justify-content: flex-end;
 }
 
-.feedback-message {
-  margin-top: 18px;
-  color: var(--color-primary-hover);
-  font-weight: 600;
-}
-
 .data-table {
   width: 100%;
   border-collapse: collapse;
@@ -349,3 +378,6 @@ defineProps<{
   }
 }
 </style>
+
+
+

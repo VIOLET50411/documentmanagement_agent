@@ -1,5 +1,6 @@
 import { reactive } from "vue"
 import { adminApi } from "@/api/admin"
+import { getApiErrorMessage, securityAuditErrorLabel, securityEventTypeLabel, securityResultLabel, securitySeverityLabel } from "@/utils/adminUi"
 
 type GenericMap = Record<string, any>
 
@@ -25,19 +26,21 @@ export function useAdminSecurity() {
     try {
       const offset = resetPage ? 0 : state.securityPage * state.securityPageSize
       if (resetPage) state.securityPage = 0
-      const response = await adminApi.getSecurityEvents({
-        limit: state.securityPageSize,
-        offset,
-        severity: state.securityFilters.severity || undefined,
-        action: state.securityFilters.action || undefined,
-        result: state.securityFilters.result || undefined,
-      })
+      const [response, alerts] = await Promise.all([
+        adminApi.getSecurityEvents({
+          limit: state.securityPageSize,
+          offset,
+          severity: state.securityFilters.severity || undefined,
+          action: state.securityFilters.action || undefined,
+          result: state.securityFilters.result || undefined,
+        }),
+        adminApi.getSecurityAlerts({ limit: 20, offset: 0 }),
+      ])
       state.securityEvents = response.events || []
       state.securityTotal = response.total || 0
-      const alerts = await adminApi.getSecurityAlerts({ limit: 20, offset: 0 })
       state.securityAlerts = alerts.alerts || []
     } catch (err: any) {
-      state.error = err?.response?.data?.detail || "加载安全事件失败。"
+      state.error = getApiErrorMessage(err, securityAuditErrorLabel())
     } finally {
       state.loadingSecurity = false
     }
@@ -56,10 +59,25 @@ export function useAdminSecurity() {
     return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
   }
 
+  function severityLabel(value: string | null | undefined) {
+    return securitySeverityLabel(value)
+  }
+
+  function resultLabel(value: string | null | undefined) {
+    return securityResultLabel(value)
+  }
+
+  function eventTypeLabel(value: string | null | undefined) {
+    return securityEventTypeLabel(value)
+  }
+
   return {
     state,
     loadSecurityEvents,
     changeSecurityPage,
     formatDate,
+    severityLabel,
+    resultLabel,
+    eventTypeLabel,
   }
 }

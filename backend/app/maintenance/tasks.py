@@ -27,9 +27,17 @@ from app.config import settings
     soft_time_limit=max(settings.ragas_timeout_seconds + 300, settings.celery_task_soft_time_limit_seconds),
     time_limit=max(settings.ragas_timeout_seconds + 360, settings.celery_task_time_limit_seconds),
 )
-def run_evaluation_job(self, tenant_id: str, sample_limit: int = 100, actor_id: str | None = None):
+def run_evaluation_job(
+    self,
+    tenant_id: str,
+    sample_limit: int = 100,
+    actor_id: str | None = None,
+    prioritize_all_manual_samples: bool = False,
+    manual_sample_ratio: float = 1.0,
+):
     """Run evaluation asynchronously and persist runtime task progress."""
     task_id = self.request.id or ""
+    normalized_ratio = min(max(float(manual_sample_ratio), 0.0), 1.0)
     description = f"评估任务: tenant={tenant_id}, sample_limit={max(sample_limit, 1)}"
     _upsert_runtime_task_record(
         task_id=task_id,
@@ -38,7 +46,13 @@ def run_evaluation_job(self, tenant_id: str, sample_limit: int = 100, actor_id: 
         status="running",
         description=description,
         stage="queued",
-        stage_payload={"tenant_id": tenant_id, "sample_limit": max(sample_limit, 1), "actor_id": actor_id},
+        stage_payload={
+            "tenant_id": tenant_id,
+            "sample_limit": max(sample_limit, 1),
+            "actor_id": actor_id,
+            "prioritize_all_manual_samples": prioritize_all_manual_samples,
+            "manual_sample_ratio": normalized_ratio,
+        },
     )
     try:
         result = asyncio.run(
@@ -46,6 +60,8 @@ def run_evaluation_job(self, tenant_id: str, sample_limit: int = 100, actor_id: 
                 tenant_id=tenant_id,
                 sample_limit=max(sample_limit, 1),
                 actor_id=actor_id,
+                prioritize_all_manual_samples=prioritize_all_manual_samples,
+                manual_sample_ratio=normalized_ratio,
                 task_id=task_id,
                 description=description,
             )
@@ -62,7 +78,13 @@ def run_evaluation_job(self, tenant_id: str, sample_limit: int = 100, actor_id: 
             stage="failed",
             error=error,
             terminal=True,
-            stage_payload={"tenant_id": tenant_id, "sample_limit": max(sample_limit, 1), "error": error},
+            stage_payload={
+                "tenant_id": tenant_id,
+                "sample_limit": max(sample_limit, 1),
+                "prioritize_all_manual_samples": prioritize_all_manual_samples,
+                "manual_sample_ratio": normalized_ratio,
+                "error": error,
+            },
         )
         asyncio.run(
             _write_audit(
@@ -71,10 +93,25 @@ def run_evaluation_job(self, tenant_id: str, sample_limit: int = 100, actor_id: 
                 severity="high",
                 result="error",
                 message=f"evaluation task failed: {error}",
-                metadata={"tenant_id": tenant_id, "sample_limit": max(sample_limit, 1), "error": error, "task_id": task_id},
+                metadata={
+                    "tenant_id": tenant_id,
+                    "sample_limit": max(sample_limit, 1),
+                    "prioritize_all_manual_samples": prioritize_all_manual_samples,
+                    "manual_sample_ratio": normalized_ratio,
+                    "error": error,
+                    "task_id": task_id,
+                },
             )
         )
-        return {"ok": False, "task_id": task_id, "tenant_id": tenant_id, "sample_limit": max(sample_limit, 1), "error": error}
+        return {
+            "ok": False,
+            "task_id": task_id,
+            "tenant_id": tenant_id,
+            "sample_limit": max(sample_limit, 1),
+            "prioritize_all_manual_samples": prioritize_all_manual_samples,
+            "manual_sample_ratio": normalized_ratio,
+            "error": error,
+        }
 
 
 @celery.task(bind=True, name="app.maintenance.tasks.runtime_maintenance_job")
@@ -137,7 +174,16 @@ def runtime_maintenance_job(self, cleanup_empty: bool = True):
         return {"ok": False, "error": str(exc), "tenants": tenant_ids}
 
 
-async def _run_evaluation_job_async(*, tenant_id: str, sample_limit: int, actor_id: str | None, task_id: str, description: str) -> dict:
+async def _run_evaluation_job_async(
+    *,
+    tenant_id: str,
+    sample_limit: int,
+    actor_id: str | None,
+    prioritize_all_manual_samples: bool,
+    manual_sample_ratio: float,
+    task_id: str,
+    description: str,
+) -> dict:
     from app.services.evaluation_service import EvaluationService
 
     engine = create_async_engine(
@@ -166,7 +212,14 @@ async def _run_evaluation_job_async(*, tenant_id: str, sample_limit: int, actor_
     try:
         async with session_factory() as db:
             service = EvaluationService(db, redis_client, reports_dir=reports_dir)
-            result = await service.run(tenant_id, sample_limit=sample_limit, actor=None, progress_callback=on_progress)
+            result = await service.run(
+                tenant_id,
+                sample_limit=sample_limit,
+                prioritize_all_manual_samples=prioritize_all_manual_samples,
+                manual_sample_ratio=manual_sample_ratio,
+                actor=None,
+                progress_callback=on_progress,
+            )
         _upsert_runtime_task_record(
             task_id=task_id,
             tenant_id=tenant_id,
@@ -183,7 +236,14 @@ async def _run_evaluation_job_async(*, tenant_id: str, sample_limit: int, actor_
             severity="low" if (result.get("gate") or {}).get("passed") else "medium",
             result="ok" if (result.get("gate") or {}).get("passed") else "warning",
             message=f"evaluation task completed: passed={bool((result.get('gate') or {}).get('passed'))}, dataset_size={result.get('dataset_size', 0)}",
-            metadata={"tenant_id": tenant_id, "sample_limit": sample_limit, "task_id": task_id, "result": result},
+            metadata={
+                "tenant_id": tenant_id,
+                "sample_limit": sample_limit,
+                "prioritize_all_manual_samples": prioritize_all_manual_samples,
+                "manual_sample_ratio": manual_sample_ratio,
+                "task_id": task_id,
+                "result": result,
+            },
         )
         return result
     finally:

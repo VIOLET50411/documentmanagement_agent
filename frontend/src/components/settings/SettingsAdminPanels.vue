@@ -10,12 +10,24 @@
     </div>
 
     <section v-if="!isAdmin" class="settings-panel">
-      <p class="empty-text">该部分仅管理员可查看。</p>
+      <EmptyState
+        title="这部分仅管理员可查看。"
+        description="切换到管理员账号后，可以查看运行状态、模型策略、安全策略和移动端接入情况。"
+      />
     </section>
 
     <template v-else>
+      <StatusMessage
+        v-if="adminDiagnosticsMessage"
+        :tone="adminDiagnosticsTone"
+        :title="adminDiagnosticsTitle"
+        :message="adminDiagnosticsMessage"
+        dismissible
+        @dismiss="clearAdminDiagnosticsMessage"
+      />
+
       <section v-if="section === 'models'" class="settings-panel">
-        <h3>企业模型路由</h3>
+        <h3>企业模型策略</h3>
         <div class="status-grid two-col">
           <div class="status-card">
             <span>企业模型开关</span>
@@ -23,38 +35,38 @@
             <small>控制制度、审计、预算等场景是否优先走企业策略。</small>
           </div>
           <div class="status-card">
-            <span>企业模型名</span>
+            <span>企业模型名称</span>
             <strong>{{ llmDomainConfig?.enterprise_model_name || "-" }}</strong>
             <small>当前企业文档场景使用的主模型。</small>
           </div>
           <div class="status-card">
             <span>灰度比例</span>
             <strong>{{ llmDomainConfig?.enterprise_canary_percent ?? 0 }}%</strong>
-            <small>企业策略模型当前对租户放量的比例。</small>
+            <small>企业策略当前对租户放量的比例。</small>
           </div>
           <div class="status-card">
             <span>最小语料字数</span>
             <strong>{{ llmDomainConfig?.enterprise_corpus_min_chars ?? "-" }}</strong>
-            <small>达到该阈值后才适合启用企业文档专用策略。</small>
+            <small>达到该阈值后，才适合启用企业文档专用策略。</small>
           </div>
         </div>
       </section>
 
       <section v-if="section === 'models'" class="settings-panel">
-        <h3>检索完整性</h3>
+        <h3>检索体检</h3>
         <div class="status-grid three-col">
           <div class="status-card">
-            <span>健康状态</span>
-            <strong>{{ retrievalIntegrity?.healthy ? "健康" : "待校准" }}</strong>
+            <span>当前状态</span>
+            <strong>{{ retrievalIntegrity?.healthy ? "状态正常" : "需要处理" }}</strong>
             <small>按抽样回查评估当前检索链路是否适合高置信回答。</small>
           </div>
           <div class="status-card">
-            <span>完整性评分</span>
+            <span>体检评分</span>
             <strong>{{ retrievalIntegrity?.score ?? "-" }}</strong>
             <small>综合 ES、Milvus、Graph 的链路完整性结果。</small>
           </div>
           <div class="status-card">
-            <span>Milvus 召回率</span>
+            <span>向量召回率</span>
             <strong>{{ formatPercent(retrievalIntegrity?.stats?.milvus_sample_recall) }}</strong>
             <small>向量检索抽样召回表现。</small>
           </div>
@@ -68,35 +80,35 @@
       </section>
 
       <section v-if="section === 'runtime'" class="settings-panel">
-        <h3>Runtime 指标</h3>
+        <h3>运行指标</h3>
         <div class="status-grid three-col">
           <div class="status-card">
-            <span>TTFT P95</span>
+            <span>首字返回 P95</span>
             <strong>{{ runtimeMetrics?.summary?.ttft_ms_p95 ?? "-" }} ms</strong>
-            <small>首字节耗时，反映响应启动速度。</small>
+            <small>回答开始输出前的等待时间。</small>
           </div>
           <div class="status-card">
             <span>完成耗时 P95</span>
             <strong>{{ runtimeMetrics?.summary?.completion_ms_p95 ?? "-" }} ms</strong>
-            <small>整轮回答结束耗时。</small>
+            <small>整轮回答结束的耗时。</small>
           </div>
           <div class="status-card">
-            <span>SSE 断连数</span>
+            <span>断连次数</span>
             <strong>{{ runtimeMetrics?.summary?.sse_disconnects ?? 0 }}</strong>
-            <small>最近采样窗口内的断连累计。</small>
+            <small>最近采样窗口内的连接中断次数。</small>
           </div>
           <div class="status-card">
-            <span>Fallback 比例</span>
+            <span>降级比例</span>
             <strong>{{ formatPercent(runtimeMetrics?.summary?.fallback_rate) }}</strong>
-            <small>说明真实链路触发降级的比例。</small>
+            <small>说明真实链路触发备用路径的比例。</small>
           </div>
           <div class="status-card">
-            <span>拒绝率</span>
+            <span>拒绝比例</span>
             <strong>{{ formatPercent(runtimeMetrics?.summary?.deny_rate) }}</strong>
-            <small>工具权限网关拒绝调用的比例。</small>
+            <small>工具权限网关拦截调用的比例。</small>
           </div>
           <div class="status-card">
-            <span>平均工具调用</span>
+            <span>平均工具调用数</span>
             <strong>{{ runtimeMetrics?.summary?.avg_tool_calls ?? "-" }}</strong>
             <small>每轮回答平均触发的工具次数。</small>
           </div>
@@ -129,17 +141,17 @@
         <div class="status-grid three-col">
           <div class="status-card">
             <span>整体级别</span>
-            <strong>{{ securityPolicy?.mode || "-" }}</strong>
-            <small>当前安全模式评估结果。</small>
+            <strong>{{ securityModeLabel(securityPolicy?.mode) }}</strong>
+            <small>当前安全模式的综合评估结果。</small>
           </div>
           <div class="status-card">
-            <span>Fail-Closed</span>
-            <strong>{{ securityPolicy?.fail_closed ? "开启" : "关闭" }}</strong>
-            <small>高风险链路是否严格失败关闭。</small>
+            <span>严格阻断</span>
+            <strong>{{ securityPolicy?.fail_closed ? "已开启" : "已关闭" }}</strong>
+            <small>高风险链路是否在异常时直接阻断。</small>
           </div>
           <div class="status-card">
             <span>审计联动</span>
-            <strong>{{ securityPolicy?.audit_enforced ? "启用" : "未启用" }}</strong>
+            <strong>{{ securityPolicy?.audit_enforced ? "已启用" : "未启用" }}</strong>
             <small>高风险操作是否强制写入审计链路。</small>
           </div>
         </div>
@@ -157,28 +169,28 @@
           <div class="status-card">
             <span>OAuth/OIDC</span>
             <strong>{{ mobileAuthStatus?.enabled ? "已启用" : "未启用" }}</strong>
-            <small>{{ mobileAuthStatus?.issuer || "未返回 issuer 信息" }}</small>
+            <small>{{ issuerLabel(mobileAuthStatus?.issuer) }}</small>
           </div>
           <div class="status-card">
             <span>PKCE</span>
-            <strong>{{ mobileAuthStatus?.pkce_required ? "强制" : "未强制" }}</strong>
+            <strong>{{ mobileAuthStatus?.pkce_required ? "强制开启" : "未强制" }}</strong>
             <small>移动端授权码流程是否要求 PKCE。</small>
           </div>
         </div>
       </section>
 
       <section v-if="section === 'mobile'" class="settings-panel">
-        <h3>推送提供商状态</h3>
+        <h3>推送通道状态</h3>
         <div class="status-grid three-col">
           <div class="status-card">
             <span>FCM</span>
             <strong>{{ pushProviderStatus?.providers?.fcm?.ready ? "已就绪" : "未就绪" }}</strong>
-            <small>{{ pushProviderStatus?.providers?.fcm?.reason || "Android 推送通道" }}</small>
+            <small>{{ providerReasonLabel("fcm", pushProviderStatus?.providers?.fcm?.reason) }}</small>
           </div>
           <div class="status-card">
             <span>微信小程序</span>
             <strong>{{ pushProviderStatus?.providers?.wechat?.ready ? "已就绪" : "未就绪" }}</strong>
-            <small>{{ pushProviderStatus?.providers?.wechat?.reason || "订阅消息通道" }}</small>
+            <small>{{ providerReasonLabel("wechat", pushProviderStatus?.providers?.wechat?.reason) }}</small>
           </div>
         </div>
       </section>
@@ -188,11 +200,14 @@
 
 <script setup lang="ts">
 import { computed } from "vue"
+import EmptyState from "@/components/common/EmptyState.vue"
+import StatusMessage from "@/components/common/StatusMessage.vue"
 
 const props = defineProps<{
   section: string
   isAdmin: boolean
   loadingAdminDiagnostics: boolean
+  adminDiagnosticsMessage: string
   llmDomainConfig: Record<string, any> | null
   runtimeMetrics: Record<string, any> | null
   retrievalIntegrity: Record<string, any> | null
@@ -201,18 +216,62 @@ const props = defineProps<{
   pushProviderStatus: Record<string, any> | null
   backendStatus: Record<string, any> | null
   formatPercent: (value?: number | null) => string
+  clearAdminDiagnosticsMessage: () => void
   loadAdminDiagnostics: () => Promise<void>
 }>()
 
 const title = computed(() => {
   const map: Record<string, string> = {
     models: "模型与策略",
-    runtime: "运行时与恢复",
+    runtime: "运行与恢复",
     security: "安全与治理",
     mobile: "移动端接入",
   }
   return map[props.section] || "设置"
 })
+
+const adminDiagnosticsTone = computed(() => (props.adminDiagnosticsMessage.includes("失败") ? "error" : "info"))
+const adminDiagnosticsTitle = computed(() => (props.adminDiagnosticsMessage.includes("失败") ? "管理员诊断刷新失败" : "管理员诊断状态"))
+
+function securityModeLabel(value?: string | null) {
+  const map: Record<string, string> = {
+    strict: "严格模式",
+    balanced: "平衡模式",
+    permissive: "宽松模式",
+    audit: "审计优先",
+    observe: "观察模式",
+  }
+  return map[(value || "").toLowerCase()] || value || "-"
+}
+
+function issuerLabel(value?: string | null) {
+  if (!value) return "未返回认证服务地址"
+  try {
+    const url = new URL(value)
+    return `${url.host}${url.pathname === "/" ? "" : url.pathname}`
+  } catch {
+    return value
+  }
+}
+
+function providerReasonLabel(provider: "fcm" | "wechat", reason?: string | null) {
+  if (!reason) {
+    return provider === "fcm" ? "Android 推送通道" : "订阅消息通道"
+  }
+
+  const normalized = reason.toLowerCase()
+  const knownMap: Array<[RegExp, string]> = [
+    [/missing|not configured|unset/, "关键配置缺失，通道暂时不可用。"],
+    [/credential|secret|token/, "推送凭据没有配置完整。"],
+    [/permission|forbidden|denied/, "当前凭据权限不足。"],
+    [/timeout/, "连接推送服务超时，请稍后重试。"],
+    [/network|unreachable|connect/, "暂时无法连接推送服务。"],
+    [/disabled|off/, "该推送通道当前被关闭。"],
+  ]
+
+  const mapped = knownMap.find(([pattern]) => pattern.test(normalized))
+  return mapped?.[1] || reason
+}
 </script>
 
 <style scoped>
@@ -307,20 +366,20 @@ const title = computed(() => {
   display: block;
 }
 
-.compact-list span {
-  margin-top: 6px;
-  color: var(--text-secondary);
+.compact-list strong {
+  margin-bottom: 6px;
 }
 
-@media (max-width: 1120px) {
-  .status-grid {
+@media (max-width: 900px) {
+  .status-grid,
+  .status-grid.two-col,
+  .status-grid.three-col {
     grid-template-columns: 1fr;
   }
-}
 
-@media (max-width: 640px) {
   .block-head {
     flex-direction: column;
+    align-items: stretch;
   }
 }
 </style>

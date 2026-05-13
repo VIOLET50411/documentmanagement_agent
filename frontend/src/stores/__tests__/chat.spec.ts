@@ -54,7 +54,7 @@ describe("chat store", () => {
     expect(store.messages[0].content).toBe("已恢复历史")
   })
 
-  it("loads recent sessions on initialize and restores the stored active thread", async () => {
+  it("loads recent sessions on initialize and restores the stored active thread without forcing history by default", async () => {
     window.localStorage.setItem("docmind.chat.activeSessionId", "thread-2")
     getSessionsMock.mockResolvedValue({
       items: [
@@ -80,6 +80,35 @@ describe("chat store", () => {
     await store.initialize()
 
     expect(store.sessions).toHaveLength(2)
+    expect(store.activeSessionId).toBe("thread-2")
+    expect(store.messages).toEqual([])
+    expect(getHistoryMock).not.toHaveBeenCalled()
+  })
+
+  it("can eagerly hydrate the restored active session when requested", async () => {
+    window.localStorage.setItem("docmind.chat.activeSessionId", "thread-2")
+    getSessionsMock.mockResolvedValue({
+      items: [
+        { id: "thread-2", title: "第二个问题", created_at: "2026-05-11T08:00:00Z", updated_at: "2026-05-11T11:00:00Z" },
+      ],
+    })
+    getHistoryMock.mockResolvedValue({
+      messages: [
+        {
+          id: "m2",
+          role: "user",
+          content: "请总结第二个问题",
+          citations: [],
+          created_at: "2026-05-11T11:00:00Z",
+        },
+      ],
+    })
+
+    const { useChatStore } = await import("../chat")
+    const store = useChatStore()
+
+    await store.initialize({ loadActiveHistory: true })
+
     expect(store.activeSessionId).toBe("thread-2")
     expect(store.messages[0].content).toBe("请总结第二个问题")
   })

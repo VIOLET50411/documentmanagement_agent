@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="settings-page">
     <div class="settings-shell">
       <aside class="settings-nav">
@@ -74,7 +74,7 @@
               <div class="toggle-item">
                 <div>
                   <strong>对话状态提示</strong>
-                  <p>在检索、阅读、生成等阶段切换时显示简洁状态反馈。</p>
+                  <p>在检索、阅读、生成等阶段切换时显示简洁的状态反馈。</p>
                 </div>
                 <button class="toggle-switch" :class="{ on: statusHintsEnabled }" @click="statusHintsEnabled = !statusHintsEnabled">
                   <span></span>
@@ -145,6 +145,7 @@
           :section="activeSection"
           :is-admin="isAdmin"
           :loading-admin-diagnostics="loadingAdminDiagnostics"
+          :admin-diagnostics-message="adminDiagnosticsMessage"
           :llm-domain-config="llmDomainConfig"
           :runtime-metrics="runtimeMetrics"
           :retrieval-integrity="retrievalIntegrity"
@@ -153,6 +154,7 @@
           :push-provider-status="pushProviderStatus"
           :backend-status="backendStatus"
           :format-percent="formatPercent"
+          :clear-admin-diagnostics-message="clearAdminDiagnosticsMessage"
           :load-admin-diagnostics="loadAdminDiagnostics"
         />
 
@@ -178,6 +180,8 @@
           :format-date="formatDate"
           :mask-token="maskToken"
           :load-push-data="loadPushData"
+          :clear-device-message="clearDeviceMessage"
+          :clear-native-push-message="clearNativePushMessage"
           :register-current-device-push="registerCurrentDevicePush"
           :heartbeat-current-device-push="heartbeatCurrentDevicePush"
           :register-device="registerDevice"
@@ -207,6 +211,7 @@ import { useAuthStore } from "@/stores/auth"
 import { useNotificationsStore } from "@/stores/notifications"
 import { useSettingsStore } from "@/stores/settings"
 import { useThemeStore } from "@/stores/theme"
+import { roleLabel as readableRoleLabel } from "@/utils/adminUi"
 
 const responseRequirement = ref("default")
 
@@ -226,6 +231,7 @@ const {
   notificationsEnabled,
   statusHintsEnabled,
   loadingAdminDiagnostics,
+  adminDiagnosticsMessage,
   llmDomainConfig,
   runtimeMetrics,
   retrievalIntegrity,
@@ -260,10 +266,10 @@ const sections = [
   { key: "general", label: "通用", description: "外观、资料与提示" },
   { key: "account", label: "账号", description: "身份、角色与租户" },
   { key: "preferences", label: "偏好", description: "回答风格与语言" },
-  { key: "models", label: "模型策略", description: "模型路由与检索完整性" },
-  { key: "runtime", label: "运行时", description: "恢复、断连与后端状态" },
-  { key: "security", label: "安全", description: "策略、审计与 fail-closed" },
-  { key: "mobile", label: "移动端", description: "OAuth、推送与接入就绪度" },
+  { key: "models", label: "模型策略", description: "模型路由与检索体检" },
+  { key: "runtime", label: "运行状态", description: "恢复、断连与后端状态" },
+  { key: "security", label: "安全", description: "策略、审计与异常阻断" },
+  { key: "mobile", label: "移动端", description: "登录、推送与接入就绪度" },
   { key: "devices", label: "设备", description: "推送登记与状态" },
   { key: "events", label: "通知", description: "最近推送事件" },
 ] as const
@@ -291,13 +297,7 @@ function setSection(section: string) {
 }
 
 function roleLabel(role?: string) {
-  const map: Record<string, string> = {
-    ADMIN: "管理员",
-    MANAGER: "经理",
-    EMPLOYEE: "员工",
-    VIEWER: "访客",
-  }
-  return role ? map[role] || role : "-"
+  return readableRoleLabel(role) || "-"
 }
 
 function formatDate(value?: string | null) {
@@ -318,12 +318,24 @@ async function loadPushData() {
   await notificationsStore.loadPushData()
 }
 
+function clearDeviceMessage() {
+  deviceMessage.value = ""
+}
+
+function clearNativePushMessage() {
+  nativePushMessage.value = ""
+}
+
 async function loadEvents() {
   await notificationsStore.loadEvents()
 }
 
 async function loadAdminDiagnostics() {
   await settingsStore.loadAdminDiagnostics(isAdmin.value)
+}
+
+function clearAdminDiagnosticsMessage() {
+  settingsStore.clearAdminDiagnosticsMessage()
 }
 
 async function registerCurrentDevicePush() {
@@ -624,3 +636,7 @@ onMounted(async () => {
   }
 }
 </style>
+
+
+
+

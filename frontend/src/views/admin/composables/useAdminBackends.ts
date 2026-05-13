@@ -1,6 +1,8 @@
 import { computed, reactive } from "vue"
 import { adminApi } from "@/api/admin"
+import { getRecentHttpTraces } from "@/api/http"
 import { useRuntimeStore } from "@/stores/runtime"
+import { backendMonitorErrorLabel, getApiErrorMessage } from "@/utils/adminUi"
 
 type GenericMap = Record<string, any>
 
@@ -11,6 +13,8 @@ export function useAdminBackends() {
     error: "",
     backends: {} as GenericMap,
     retrievalMetrics: {} as GenericMap,
+    requestMetrics: [] as GenericMap[],
+    frontendHttpTraces: [] as GenericMap[],
     retrievalIntegrity: null as GenericMap | null,
     readiness: null as GenericMap | null,
     publicCorpusLatest: null as GenericMap | null,
@@ -25,11 +29,11 @@ export function useAdminBackends() {
   })
 
   const backendCards = computed(() => [
-    { label: "Elasticsearch", value: backendLabel(state.backends.elasticsearch, "documents") },
-    { label: "Milvus", value: backendLabel(state.backends.milvus, "entities") },
-    { label: "Neo4j", value: backendLabel(state.backends.neo4j, "relationships") },
-    { label: "Redis", value: state.backends.redis?.available ? "在线" : "离线" },
-    { label: "LLM", value: llmLabel(state.backends.llm) },
+    { label: "Elasticsearch", value: backendLabel(state.backends.elasticsearch, "documents", "份文档") },
+    { label: "Milvus", value: backendLabel(state.backends.milvus, "entities", "条实体") },
+    { label: "Neo4j", value: backendLabel(state.backends.neo4j, "relationships", "条关系") },
+    { label: "Redis", value: state.backends.redis?.available ? "可用" : "不可用" },
+    { label: "大模型", value: llmLabel(state.backends.llm) },
     { label: "ClamAV", value: clamavLabel(state.backends.clamav) },
   ])
 
@@ -43,25 +47,25 @@ export function useAdminBackends() {
     return rows
   })
 
-  function backendLabel(item: GenericMap | null | undefined, key: string) {
+  function backendLabel(item: GenericMap | null | undefined, key: string, suffix = "") {
     if (!item) return "未知"
-    if (!item.available) return "离线"
-    return `${item[key] ?? 0}`
+    if (!item.available) return "不可用"
+    return `${item[key] ?? 0}${suffix}`
   }
 
   function clamavLabel(item: GenericMap | null | undefined) {
     if (!item) return "未知"
     if (item.enabled === false) return "未启用"
-    if (item.available) return "在线"
-    return "降级"
+    if (item.available) return "可用"
+    return "降级运行中"
   }
 
   function llmLabel(item: GenericMap | null | undefined) {
     if (!item) return "未知"
     if (item.enabled === false) return "未启用"
-    if (!item.available) return "离线"
-    if (item.model_pulled === false) return "模型未拉取"
-    return "在线"
+    if (!item.available) return "不可用"
+    if (item.model_pulled === false) return "模型尚未准备好"
+    return "可用"
   }
 
   async function loadBackends() {
@@ -70,16 +74,19 @@ export function useAdminBackends() {
     state.loading = true
     state.error = ""
     try {
-      const [backendRes, retrievalMetricsRes, readinessRes] = await Promise.all([
+      const [backendRes, retrievalMetricsRes, readinessRes, requestMetricsRes] = await Promise.all([
         adminApi.getBackendStatus(),
         adminApi.getRetrievalMetrics(),
         adminApi.getPlatformReadiness(),
+        adminApi.getRequestMetrics(8),
       ])
       state.backends = backendRes || {}
       state.retrievalMetrics = retrievalMetricsRes || {}
       state.readiness = readinessRes || null
+      state.requestMetrics = requestMetricsRes?.items || []
+      state.frontendHttpTraces = getRecentHttpTraces().slice(0, 12)
     } catch (err: any) {
-      state.error = err?.response?.data?.detail || "加载后端状态失败。"
+      state.error = getApiErrorMessage(err, backendMonitorErrorLabel("system"))
     } finally {
       state.loading = false
     }
@@ -89,7 +96,7 @@ export function useAdminBackends() {
     try {
       state.retrievalIntegrity = (await adminApi.getRetrievalIntegrity(12)) || null
     } catch (err: any) {
-      state.error = err?.response?.data?.detail || "加载检索一致性健康度失败。"
+      state.error = getApiErrorMessage(err, backendMonitorErrorLabel("retrieval"))
     }
   }
 
@@ -102,7 +109,7 @@ export function useAdminBackends() {
         state.publicCorpusForm.tenant_id,
       )
     } catch (err: any) {
-      state.error = err?.response?.data?.detail || "加载公开语料导出摘要失败。"
+      state.error = getApiErrorMessage(err, backendMonitorErrorLabel("publicCorpusLoad"))
     } finally {
       state.loadingPublicCorpusLatest = false
     }
@@ -118,14 +125,14 @@ export function useAdminBackends() {
         return
       }
       if (status === "failed" || status === "killed") {
-        state.error = payload?.item?.error || "公开语料导出失败。"
+        state.error = payload?.item?.error || backendMonitorErrorLabel("publicCorpusTask")
         return
       }
       window.setTimeout(() => {
         void pollPublicCorpusTask()
       }, 2500)
     } catch (err: any) {
-      state.error = err?.response?.data?.detail || "轮询公开语料导出任务失败。"
+      state.error = getApiErrorMessage(err, backendMonitorErrorLabel("publicCorpusPoll"))
     }
   }
 
@@ -141,7 +148,7 @@ export function useAdminBackends() {
       state.publicCorpusTaskId = task.task_id || ""
       await pollPublicCorpusTask()
     } catch (err: any) {
-      state.error = err?.response?.data?.detail || "提交公开语料导出任务失败。"
+      state.error = getApiErrorMessage(err, backendMonitorErrorLabel("publicCorpusStart"))
     } finally {
       state.exportingPublicCorpus = false
     }
@@ -161,7 +168,7 @@ export function useAdminBackends() {
       link.remove()
       URL.revokeObjectURL(url)
     } catch {
-      state.error = "导出工具治理统计失败。"
+      state.error = backendMonitorErrorLabel("toolExport")
     }
   }
 
@@ -176,6 +183,27 @@ export function useAdminBackends() {
     return `${(Number(value) * 100).toFixed(1)}%`
   }
 
+  function backendNameLabel(value: string) {
+    const map: Record<string, string> = {
+      es: "Elasticsearch",
+      milvus: "Milvus",
+      graph: "Graph",
+    }
+    return map[value] || value
+  }
+
+  function requestPathLabel(value: string | null | undefined) {
+    const normalized = String(value || "").trim()
+    if (!normalized) return "-"
+    return normalized.replace("/api/v1", "")
+  }
+
+  function frontendTraceStatusLabel(value?: number | null) {
+    if (!value) return "失败"
+    if (value >= 200 && value < 300) return `${value}`
+    return `${value}`
+  }
+
   return {
     state,
     backendCards,
@@ -187,5 +215,8 @@ export function useAdminBackends() {
     downloadRuntimeToolSummary,
     formatDate,
     formatPercent,
+    backendNameLabel,
+    requestPathLabel,
+    frontendTraceStatusLabel,
   }
 }

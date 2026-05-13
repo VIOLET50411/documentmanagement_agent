@@ -61,7 +61,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue"
+import { computed, nextTick, onMounted, ref, watch } from "vue"
 import { useChatStore } from "@/stores/chat"
 import { useSSE } from "@/composables/useSSE"
 import { useAutoScroll } from "@/composables/useAutoScroll"
@@ -69,17 +69,14 @@ import { chatApi } from "@/api/chat"
 import MessageList from "@/components/chat/MessageList.vue"
 import ChatComposer from "@/components/chat/ChatComposer.vue"
 
-const heroTitle = "\u60a8\u597d\uff0c\u4eca\u5929\u60f3\u4e86\u89e3\u4ec0\u4e48\uff1f"
+const heroTitle = "您好，今天想了解什么？"
 const heroDescription =
-  "\u6211\u662f\u60a8\u7684\u667a\u80fd\u6587\u6863\u52a9\u624b\u3002\u6211\u53ef\u4ee5\u5e2e\u60a8\u603b\u7ed3\u957f\u6587\u6863\u3001\u68c0\u7d22\u5173\u952e\u4fe1\u606f\uff0c\u5e76\u57fa\u4e8e\u4f01\u4e1a\u77e5\u8bc6\u5e93\u56de\u7b54\u95ee\u9898\u3002\u8bf7\u5728\u4e0b\u65b9\u76f4\u63a5\u63d0\u95ee\uff0c\u6216\u9009\u62e9\u5feb\u6377\u6307\u4ee4\u5f00\u59cb\u3002"
-const heroPlaceholder =
-  "\u8bf7\u76f4\u63a5\u63d0\u95ee\uff0c\u6216\u63cf\u8ff0\u4f60\u8981\u68c0\u7d22\u3001\u603b\u7ed3\u3001\u5bf9\u6bd4\u7684\u6587\u6863\u95ee\u9898"
-const followupPlaceholder =
-  "\u7ee7\u7eed\u8ffd\u95ee\u3001\u8865\u5145\u6761\u4ef6\uff0c\u6216\u8981\u6c42\u5f15\u7528\u66f4\u7cbe\u786e\u7684\u6bb5\u843d"
-const footerNote =
-  "\u56de\u7b54\u4f1a\u4f18\u5148\u9644\u5e26\u5f15\u7528\u3002\u82e5\u8bc1\u636e\u4e0d\u8db3\uff0c\u7cfb\u7edf\u4f1a\u660e\u786e\u63d0\u793a\u7f6e\u4fe1\u5ea6\u548c\u539f\u56e0\u3002"
+  "我是您的智能文档助手。我可以帮助您总结长文档、检索关键信息，并基于企业知识库回答问题。请直接提问，或选择下方快捷指令开始。"
+const heroPlaceholder = "请直接提问，或描述你要检索、总结、对比的文档问题"
+const followupPlaceholder = "继续追问、补充条件，或要求引用更精确的段落"
+const footerNote = "回答会优先附带引用。若证据不足，系统会明确提示可信度和原因。"
 const capabilityNote =
-  "当前版本支持知识库检索、结构化摘要、字段提取、流程/对比问答、统计查询与运行轨迹展示；尚未接入本机文件修改或桌面自动化执行。"
+  "当前版本支持知识库检索、结构化摘要、字段提取、流程/对比问答、统计查询与运行轨迹展示；暂不直接修改本机文件，也不执行桌面自动化操作。"
 
 const chatStore = useChatStore()
 const { sendMessage } = useSSE()
@@ -90,24 +87,24 @@ const { scrollToBottom } = useAutoScroll(messagesRef)
 
 const quickPrompts = [
   {
-    label: "\u5236\u5ea6\u95ee\u7b54",
-    text: "\u8bf7\u603b\u7ed3\u5f53\u524d\u5dee\u65c5\u5236\u5ea6\u7684\u5ba1\u6279\u94fe\u8def\uff0c\u5e76\u8bf4\u660e\u5404\u89d2\u8272\u804c\u8d23\u3002",
+    label: "制度问答",
+    text: "请总结当前差旅制度的审批链路，并说明各角色职责。",
   },
   {
-    label: "\u68c0\u7d22\u9a8c\u8bc1",
-    text: "\u8bf7\u8bf4\u660e\u6587\u6863\u4e0a\u4f20\u540e\u662f\u5982\u4f55\u8fdb\u5165\u68c0\u7d22\u94fe\u8def\u7684\u3002",
+    label: "检索验证",
+    text: "请说明文档上传后是如何进入检索链路的。",
   },
   {
-    label: "\u5199\u4f5c\u8f85\u52a9",
-    text: "\u8bf7\u8d77\u8349\u4e00\u4efd\u5e73\u53f0\u5b9e\u65bd\u8fdb\u5c55\u8bf4\u660e\uff0c\u5305\u542b\u98ce\u9669\u4e0e\u4e0b\u4e00\u6b65\u8ba1\u5212\u3002",
+    label: "写作辅助",
+    text: "请起草一份平台实施进展说明，包含风险与下一步计划。",
   },
   {
-    label: "\u8fd0\u7ef4\u68c0\u67e5",
-    text: "\u8bf7\u5217\u51fa\u5f53\u524d\u5e73\u53f0\u6700\u9700\u8981\u4f18\u5148\u5904\u7406\u7684\u4e09\u4e2a\u95ee\u9898\uff0c\u5e76\u7ed9\u51fa\u539f\u56e0\u3002",
+    label: "运维检查",
+    text: "请列出当前平台最需要优先处理的三个问题，并给出原因。",
   },
   {
-    label: "\u6cbb\u7406\u5efa\u8bae",
-    text: "\u8bf7\u4ece\u98ce\u9669\u89c6\u89d2\u7ed9\u51fa\u4e09\u6761\u5e73\u53f0\u6cbb\u7406\u5efa\u8bae\u3002",
+    label: "治理建议",
+    text: "请从风险视角给出三条平台治理建议。",
   },
 ]
 
@@ -122,6 +119,11 @@ const capabilityChips = [
 const hasMessages = computed(() => chatStore.messages.length > 0)
 const showHeroState = computed(() => !hasMessages.value)
 const lastUserPrompt = computed(() => [...chatStore.messages].reverse().find((msg) => msg.role === "user")?.content || "")
+
+onMounted(() => {
+  void chatStore.initialize({ loadActiveHistory: true })
+  void chatStore.ensureActiveSessionLoaded()
+})
 
 watch(() => chatStore.messages.length, () => nextTick(() => scrollToBottom()))
 watch(() => chatStore.messages[chatStore.messages.length - 1]?.content, () => nextTick(() => scrollToBottom()))

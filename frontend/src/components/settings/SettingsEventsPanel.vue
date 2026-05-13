@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="content-block">
     <div class="block-head">
       <div>
@@ -25,12 +25,14 @@
           </p>
         </li>
       </ul>
-      <p v-else class="empty-text">最近没有推送事件。</p>
+      <EmptyState v-else title="最近没有推送事件。" description="文档处理或通知下发后，这里会显示最近的事件记录。" />
     </section>
   </div>
 </template>
 
 <script setup lang="ts">
+import EmptyState from "@/components/common/EmptyState.vue"
+
 defineProps<{
   events: Array<Record<string, any>>
   loadingEvents: boolean
@@ -115,3 +117,6 @@ defineProps<{
   }
 }
 </style>
+
+
+

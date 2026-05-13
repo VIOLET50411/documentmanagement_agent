@@ -101,6 +101,10 @@ export const adminApi = {
     return apiGet("/admin/system/retrieval-metrics")
   },
 
+  getRequestMetrics(limit = 10) {
+    return apiGet("/admin/system/request-metrics", { params: { limit } })
+  },
+
   getPlatformReadiness() {
     return apiGet("/admin/system/readiness")
   },
@@ -121,12 +125,32 @@ export const adminApi = {
     return apiGet("/admin/evaluation/dataset/samples", { params: { limit } })
   },
 
-  runEvaluation(sampleLimit = 100) {
-    return apiPost("/admin/evaluation/run", null, { params: { sample_limit: sampleLimit } })
+  updateEvaluationDatasetSample(sampleId: string, payload: Record<string, unknown>) {
+    return apiPatch(`/admin/evaluation/dataset/samples/${sampleId}`, payload)
   },
 
-  runEvaluationAsync(sampleLimit = 100) {
-    return apiPost("/admin/evaluation/run-async", null, { params: { sample_limit: sampleLimit } })
+  deleteEvaluationDatasetSample(sampleId: string) {
+    return apiDelete(`/admin/evaluation/dataset/samples/${sampleId}`)
+  },
+
+  runEvaluation(sampleLimit = 100, prioritizeAllManualSamples = false, manualSampleRatio = 1) {
+    return apiPost("/admin/evaluation/run", null, {
+      params: {
+        sample_limit: sampleLimit,
+        prioritize_all_manual_samples: prioritizeAllManualSamples,
+        manual_sample_ratio: manualSampleRatio,
+      },
+    })
+  },
+
+  runEvaluationAsync(sampleLimit = 100, prioritizeAllManualSamples = false, manualSampleRatio = 1) {
+    return apiPost("/admin/evaluation/run-async", null, {
+      params: {
+        sample_limit: sampleLimit,
+        prioritize_all_manual_samples: prioritizeAllManualSamples,
+        manual_sample_ratio: manualSampleRatio,
+      },
+    })
   },
 
   getLatestEvaluation() {

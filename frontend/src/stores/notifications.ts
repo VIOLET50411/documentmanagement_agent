@@ -78,7 +78,7 @@ export const useNotificationsStore = defineStore("notifications", () => {
 
   const currentTokenStatusDetail = computed(() => {
     const summary = deviceSummary.value
-    if (!summary) return "设备状态汇总尚未加载。"
+    if (!summary) return "设备状态摘要尚未加载。"
     if (summary.current_token_status === "matched_active" && summary.current_device) {
       return `最近活跃：${formatDate(summary.current_device.last_seen_at || summary.current_device.updated_at)}`
     }

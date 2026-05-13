@@ -8,6 +8,7 @@
     </div>
 
     <p v-if="tasksStore.error" class="error-banner">{{ tasksStore.error }}</p>
+    <p v-if="copyFeedback" class="copy-feedback" :class="{ error: copyFeedbackTone === 'error' }">{{ copyFeedback }}</p>
 
     <nav class="tasks-nav card">
       <button class="tab-btn" :class="{ active: activeTab === 'runtime' }" @click="activeTab = 'runtime'">
@@ -351,6 +352,8 @@ import { useTasksStore } from "@/stores/tasks"
 const tasksStore = useTasksStore()
 const activeTab = ref("runtime")
 const traceInput = ref("")
+const copyFeedback = ref("")
+const copyFeedbackTone = ref<"success" | "error">("success")
 
 const activePipelineJobs = computed(() =>
   tasksStore.pipelineJobs.filter((item) =>
@@ -365,6 +368,7 @@ const resumableCheckpointCount = computed(
 const recentDeploymentFailures = computed(() => tasksStore.deploymentSummary?.recent_failures || [])
 
 let refreshTimer: number | null = null
+let copyFeedbackTimer: number | null = null
 
 function handleRefresh() {
   tasksStore.loadDashboard()
@@ -380,6 +384,9 @@ onMounted(() => {
 onUnmounted(() => {
   if (refreshTimer) {
     window.clearInterval(refreshTimer)
+  }
+  if (copyFeedbackTimer) {
+    window.clearTimeout(copyFeedbackTimer)
   }
 })
 
@@ -403,11 +410,22 @@ function copyText(text: string) {
   navigator.clipboard
     .writeText(text)
     .then(() => {
-      window.alert("已复制")
+      showCopyFeedback("已复制到剪贴板", "success")
     })
     .catch(() => {
-      window.alert("复制失败")
+      showCopyFeedback("复制失败，请稍后重试", "error")
     })
+}
+
+function showCopyFeedback(message: string, tone: "success" | "error") {
+  copyFeedback.value = message
+  copyFeedbackTone.value = tone
+  if (copyFeedbackTimer) {
+    window.clearTimeout(copyFeedbackTimer)
+  }
+  copyFeedbackTimer = window.setTimeout(() => {
+    copyFeedback.value = ""
+  }, 2500)
 }
 
 function percent(value: number | null | undefined) {
@@ -547,6 +565,16 @@ function unifiedStatusLabel(status: string | null | undefined) {
   align-items: center;
   gap: 8px;
   font-size: 0.9rem;
+}
+
+.copy-feedback {
+  margin: -4px 0 0;
+  color: #166534;
+  font-size: 14px;
+}
+
+.copy-feedback.error {
+  color: var(--color-danger);
 }
 
 .task-error {
