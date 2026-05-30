@@ -128,5 +128,8 @@ frontend/android/app/build/
 frontend/android/build/
 frontend/android/capacitor-cordova-android-plugins/build/
 
+# ---------- Backend binaries ----------
+backend/bin/
+
 # ---------- Misc local generated ----------
 backend/68.0.0
