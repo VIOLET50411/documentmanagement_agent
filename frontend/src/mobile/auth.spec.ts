@@ -28,16 +28,6 @@ describe("mobile auth helpers", () => {
     })
   })
 
-  it("resolves wechat oauth config when platform is wechat", async () => {
-    platformNameMock.mockReturnValue("wechat")
-    const { resolveMobileAuthConfig } = await import("./auth")
-    expect(resolveMobileAuthConfig()).toEqual({
-      clientId: "docmind-miniapp",
-      redirectUri: "https://servicewechat.com/docmind/callback",
-      scope: "openid profile email offline_access",
-    })
-  })
-
   it("generates a valid pkce bundle", async () => {
     const { generatePkceBundle } = await import("./auth")
     const bundle = await generatePkceBundle()

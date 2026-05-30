@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import sys
@@ -1190,23 +1190,15 @@ async def test_admin_mobile_auth_status_route(api_client: AsyncClient, monkeypat
             "enabled": True,
             "ready": True,
             "issues": [],
-            "clients": ["docmind-capacitor", "docmind-miniapp"],
-            "redirect_uris": ["docmind://auth/callback", "https://servicewechat.com/docmind/callback"],
+            "clients": ["docmind-capacitor"],
+            "redirect_uris": ["docmind://auth/callback"],
             "authorization_code_expire_minutes": 5,
             "grant_types_supported": ["authorization_code", "refresh_token"],
             "response_types_supported": ["code"],
             "pkce_methods_supported": ["S256", "plain"],
             "token_endpoint_auth_methods_supported": ["none"],
             "jwt_algorithm": "HS256",
-            "client_profiles": [{"client_id": "docmind-miniapp", "recommended_for": "miniapp", "redirect_uris": ["https://servicewechat.com/docmind/callback"]}],
-            "miniapp": {
-                "ready": True,
-                "issues": [],
-                "clients": ["docmind-miniapp"],
-                "redirect_uris": ["https://servicewechat.com/docmind/callback"],
-                "recommended_api_base": "https://testserver/api/v1",
-                "recommended_ws_base": "wss://testserver/api/v1/ws/chat",
-            },
+            "client_profiles": [{"client_id": "docmind-capacitor", "recommended_for": "capacitor_app", "redirect_uris": ["docmind://auth/callback"]}],
             "discovery": {"issuer": issuer},
         }
 
@@ -1218,8 +1210,7 @@ async def test_admin_mobile_auth_status_route(api_client: AsyncClient, monkeypat
     payload = response.json()
     assert payload["tenant_id"] == "tenant-1"
     assert payload["ready"] is True
-    assert payload["clients"] == ["docmind-capacitor", "docmind-miniapp"]
-    assert payload["miniapp"]["ready"] is True
+    assert payload["clients"] == ["docmind-capacitor"]
 
 
 @pytest.mark.asyncio
@@ -1275,7 +1266,6 @@ async def test_admin_push_notification_status_route(api_client: AsyncClient, mon
             "delivery_gaps": [],
             "configuration_sources": {
                 "fcm": {"source": "access_token", "configured": True, "detail": "example-firebase-project"},
-                "wechat": {"source": "none", "configured": False, "detail": None},
                 "webhook": {"source": "none", "configured": False, "detail": None},
             },
             "setup_guides": {
@@ -1288,16 +1278,6 @@ async def test_admin_push_notification_status_route(api_client: AsyncClient, mon
                     "secret_targets": [],
                     "docker_mount_dir": "/run/secrets/docmind",
                     "next_step": "运行凭据已到位，可直接联调真实推送。",
-                },
-                "wechat": {
-                    "configured": False,
-                    "ready": False,
-                    "required_env_vars": ["PUSH_WECHAT_ACCESS_TOKEN or PUSH_WECHAT_APP_ID + PUSH_WECHAT_APP_SECRET", "PUSH_WECHAT_TEMPLATE_ID"],
-                    "missing_env_vars": ["PUSH_WECHAT_ACCESS_TOKEN", "PUSH_WECHAT_APP_ID", "PUSH_WECHAT_APP_SECRET", "PUSH_WECHAT_TEMPLATE_ID"],
-                    "env_examples": ["PUSH_WECHAT_TEMPLATE_ID=<subscribe-template-id>"],
-                    "secret_targets": [],
-                    "docker_mount_dir": "/run/secrets/docmind",
-                    "next_step": "补齐小程序 access token 或 appid/appsecret，以及订阅消息模板 ID 后即可联调微信通知。",
                 },
                 "webhook": {
                     "configured": False,
@@ -1343,7 +1323,6 @@ async def test_admin_push_notification_status_route(api_client: AsyncClient, mon
     assert payload["providers"]["fcm"]["missing_env_vars"] == []
     assert payload["configuration_sources"]["fcm"]["source"] == "access_token"
     assert payload["readiness_score"] == 100
-    assert payload["setup_guides"]["wechat"]["env_examples"] == ["PUSH_WECHAT_TEMPLATE_ID=<subscribe-template-id>"]
     assert payload["provider_diagnostics"]["fcm"]["next_step"] == "运行凭据已到位，可直接联调真实推送。"
 
 
@@ -1436,7 +1415,7 @@ async def test_admin_gap_report_route_includes_blocker_summaries(api_client: Asy
             "tenant_id": "tenant-1",
             "completed": ["runtime_v2_only"],
             "in_progress": [],
-            "pending": ["wechat_push_provider_ready"],
+            "pending": ["webhook_push_provider_ready"],
             "summary": {
                 "completed_count": 1,
                 "in_progress_count": 0,
@@ -1447,15 +1426,15 @@ async def test_admin_gap_report_route_includes_blocker_summaries(api_client: Asy
             },
             "blockers": [
                 {
-                    "id": "wechat_push_provider_ready",
+                    "id": "webhook_push_provider_ready",
                     "scope": "external",
-                    "provider": "wechat",
-                    "missing_env_vars": ["PUSH_WECHAT_TEMPLATE_ID"],
-                    "next_step": "补齐小程序 access token 或 appid/appsecret，以及订阅消息模板 ID 后即可联调微信通知。",
+                    "provider": "webhook",
+                    "missing_env_vars": ["PUSH_NOTIFICATION_WEBHOOK_URL"],
+                    "next_step": "补齐 webhook 地址后即可联调外部推送网关。",
                 },
             ],
             "external_blockers": [
-                {"id": "wechat_push_provider_ready", "scope": "external", "provider": "wechat"},
+                {"id": "webhook_push_provider_ready", "scope": "external", "provider": "webhook"},
             ],
             "internal_blockers": [],
             "notes": ["当前仅剩外部 provider 凭据待补齐。"],
@@ -1466,7 +1445,7 @@ async def test_admin_gap_report_route_includes_blocker_summaries(api_client: Asy
         return {
             "tenant_id": tenant_id,
             "ready": True,
-            "providers": {"fcm": {"ready": True}, "wechat": {"ready": False}},
+            "providers": {"fcm": {"ready": True}},
         }
 
     monkeypatch.setattr(DeliveryGapService, "build_report", fake_build_report)
@@ -1478,7 +1457,7 @@ async def test_admin_gap_report_route_includes_blocker_summaries(api_client: Asy
     payload = response.json()
     assert payload["summary"]["external_blocker_count"] == 1
     assert payload["summary"]["completion_percent"] == 50.0
-    assert {item["provider"] for item in payload["external_blockers"]} == {"wechat"}
+    assert {item["provider"] for item in payload["external_blockers"]} == {"webhook"}
     assert payload["push_runtime_status"]["providers"]["fcm"]["ready"] is True
 
 

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -101,11 +101,6 @@ class DeliveryGapService:
         else:
             pending.append("mobile_oauth_runtime_ready")
 
-        miniapp_status = mobile_auth_status.get("miniapp") or {}
-        if miniapp_status.get("ready"):
-            completed.append("miniapp_oauth_bootstrap_ready")
-        else:
-            pending.append("miniapp_oauth_bootstrap_ready")
 
         push_status = await PushNotificationService(self.db, self.redis).get_health_summary(tenant_id=effective_tenant)
         if push_status["ready"]:
@@ -113,11 +108,6 @@ class DeliveryGapService:
         else:
             pending.append("push_notification_runtime_ready")
 
-        push_providers = push_status.get("providers") if isinstance(push_status.get("providers"), dict) else {}
-        if bool(push_providers.get("wechat", {}).get("ready")):
-            completed.append("wechat_push_provider_ready")
-        else:
-            pending.append("wechat_push_provider_ready")
 
         completed.append("advanced_dlp_and_watermark_forensics")
         blockers = self._build_blockers(
@@ -197,24 +187,13 @@ class DeliveryGapService:
 
     def _build_mobile_runtime_note(self, status: dict[str, Any]) -> str:
         if status.get("ready"):
-            miniapp = status.get("miniapp") if isinstance(status.get("miniapp"), dict) else {}
-            if miniapp.get("ready"):
-                return "移动 OAuth 与小程序 bootstrap 均已就绪。"
-            return "移动 OAuth 已就绪，但小程序 bootstrap 仍需补齐客户端或回调配置。"
+            return "移动 OAuth 已就绪。"
         issues = status.get("issues") if isinstance(status.get("issues"), list) else []
         return f"移动 OAuth 尚未完全就绪，问题: {', '.join(str(item) for item in issues) or 'unknown'}。"
 
     def _build_push_runtime_note(self, status: dict[str, Any]) -> str:
-        providers = status.get("providers") if isinstance(status.get("providers"), dict) else {}
-        missing = [
-            provider
-            for provider in ("wechat",)
-            if not bool(providers.get(provider, {}).get("ready"))
-        ]
-        if status.get("ready") and not missing:
-            return "推送运行态与多端 provider 均已就绪。"
         if status.get("ready"):
-            return f"推送主链路已就绪，但以下 provider 仍待补齐: {', '.join(missing)}。"
+            return "推送运行态已就绪。"
         issues = status.get("issues") if isinstance(status.get("issues"), list) else []
         return f"推送运行态未完全就绪，问题: {', '.join(str(item) for item in issues) or 'unknown'}。"
 
@@ -298,18 +277,18 @@ class DeliveryGapService:
                 }
             )
 
-        if "mobile_oauth_runtime_ready" in pending_set or "miniapp_oauth_bootstrap_ready" in pending_set:
+        if "mobile_oauth_runtime_ready" in pending_set:
             blockers.append(
                 {
                     "id": "mobile_oauth_runtime_ready",
-                    "title": "移动端 OAuth 或小程序引导未完成",
+                    "title": "移动端 OAuth 未完成",
                     "scope": "internal",
                     "category": "mobile_auth",
                     "severity": "medium",
                     "tenant_id": tenant_id,
                     "ready": bool(mobile_auth_status.get("ready")),
                     "issues": list(mobile_auth_status.get("issues") or []),
-                    "miniapp_issues": list((mobile_auth_status.get("miniapp") or {}).get("issues") or []),
+
                     "next_step": self._build_mobile_runtime_note(mobile_auth_status),
                 }
             )
@@ -329,33 +308,6 @@ class DeliveryGapService:
                 }
             )
 
-        providers = push_status.get("providers") if isinstance(push_status.get("providers"), dict) else {}
-        config_sources = push_status.get("configuration_sources") if isinstance(push_status.get("configuration_sources"), dict) else {}
-        for provider_name in ("wechat",):
-            pending_id = f"{provider_name}_push_provider_ready"
-            if pending_id not in pending_set:
-                continue
-            provider_meta = providers.get(provider_name, {}) if isinstance(providers.get(provider_name), dict) else {}
-            source_meta = config_sources.get(provider_name, {}) if isinstance(config_sources.get(provider_name), dict) else {}
-            blockers.append(
-                {
-                    "id": pending_id,
-                    "title": f"{provider_name.upper()} 推送 provider 待补齐",
-                    "scope": "external",
-                    "category": "push_provider",
-                    "severity": "high",
-                    "tenant_id": tenant_id,
-                    "provider": provider_name,
-                    "configured": bool(provider_meta.get("configured")),
-                    "ready": bool(provider_meta.get("ready")),
-                    "missing_env_vars": list(provider_meta.get("missing_env_vars") or []),
-                    "required_env_vars": list(provider_meta.get("required_env_vars") or []),
-                    "auth_mode": provider_meta.get("auth_mode") or provider_meta.get("auth_token_source"),
-                    "configuration_source": source_meta.get("source"),
-                    "configuration_detail": source_meta.get("detail"),
-                    "next_step": str(provider_meta.get("next_step") or "补齐 provider 凭据并完成真机联调。"),
-                }
-            )
 
         return blockers
 

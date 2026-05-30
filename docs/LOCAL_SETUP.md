@@ -4,7 +4,7 @@
 
 ## 1. 下载后能直接做什么
 
-在不补 Firebase、不补微信、不接入外部商业模型密钥的情况下，以下内容可以按当前仓库默认方式启动并验证：
+在不补 Firebase、不接入外部商业模型密钥的情况下，以下内容可以按当前仓库默认方式启动并验证：
 
 - Docker Compose 启动前后端与基础设施
 - Web 端登录
@@ -15,7 +15,7 @@
 以下能力属于可选增强，需要你自己的云侧配置：
 
 - Android Firebase 推送
-- 微信小程序订阅消息推送
+
 - 外部 LLM / Embedding / Reranker 商业服务密钥
 - 生产环境专用账号、域名、证书和持久化策略
 
@@ -177,18 +177,7 @@ PUSH_FCM_SERVICE_ACCOUNT_FILE=/run/secrets/docmind/firebase-service-account.json
 
 如果没有这份文件，项目主体仍可运行，只是移动推送能力不可用。
 
-## 8. 微信小程序推送如何自己配置
-
-如需微信订阅消息推送，请在 `.env` 中自行填写以下字段之一或多项：
-
-- `PUSH_WECHAT_ACCESS_TOKEN`
-- `PUSH_WECHAT_APP_ID`
-- `PUSH_WECHAT_APP_SECRET`
-- `PUSH_WECHAT_TEMPLATE_ID`
-
-未配置时，不影响 Web 主链路。
-
-## 9. 生产化前必须自行处理的内容
+## 8. 生产化前必须自行处理的内容
 
 公开仓库默认值更接近“开发版/演示版”，不是生产安全基线。上线前至少需要：
 
@@ -196,9 +185,9 @@ PUSH_FCM_SERVICE_ACCOUNT_FILE=/run/secrets/docmind/firebase-service-account.json
 - 关闭或重建演示管理员账号
 - 审核 CORS、公开注册、回调地址和推送配置
 - 为数据库、对象存储、日志、模型与报告目录规划持久化策略
-- 为 Android / 小程序接入你自己的应用、云项目和证书
+- 为 Android 接入你自己的应用、云项目和证书
 
-## 10. 常见误区
+## 9. 常见误区
 
 - 可以启动，不代表已经具备生产安全性
 - `health=healthy`，不等于检索质量已经达到业务要求

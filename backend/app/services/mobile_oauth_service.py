@@ -1,4 +1,4 @@
-﻿"""Mobile OAuth2/OIDC service with PKCE support."""
+"""Mobile OAuth2/OIDC service with PKCE support."""
 
 from __future__ import annotations
 
@@ -157,7 +157,6 @@ class MobileOAuthService:
             "ws_base": f"{ws_base}/api/v1/ws/chat",
             "auth": {
                 "discovery": status_payload.get("discovery") or self.discovery_document(issuer),
-                "miniapp": status_payload.get("miniapp"),
                 "client_profiles": status_payload.get("client_profiles", []),
             },
             "endpoints": {
@@ -198,7 +197,6 @@ class MobileOAuthService:
         }
         if issuer:
             payload["discovery"] = self.discovery_document(issuer)
-            payload["miniapp"] = self._build_miniapp_status(issuer, clients, redirects, enabled, issues)
         return payload
 
     def jwks(self) -> dict:
@@ -247,9 +245,7 @@ class MobileOAuthService:
         profiles: list[dict] = []
         for client_id in clients:
             recommended_for = "mobile_app"
-            if "miniapp" in client_id or "wechat" in client_id:
-                recommended_for = "miniapp"
-            elif "capacitor" in client_id:
+            if "capacitor" in client_id:
                 recommended_for = "capacitor_app"
 
             matched_redirects = [item for item in redirects if self._redirect_matches_client(item, client_id)]
@@ -262,41 +258,9 @@ class MobileOAuthService:
             )
         return profiles
 
-    def _build_miniapp_status(
-        self,
-        issuer: str,
-        clients: list[str],
-        redirects: list[str],
-        enabled: bool,
-        issues: list[str],
-    ) -> dict:
-        normalized_issuer = issuer.rstrip("/")
-        ws_base = normalized_issuer.replace("https://", "wss://").replace("http://", "ws://")
-        miniapp_clients = [item for item in clients if "miniapp" in item or "wechat" in item]
-        miniapp_redirects = [item for item in redirects if "servicewechat.com" in item or "miniapp" in item]
-        miniapp_issues: list[str] = []
-        if enabled and not miniapp_clients:
-            miniapp_issues.append("missing_miniapp_client")
-        if enabled and not miniapp_redirects:
-            miniapp_issues.append("missing_miniapp_redirect_uri")
-        miniapp_issues.extend(issue for issue in issues if issue not in miniapp_issues)
-
-        return {
-            "ready": enabled and not miniapp_issues,
-            "issues": miniapp_issues,
-            "clients": miniapp_clients,
-            "redirect_uris": miniapp_redirects,
-            "recommended_api_base": f"{normalized_issuer}/api/v1",
-            "recommended_ws_base": f"{ws_base}/api/v1/ws/chat",
-            "subscribe_template_id": settings.push_wechat_template_id or "",
-            "subscribe_page": settings.push_wechat_page or "pages/docs/index",
-        }
 
     def _redirect_matches_client(self, redirect_uri: str, client_id: str) -> bool:
-        normalized_redirect = redirect_uri.lower()
         normalized_client = client_id.lower()
-        if "miniapp" in normalized_client or "wechat" in normalized_client:
-            return "servicewechat.com" in normalized_redirect or "miniapp" in normalized_redirect
         if "capacitor" in normalized_client:
-            return "://" in normalized_redirect
+            return "://" in redirect_uri
         return True

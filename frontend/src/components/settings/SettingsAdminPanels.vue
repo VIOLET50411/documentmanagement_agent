@@ -181,16 +181,11 @@
 
       <section v-if="section === 'mobile'" class="settings-panel">
         <h3>推送通道状态</h3>
-        <div class="status-grid three-col">
+        <div class="status-grid two-col">
           <div class="status-card">
             <span>FCM</span>
             <strong>{{ pushProviderStatus?.providers?.fcm?.ready ? "已就绪" : "未就绪" }}</strong>
-            <small>{{ providerReasonLabel("fcm", pushProviderStatus?.providers?.fcm?.reason) }}</small>
-          </div>
-          <div class="status-card">
-            <span>微信小程序</span>
-            <strong>{{ pushProviderStatus?.providers?.wechat?.ready ? "已就绪" : "未就绪" }}</strong>
-            <small>{{ providerReasonLabel("wechat", pushProviderStatus?.providers?.wechat?.reason) }}</small>
+            <small>{{ providerReasonLabel(pushProviderStatus?.providers?.fcm?.reason) }}</small>
           </div>
         </div>
       </section>
@@ -254,9 +249,9 @@ function issuerLabel(value?: string | null) {
   }
 }
 
-function providerReasonLabel(provider: "fcm" | "wechat", reason?: string | null) {
+function providerReasonLabel(reason?: string | null) {
   if (!reason) {
-    return provider === "fcm" ? "Android 推送通道" : "订阅消息通道"
+    return "Android 推送通道"
   }
 
   const normalized = reason.toLowerCase()

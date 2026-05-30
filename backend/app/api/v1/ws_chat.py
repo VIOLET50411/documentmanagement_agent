@@ -1,7 +1,7 @@
-﻿"""WebSocket chat endpoint for mobile clients.
+"""WebSocket chat endpoint for mobile clients.
 
-WeChat Mini Programs and some mobile WebView environments do not support SSE
-reliably. This endpoint provides the same chat stream over WebSocket.
+Some mobile WebView environments do not support SSE reliably.
+This endpoint provides the same chat stream over WebSocket.
 """
 
 from __future__ import annotations

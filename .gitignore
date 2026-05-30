@@ -33,8 +33,6 @@ htmlcov/
 node_modules/
 frontend/node_modules/
 frontend/dist/
-docmind-miniapp/node_modules/
-docmind-miniapp/dist/
 .npm/
 
 # ---------- Build / package ----------
@@ -122,8 +120,7 @@ openapi_snapshot.json
 *.bak
 *.tmp
 
-# ---------- Miniapp local private config ----------
-docmind-miniapp/project.private.config.json
+
 
 # ---------- Android build artifacts ----------
 frontend/android/.gradle/

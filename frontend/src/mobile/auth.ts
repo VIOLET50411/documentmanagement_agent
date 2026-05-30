@@ -1,6 +1,5 @@
 import { Browser } from "@capacitor/browser"
 import { apiGet, apiPost } from "@/api/http"
-import { platformName } from "@/mobile/capacitor"
 
 export type MobileAuthorizePayload = {
   username: string
@@ -48,9 +47,7 @@ export type MobilePasswordLoginPayload = {
 
 const DEFAULT_SCOPE = "openid profile email offline_access"
 const DEFAULT_CAPACITOR_CLIENT_ID = "docmind-capacitor"
-const DEFAULT_MINIAPP_CLIENT_ID = "docmind-miniapp"
 const DEFAULT_CAPACITOR_REDIRECT_URI = "docmind://auth/callback"
-const DEFAULT_MINIAPP_REDIRECT_URI = "https://servicewechat.com/docmind/callback"
 
 export const mobileAuthApi = {
   discovery() {
@@ -74,31 +71,13 @@ export const mobileAuthApi = {
   },
 }
 
-function currentMobilePlatform() {
-  const current = platformName()
-  return current === "android" ? "capacitor" : current
-}
-
 export function resolveMobileAuthConfig(overrides: Partial<MobileAuthConfig> = {}): MobileAuthConfig {
-  const currentPlatform = currentMobilePlatform()
-  const envClientId =
-    currentPlatform === "wechat"
-      ? (import.meta.env.VITE_MOBILE_WECHAT_CLIENT_ID || "").trim()
-      : (import.meta.env.VITE_MOBILE_OAUTH_CLIENT_ID || "").trim()
-  const envRedirectUri =
-    currentPlatform === "wechat"
-      ? (import.meta.env.VITE_MOBILE_WECHAT_REDIRECT_URI || "").trim()
-      : (import.meta.env.VITE_MOBILE_OAUTH_REDIRECT_URI || "").trim()
+  const envClientId = (import.meta.env.VITE_MOBILE_OAUTH_CLIENT_ID || "").trim()
+  const envRedirectUri = (import.meta.env.VITE_MOBILE_OAUTH_REDIRECT_URI || "").trim()
 
   return {
-    clientId:
-      overrides.clientId ||
-      envClientId ||
-      (currentPlatform === "wechat" ? DEFAULT_MINIAPP_CLIENT_ID : DEFAULT_CAPACITOR_CLIENT_ID),
-    redirectUri:
-      overrides.redirectUri ||
-      envRedirectUri ||
-      (currentPlatform === "wechat" ? DEFAULT_MINIAPP_REDIRECT_URI : DEFAULT_CAPACITOR_REDIRECT_URI),
+    clientId: overrides.clientId || envClientId || DEFAULT_CAPACITOR_CLIENT_ID,
+    redirectUri: overrides.redirectUri || envRedirectUri || DEFAULT_CAPACITOR_REDIRECT_URI,
     scope: overrides.scope || DEFAULT_SCOPE,
   }
 }

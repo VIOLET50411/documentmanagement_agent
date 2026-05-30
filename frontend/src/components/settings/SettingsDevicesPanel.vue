@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="content-block">
     <div class="block-head">
       <div>
@@ -78,7 +78,6 @@
           <select v-model="deviceForm.platform" class="input">
             <option value="android">Android</option>
             <option value="web">Web</option>
-            <option value="wechat">微信小程序</option>
           </select>
         </label>
 

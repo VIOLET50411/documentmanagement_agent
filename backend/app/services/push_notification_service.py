@@ -1,4 +1,4 @@
-﻿"""Push notification registration and delivery service."""
+"""Push notification registration and delivery service."""
 
 from __future__ import annotations
 
@@ -29,13 +29,9 @@ except ImportError:  # pragma: no cover
 
 class PushNotificationService:
     FCM_PLATFORMS = {"android", "web", "chrome", "capacitor-android"}
-    WECHAT_PLATFORMS = {"wechat", "weapp", "miniapp", "miniprogram"}
     FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging"
     DEFAULT_FCM_SERVICE_ACCOUNT_FILE = "/run/secrets/docmind/firebase-service-account.json"
     INVALID_FCM_CODES = {"invalidregistration", "notregistered", "unregistered", "invalid_argument"}
-    INVALID_WECHAT_CODES = {40003, 40037, 43101}
-    WECHAT_TOKEN_REFRESH_CODES = {40001, 42001}
-    WECHAT_TOKEN_CACHE_KEY_PREFIX = "push:wechat:access_token:"
 
     def __init__(self, db: AsyncSession | None = None, redis_client=None):
         self.db = db
@@ -210,41 +206,10 @@ class PushNotificationService:
         await self._record_notification({**payload, "delivery": summary})
         return {**summary, "title": title, "body": body}
 
-    async def resolve_wechat_openid(self, js_code: str) -> str:
-        normalized_code = str(js_code or "").strip()
-        if not normalized_code:
-            raise ValueError("缺少微信登录 code")
-        if self._resolve_wechat_auth_mode() != "app_secret":
-            raise ValueError("微信小程序 appid/appsecret 未配置，无法换取 openid")
-
-        timeout = httpx.Timeout(10.0, connect=2.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(
-                "https://api.weixin.qq.com/sns/jscode2session",
-                params={
-                    "appid": settings.push_wechat_app_id,
-                    "secret": settings.push_wechat_app_secret,
-                    "js_code": normalized_code,
-                    "grant_type": "authorization_code",
-                },
-            )
-            response.raise_for_status()
-            body = response.json()
-
-        openid = str(body.get("openid") or "").strip()
-        if openid:
-            return openid
-
-        errmsg = str(body.get("errmsg") or "openid missing").strip()
-        errcode = body.get("errcode")
-        if errcode is not None:
-            raise ValueError(f"微信 code2session 失败: {errcode} {errmsg}".strip())
-        raise ValueError(f"微信 code2session 失败: {errmsg}".strip())
 
     async def get_health_summary(self, *, tenant_id: str) -> dict:
         provider = (settings.push_notification_provider or "log").lower()
         fcm_service_account_file = self._resolve_fcm_service_account_file()
-        wechat_auth_mode = self._resolve_wechat_auth_mode()
         providers = {
             "log": {"configured": True, "ready": True},
             "webhook": {
@@ -267,23 +232,6 @@ class PushNotificationService:
                 "project_id": self._resolve_fcm_project_id(fcm_service_account_file) or settings.push_fcm_project_id or None,
                 "required_env_vars": self._required_push_env_vars("fcm"),
                 "missing_env_vars": self._missing_push_env_vars("fcm", fcm_service_account_file),
-            },
-            "wechat": {
-                "implemented": True,
-                "configured": self._wechat_configured(),
-                "ready": self._wechat_configured(),
-                "code_ready": True,
-                "transport": "https",
-                "delivery_mode": "subscribe_message",
-                "supports_platforms": sorted(self.WECHAT_PLATFORMS),
-                "endpoint": "https://api.weixin.qq.com/cgi-bin/message/subscribe/send",
-                "template_id_configured": bool(settings.push_wechat_template_id),
-                "access_token_configured": wechat_auth_mode in {"access_token", "app_secret"},
-                "auth_mode": wechat_auth_mode,
-                "app_id_configured": bool(settings.push_wechat_app_id),
-                "app_secret_configured": bool(settings.push_wechat_app_secret),
-                "required_env_vars": self._required_push_env_vars("wechat"),
-                "missing_env_vars": self._missing_push_env_vars("wechat"),
             },
         }
         for provider_name, meta in providers.items():
@@ -324,7 +272,6 @@ class PushNotificationService:
                 "active": sum(1 for device in devices if device.is_active),
                 "inactive": sum(1 for device in devices if not device.is_active),
                 "by_platform": dict(Counter(self._normalize_platform(device.platform) for device in devices)),
-                "miniapp_debug": self._build_miniapp_debug_summary(devices),
             }
             provider_coverage, delivery_gaps = self._assess_provider_coverage(
                 provider=provider,
@@ -356,7 +303,6 @@ class PushNotificationService:
             "configuration_sources": self._build_configuration_sources(
                 providers=providers,
                 fcm_service_account_file=fcm_service_account_file,
-                wechat_auth_mode=wechat_auth_mode,
             ),
             "readiness_score": self._compute_readiness_score(
                 enabled=bool(settings.push_notifications_enabled),
@@ -501,34 +447,6 @@ class PushNotificationService:
 
                 asyncio.run(op)
 
-    def _build_miniapp_debug_summary(self, devices: list[PushDevice]) -> dict:
-        debug_devices = [device for device in devices if self._normalize_platform(device.platform) == "miniapp-debug"]
-        active_devices = [device for device in debug_devices if bool(getattr(device, "is_active", False))]
-        latest_seen = max(
-            (
-                device.last_seen_at or device.updated_at or device.created_at
-                for device in debug_devices
-                if device.last_seen_at or device.updated_at or device.created_at
-            ),
-            default=None,
-        )
-        latest_named = []
-        for device in debug_devices[:5]:
-            latest_named.append(
-                {
-                    "device_name": device.device_name,
-                    "app_version": device.app_version,
-                    "is_active": bool(device.is_active),
-                    "last_seen_at": device.last_seen_at.isoformat() if device.last_seen_at else None,
-                }
-            )
-        return {
-            "total": len(debug_devices),
-            "active": len(active_devices),
-            "inactive": max(len(debug_devices) - len(active_devices), 0),
-            "latest_seen_at": latest_seen.isoformat() if latest_seen else None,
-            "latest_devices": latest_named,
-        }
 
     def _summarize_recent_events(self, events: list[dict]) -> dict:
         status_counts = Counter(str(item.get("status") or "unknown") for item in events)
@@ -559,30 +477,26 @@ class PushNotificationService:
 
     async def _dispatch_multi_async(self, payload: dict, devices: list[dict]) -> list[dict]:
         mode = (settings.push_notification_provider or "log").lower()
-        if mode in {"log", "webhook", "fcm", "wechat"}:
+        if mode in {"log", "webhook", "fcm"}:
             return await self._dispatch_single_provider_async(mode, payload, devices)
 
         results: list[dict] = []
         grouped = self._group_devices_by_provider(devices)
         if grouped["fcm"]:
             results.extend(await self._dispatch_single_provider_async("fcm", payload, grouped["fcm"]))
-        if grouped["wechat"]:
-            results.extend(await self._dispatch_single_provider_async("wechat", payload, grouped["wechat"]))
         if grouped["fallback"]:
             results.extend(await self._dispatch_single_provider_async("log", payload, grouped["fallback"]))
         return results
 
     def _dispatch_multi_sync(self, payload: dict, devices: list[dict]) -> list[dict]:
         mode = (settings.push_notification_provider or "log").lower()
-        if mode in {"log", "webhook", "fcm", "wechat"}:
+        if mode in {"log", "webhook", "fcm"}:
             return self._dispatch_single_provider_sync(mode, payload, devices)
 
         results: list[dict] = []
         grouped = self._group_devices_by_provider(devices)
         if grouped["fcm"]:
             results.extend(self._dispatch_single_provider_sync("fcm", payload, grouped["fcm"]))
-        if grouped["wechat"]:
-            results.extend(self._dispatch_single_provider_sync("wechat", payload, grouped["wechat"]))
         if grouped["fallback"]:
             results.extend(self._dispatch_single_provider_sync("log", payload, grouped["fallback"]))
         return results
@@ -594,8 +508,6 @@ class PushNotificationService:
             return [await self._send_webhook_async(payload, devices)]
         if provider == "fcm":
             return [await self._send_fcm_async(payload, devices)]
-        if provider == "wechat":
-            return await self._send_wechat_async(payload, devices)
         return [self._send_log(payload, devices, provider="log")]
 
     def _dispatch_single_provider_sync(self, provider: str, payload: dict, devices: list[dict]) -> list[dict]:
@@ -605,8 +517,6 @@ class PushNotificationService:
             return [self._send_webhook_sync(payload, devices)]
         if provider == "fcm":
             return [self._send_fcm_sync(payload, devices)]
-        if provider == "wechat":
-            return self._send_wechat_sync(payload, devices)
         return [self._send_log(payload, devices, provider="log")]
 
     async def _send_webhook_async(self, payload: dict, devices: list[dict]) -> dict:
@@ -699,76 +609,6 @@ class PushNotificationService:
             except (httpx.HTTPError, ValueError) as exc:
                 return self._handle_provider_failure_sync("fcm", payload, devices, str(exc))
 
-    async def _send_wechat_async(self, payload: dict, devices: list[dict]) -> list[dict]:
-        if not self._wechat_configured():
-            return [self._provider_not_configured("wechat", payload, devices)]
-        access_token = await self._get_wechat_access_token_async()
-        if not access_token:
-            return [self._provider_not_configured("wechat", payload, devices)]
-        timeout = httpx.Timeout(10.0, connect=2.0)
-        results: list[dict] = []
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            for device in devices:
-                try:
-                    response = await client.post(
-                        f"https://api.weixin.qq.com/cgi-bin/message/subscribe/send?access_token={access_token}",
-                        json={
-                            "touser": device["device_token"],
-                            "template_id": settings.push_wechat_template_id,
-                            "page": settings.push_wechat_page,
-                            "miniprogram_state": settings.push_wechat_miniprogram_state,
-                            "lang": settings.push_wechat_lang,
-                            "data": self._build_wechat_subscribe_data(payload),
-                        },
-                    )
-                    response.raise_for_status()
-                    body = response.json()
-                    if self._wechat_body_requires_token_refresh(body):
-                        refreshed = await self._retry_wechat_send_after_token_refresh_async(client, payload, device)
-                        results.append(refreshed)
-                        continue
-                    if body.get("errcode", 0) != 0:
-                        results.append(await self._handle_provider_failure_async("wechat", payload, [device], body.get("errmsg", "wechat error"), response_body=body))
-                    else:
-                        results.append(self._provider_success("wechat", [device]))
-                except (httpx.HTTPError, ValueError) as exc:
-                    results.append(await self._handle_provider_failure_async("wechat", payload, [device], str(exc), response=getattr(exc, "response", None)))
-        return results
-
-    def _send_wechat_sync(self, payload: dict, devices: list[dict]) -> list[dict]:
-        if not self._wechat_configured():
-            return [self._provider_not_configured("wechat", payload, devices)]
-        access_token = self._get_wechat_access_token_sync()
-        if not access_token:
-            return [self._provider_not_configured("wechat", payload, devices)]
-        results: list[dict] = []
-        with httpx.Client(timeout=10.0) as client:
-            for device in devices:
-                try:
-                    response = client.post(
-                        f"https://api.weixin.qq.com/cgi-bin/message/subscribe/send?access_token={access_token}",
-                        json={
-                            "touser": device["device_token"],
-                            "template_id": settings.push_wechat_template_id,
-                            "page": settings.push_wechat_page,
-                            "miniprogram_state": settings.push_wechat_miniprogram_state,
-                            "lang": settings.push_wechat_lang,
-                            "data": self._build_wechat_subscribe_data(payload),
-                        },
-                    )
-                    response.raise_for_status()
-                    body = response.json()
-                    if self._wechat_body_requires_token_refresh(body):
-                        refreshed = self._retry_wechat_send_after_token_refresh_sync(client, payload, device)
-                        results.append(refreshed)
-                        continue
-                    if body.get("errcode", 0) != 0:
-                        results.append(self._handle_provider_failure_sync("wechat", payload, [device], body.get("errmsg", "wechat error"), response_body=body))
-                    else:
-                        results.append(self._provider_success("wechat", [device]))
-                except (httpx.HTTPError, ValueError) as exc:
-                    results.append(self._handle_provider_failure_sync("wechat", payload, [device], str(exc), response=getattr(exc, "response", None)))
-        return results
 
     def _send_log(self, payload: dict, devices: list[dict], provider: str = "log") -> dict:
         self.logger.info(
@@ -914,10 +754,6 @@ class PushNotificationService:
                 return True
             body = response_body or self._safe_json(response)
             return self._fcm_body_has_invalid_token(body)
-        if provider == "wechat":
-            body = response_body or self._safe_json(response)
-            errcode = int((body or {}).get("errcode") or 0)
-            return errcode in self.INVALID_WECHAT_CODES
         return False
 
     def _fcm_body_has_invalid_token(self, body: dict[str, Any] | None) -> bool:
@@ -1024,13 +860,11 @@ class PushNotificationService:
         return token
 
     def _group_devices_by_provider(self, devices: list[dict]) -> dict[str, list[dict]]:
-        groups = {"fcm": [], "wechat": [], "fallback": []}
+        groups = {"fcm": [], "fallback": []}
         for device in devices:
             platform = self._normalize_platform(device.get("platform"))
             if platform in self.FCM_PLATFORMS:
                 groups["fcm"].append(device)
-            elif platform in self.WECHAT_PLATFORMS:
-                groups["wechat"].append(device)
             else:
                 groups["fallback"].append(device)
         return groups
@@ -1116,8 +950,6 @@ class PushNotificationService:
             return ""
         return str(payload.get("project_id") or "").strip()
 
-    def _wechat_configured(self) -> bool:
-        return bool(self._resolve_wechat_auth_mode() in {"access_token", "app_secret"} and settings.push_wechat_template_id)
 
     def _build_provider_next_step(self, provider: str, meta: dict[str, Any]) -> str:
         if provider == "log":
@@ -1129,10 +961,6 @@ class PushNotificationService:
             if missing_env_vars:
                 return "补齐 Firebase 凭据后即可切到真实 FCM 推送。"
             return "检查 FCM project_id、access token 或 service account 文件是否有效。"
-        if provider == "wechat":
-            if missing_env_vars:
-                return "补齐小程序 access token 或 appid/appsecret，以及订阅消息模板 ID 后即可联调微信通知。"
-            return "检查小程序订阅消息模板、access token 或 appid/appsecret 与用户 openid 是否有效。"
         if provider == "webhook":
             return "补齐 webhook 地址后即可联调外部推送网关。"
         return "检查 provider 配置与运行凭据。"
@@ -1157,14 +985,11 @@ class PushNotificationService:
             if provider_name == "fcm":
                 diagnostics[provider_name]["project_id"] = meta.get("project_id")
                 diagnostics[provider_name]["service_account_file_configured"] = bool(meta.get("service_account_file_configured"))
-            if provider_name == "wechat":
-                diagnostics[provider_name]["endpoint"] = meta.get("endpoint")
-                diagnostics[provider_name]["template_id_configured"] = bool(meta.get("template_id_configured"))
         return diagnostics
 
     def _build_setup_guides(self, providers: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
         guides: dict[str, dict[str, Any]] = {}
-        for provider_name in ("fcm", "wechat", "webhook"):
+        for provider_name in ("fcm", "webhook"):
             meta = providers.get(provider_name, {})
             guides[provider_name] = {
                 "configured": bool(meta.get("configured")),
@@ -1183,20 +1008,13 @@ class PushNotificationService:
         *,
         providers: dict[str, dict[str, Any]],
         fcm_service_account_file: str | None,
-        wechat_auth_mode: str,
     ) -> dict[str, dict[str, Any]]:
         fcm_source = "service_account_file" if fcm_service_account_file else "access_token" if settings.push_fcm_access_token else "server_key" if settings.push_fcm_server_key else "none"
-        wechat_source = wechat_auth_mode if wechat_auth_mode in {"access_token", "app_secret"} else "none"
         return {
             "fcm": {
                 "source": fcm_source,
                 "configured": bool(providers.get("fcm", {}).get("configured")),
                 "detail": str(fcm_service_account_file or settings.push_fcm_project_id or "").strip() or None,
-            },
-            "wechat": {
-                "source": wechat_source,
-                "configured": bool(providers.get("wechat", {}).get("configured")),
-                "detail": str(settings.push_wechat_app_id or "").strip() or None,
             },
             "webhook": {
                 "source": "env" if settings.push_notification_webhook_url else "none",
@@ -1218,7 +1036,7 @@ class PushNotificationService:
             return 0
         score = 100
         if provider == "multi":
-            for provider_name in ("fcm", "wechat"):
+            for provider_name in ("fcm",):
                 if not providers.get(provider_name, {}).get("configured"):
                     score -= 10
         elif provider != "log" and not providers.get(provider, {}).get("ready"):
@@ -1236,7 +1054,7 @@ class PushNotificationService:
         delivery_gaps: list[dict],
     ) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
-        for provider_name in ("fcm", "wechat", "webhook"):
+        for provider_name in ("fcm", "webhook"):
             meta = providers.get(provider_name, {})
             missing = list(meta.get("missing_env_vars") or [])
             if missing:
@@ -1244,7 +1062,7 @@ class PushNotificationService:
                     {
                         "category": "provider_config",
                         "provider": provider_name,
-                        "severity": "high" if provider_name == "wechat" else "medium",
+                        "severity": "medium",
                         "message": f"{provider_name} 仍缺少关键配置: {', '.join(missing)}",
                         "next_step": meta.get("next_step"),
                         "env_examples": self._env_examples_for_provider(provider_name),
@@ -1262,14 +1080,14 @@ class PushNotificationService:
                     "next_step": gap.get("recommendation"),
                 }
             )
-        if provider == "multi" and not any(providers.get(name, {}).get("configured") for name in ("fcm", "wechat")):
+        if provider == "multi" and not any(providers.get(name, {}).get("configured") for name in ("fcm",)):
             items.append(
                 {
                     "category": "provider_config",
                     "provider": "multi",
                     "severity": "high",
                     "message": "multi 模式下尚未配置任何真实推送 provider。",
-                    "next_step": "至少完成 FCM 或微信中的一个 provider 配置。",
+                    "next_step": "至少完成 FCM provider 配置。",
                 }
             )
         deduped: list[dict[str, Any]] = []
@@ -1289,13 +1107,6 @@ class PushNotificationService:
                 "PUSH_FCM_ACCESS_TOKEN=<token>",
                 "PUSH_FCM_PROJECT_ID=<firebase-project-id>",
             ]
-        if provider == "wechat":
-            return [
-                "PUSH_WECHAT_APP_ID=wx1234567890",
-                "PUSH_WECHAT_APP_SECRET=<miniapp-secret>",
-                "PUSH_WECHAT_TEMPLATE_ID=<subscribe-template-id>",
-                "PUSH_WECHAT_ACCESS_TOKEN=<optional-direct-access-token>",
-            ]
         if provider == "webhook":
             return ["PUSH_NOTIFICATION_WEBHOOK_URL=https://push-gateway.example.com/webhook"]
         return []
@@ -1314,143 +1125,12 @@ class PushNotificationService:
     def _normalize_platform(self, platform: str | None) -> str:
         return str(platform or "unknown").strip().lower()
 
-    def _build_wechat_subscribe_data(self, payload: dict[str, Any]) -> dict[str, dict[str, str]]:
-        timestamp = self._format_wechat_time(payload.get("timestamp"))
-        date_only = self._format_wechat_date(payload.get("timestamp"))
-        status = self._format_wechat_phrase(payload.get("status") or payload.get("result") or "已完成")
-        title = self._format_wechat_thing(payload.get("title") or "DocMind通知")
-        body = self._format_wechat_thing(payload.get("body") or "您有一条新消息")
-        identifier = self._format_wechat_character_string(
-            payload.get("document_id") or payload.get("task_id") or payload.get("event_id") or payload.get("status") or "DOCMIND"
-        )
-        return {
-            "character_string1": {"value": identifier},
-            "thing2": {"value": title},
-            "thing3": {"value": body},
-            "phrase4": {"value": status},
-            "time5": {"value": timestamp},
-            "date5": {"value": date_only},
-        }
-
-    def _format_wechat_character_string(self, value: Any) -> str:
-        normalized = "".join(ch for ch in str(value or "DOCMIND") if ch.isascii() and (ch.isalnum() or ch in "-_#/.:"))
-        normalized = normalized[:32]
-        return normalized or "DOCMIND"
-
-    def _format_wechat_thing(self, value: Any) -> str:
-        text = " ".join(str(value or "").split())
-        return text[:20] or "DocMind通知"
-
-    def _format_wechat_phrase(self, value: Any) -> str:
-        raw = str(value or "").strip().lower()
-        mapped = {
-            "test": "已发送",
-            "ready": "已完成",
-            "completed": "已完成",
-            "success": "成功",
-            "ok": "成功",
-            "failed": "失败",
-            "error": "失败",
-            "running": "处理中",
-            "processing": "处理中",
-            "pending": "待处理",
-        }.get(raw)
-        if mapped:
-            return mapped
-        text = " ".join(str(value or "").split())
-        return text[:5] or "已完成"
-
-    def _format_wechat_time(self, value: Any) -> str:
-        dt = self._coerce_wechat_datetime(value)
-        return dt.strftime("%Y-%m-%d %H:%M")
-
-    def _format_wechat_date(self, value: Any) -> str:
-        dt = self._coerce_wechat_datetime(value)
-        return dt.strftime("%Y-%m-%d")
-
-    def _coerce_wechat_datetime(self, value: Any) -> datetime:
-        raw = str(value or "").strip()
-        if raw:
-            try:
-                dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-                if dt.tzinfo is not None:
-                    return dt.astimezone()
-                return dt
-            except ValueError:
-                pass
-        return datetime.now()
-
-    def _wechat_body_requires_token_refresh(self, body: dict[str, Any] | None) -> bool:
-        if not isinstance(body, dict):
-            return False
-        try:
-            errcode = int(body.get("errcode") or 0)
-        except (TypeError, ValueError):
-            return False
-        return errcode in self.WECHAT_TOKEN_REFRESH_CODES
-
-    async def _clear_wechat_token_cache_async(self) -> None:
-        if self.redis is not None:
-            await self.redis.delete(self._wechat_token_cache_key())
-
-    def _clear_wechat_token_cache_sync(self) -> None:
-        if self.redis is not None:
-            sync_delete = getattr(self.redis, "delete", None)
-            if sync_delete is not None and not inspect.iscoroutinefunction(sync_delete):
-                sync_delete(self._wechat_token_cache_key())
-
-    async def _retry_wechat_send_after_token_refresh_async(self, client: httpx.AsyncClient, payload: dict, device: dict) -> dict:
-        await self._clear_wechat_token_cache_async()
-        access_token = await self._get_wechat_access_token_async()
-        if not access_token:
-            return await self._handle_provider_failure_async("wechat", payload, [device], "wechat access_token refresh failed")
-        response = await client.post(
-            f"https://api.weixin.qq.com/cgi-bin/message/subscribe/send?access_token={access_token}",
-            json={
-                "touser": device["device_token"],
-                "template_id": settings.push_wechat_template_id,
-                "page": settings.push_wechat_page,
-                "miniprogram_state": settings.push_wechat_miniprogram_state,
-                "lang": settings.push_wechat_lang,
-                "data": self._build_wechat_subscribe_data(payload),
-            },
-        )
-        response.raise_for_status()
-        body = response.json()
-        if body.get("errcode", 0) != 0:
-            return await self._handle_provider_failure_async("wechat", payload, [device], body.get("errmsg", "wechat error"), response_body=body)
-        return self._provider_success("wechat", [device])
-
-    def _retry_wechat_send_after_token_refresh_sync(self, client: httpx.Client, payload: dict, device: dict) -> dict:
-        self._clear_wechat_token_cache_sync()
-        access_token = self._get_wechat_access_token_sync()
-        if not access_token:
-            return self._handle_provider_failure_sync("wechat", payload, [device], "wechat access_token refresh failed")
-        response = client.post(
-            f"https://api.weixin.qq.com/cgi-bin/message/subscribe/send?access_token={access_token}",
-            json={
-                "touser": device["device_token"],
-                "template_id": settings.push_wechat_template_id,
-                "page": settings.push_wechat_page,
-                "miniprogram_state": settings.push_wechat_miniprogram_state,
-                "lang": settings.push_wechat_lang,
-                "data": self._build_wechat_subscribe_data(payload),
-            },
-        )
-        response.raise_for_status()
-        body = response.json()
-        if body.get("errcode", 0) != 0:
-            return self._handle_provider_failure_sync("wechat", payload, [device], body.get("errmsg", "wechat error"), response_body=body)
-        return self._provider_success("wechat", [device])
-
     def _required_push_env_vars(self, provider: str) -> list[str]:
         if provider == "fcm":
             return [
                 "PUSH_FCM_SERVICE_ACCOUNT_FILE or PUSH_FCM_ACCESS_TOKEN + PUSH_FCM_PROJECT_ID",
                 "PUSH_FCM_SERVER_KEY (legacy optional)",
             ]
-        if provider == "wechat":
-            return ["PUSH_WECHAT_ACCESS_TOKEN or PUSH_WECHAT_APP_ID + PUSH_WECHAT_APP_SECRET", "PUSH_WECHAT_TEMPLATE_ID"]
         return []
 
     def _missing_push_env_vars(self, provider: str, fcm_service_account_file: str | None = None) -> list[str]:
@@ -1461,103 +1141,8 @@ class PushNotificationService:
             if has_service_account or has_v1 or has_legacy:
                 return []
             return ["PUSH_FCM_SERVICE_ACCOUNT_FILE", "PUSH_FCM_ACCESS_TOKEN", "PUSH_FCM_PROJECT_ID"]
-        if provider == "wechat":
-            missing = []
-            if self._resolve_wechat_auth_mode() == "none":
-                missing.append("PUSH_WECHAT_ACCESS_TOKEN")
-                missing.append("PUSH_WECHAT_APP_ID")
-                missing.append("PUSH_WECHAT_APP_SECRET")
-            if not settings.push_wechat_template_id:
-                missing.append("PUSH_WECHAT_TEMPLATE_ID")
-            return missing
         return []
 
-    def _resolve_wechat_auth_mode(self) -> str:
-        if str(settings.push_wechat_access_token or "").strip():
-            return "access_token"
-        if str(settings.push_wechat_app_id or "").strip() and str(settings.push_wechat_app_secret or "").strip():
-            return "app_secret"
-        return "none"
-
-    def _wechat_token_cache_key(self) -> str:
-        app_id = str(settings.push_wechat_app_id or "default").strip() or "default"
-        return f"{self.WECHAT_TOKEN_CACHE_KEY_PREFIX}{app_id}"
-
-    async def _get_wechat_access_token_async(self) -> str:
-        direct = str(settings.push_wechat_access_token or "").strip()
-        if direct:
-            return direct
-        if self.redis is not None:
-            cached = await self.redis.get(self._wechat_token_cache_key())
-            if cached:
-                return str(cached).strip()
-        if self._resolve_wechat_auth_mode() != "app_secret":
-            return ""
-        timeout = httpx.Timeout(10.0, connect=2.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(
-                "https://api.weixin.qq.com/cgi-bin/stable_token",
-                json={
-                    "grant_type": "client_credential",
-                    "appid": settings.push_wechat_app_id,
-                    "secret": settings.push_wechat_app_secret,
-                    "force_refresh": False,
-                },
-            )
-            response.raise_for_status()
-            body = response.json()
-            if not body.get("access_token"):
-                fallback = await client.get(
-                    "https://api.weixin.qq.com/cgi-bin/token",
-                    params={
-                        "grant_type": "client_credential",
-                        "appid": settings.push_wechat_app_id,
-                        "secret": settings.push_wechat_app_secret,
-                    },
-                )
-                fallback.raise_for_status()
-                body = fallback.json()
-        token = str(body.get("access_token") or "").strip()
-        if not token:
-            raise ValueError(str(body.get("errmsg") or "wechat access_token missing"))
-        if self.redis is not None:
-            expires_in = int(body.get("expires_in") or 7200)
-            await self.redis.set(self._wechat_token_cache_key(), token, ex=max(expires_in - 300, 60))
-        return token
-
-    def _get_wechat_access_token_sync(self) -> str:
-        direct = str(settings.push_wechat_access_token or "").strip()
-        if direct:
-            return direct
-        if self._resolve_wechat_auth_mode() != "app_secret":
-            return ""
-        with httpx.Client(timeout=10.0) as client:
-            response = client.post(
-                "https://api.weixin.qq.com/cgi-bin/stable_token",
-                json={
-                    "grant_type": "client_credential",
-                    "appid": settings.push_wechat_app_id,
-                    "secret": settings.push_wechat_app_secret,
-                    "force_refresh": False,
-                },
-            )
-            response.raise_for_status()
-            body = response.json()
-            if not body.get("access_token"):
-                fallback = client.get(
-                    "https://api.weixin.qq.com/cgi-bin/token",
-                    params={
-                        "grant_type": "client_credential",
-                        "appid": settings.push_wechat_app_id,
-                        "secret": settings.push_wechat_app_secret,
-                    },
-                )
-                fallback.raise_for_status()
-                body = fallback.json()
-        token = str(body.get("access_token") or "").strip()
-        if not token:
-            raise ValueError(str(body.get("errmsg") or "wechat access_token missing"))
-        return token
 
     def _assess_provider_coverage(
         self,
@@ -1573,10 +1158,6 @@ class PushNotificationService:
         )
         required_by_platform = {
             "android": "fcm",
-            "wechat": "wechat",
-            "weapp": "wechat",
-            "miniapp": "wechat",
-            "miniprogram": "wechat",
         }
 
         provider_coverage: dict[str, dict] = {}

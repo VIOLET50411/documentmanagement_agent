@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from types import SimpleNamespace
 
@@ -160,27 +160,23 @@ async def test_mobile_refresh_tokens_returns_new_id_token(monkeypatch):
     assert tokens["scope"] == "openid profile email offline_access"
 
 
-def test_mobile_status_reports_miniapp_bootstrap(monkeypatch):
+def test_mobile_status_reports_client_profiles(monkeypatch):
     db = FakeDB([])
     service = MobileOAuthService(db)
 
     monkeypatch.setattr(settings, "auth_mobile_oauth_enabled", True)
-    monkeypatch.setattr(settings, "auth_mobile_oauth_clients", "docmind-capacitor,docmind-miniapp")
+    monkeypatch.setattr(settings, "auth_mobile_oauth_clients", "docmind-capacitor")
     monkeypatch.setattr(
         settings,
         "auth_mobile_oauth_redirect_uris",
-        "docmind://auth/callback,https://servicewechat.com/docmind/callback",
+        "docmind://auth/callback",
     )
     monkeypatch.setattr(settings, "auth_mobile_authorization_code_expire_minutes", 5)
 
     payload = service.status("https://docmind.example.com")
 
     assert payload["ready"] is True
-    assert payload["miniapp"]["ready"] is True
-    assert payload["miniapp"]["clients"] == ["docmind-miniapp"]
-    assert payload["miniapp"]["redirect_uris"] == ["https://servicewechat.com/docmind/callback"]
-    assert payload["miniapp"]["recommended_api_base"] == "https://docmind.example.com/api/v1"
-    assert payload["miniapp"]["recommended_ws_base"] == "wss://docmind.example.com/api/v1/ws/chat"
+    assert payload["clients"] == ["docmind-capacitor"]
 
 
 def test_mobile_bootstrap_document_exposes_runtime_endpoints(monkeypatch):
@@ -188,12 +184,12 @@ def test_mobile_bootstrap_document_exposes_runtime_endpoints(monkeypatch):
     service = MobileOAuthService(db)
 
     monkeypatch.setattr(settings, "auth_mobile_oauth_enabled", True)
-    monkeypatch.setattr(settings, "auth_mobile_oauth_clients", "docmind-miniapp")
-    monkeypatch.setattr(settings, "auth_mobile_oauth_redirect_uris", "https://servicewechat.com/docmind/callback")
+    monkeypatch.setattr(settings, "auth_mobile_oauth_clients", "docmind-capacitor")
+    monkeypatch.setattr(settings, "auth_mobile_oauth_redirect_uris", "docmind://auth/callback")
 
     payload = service.bootstrap_document("https://docmind.example.com")
 
     assert payload["api_base"] == "https://docmind.example.com/api/v1"
     assert payload["ws_base"] == "wss://docmind.example.com/api/v1/ws/chat"
     assert payload["endpoints"]["chat_message"].endswith("/api/v1/chat/message")
-    assert payload["auth"]["miniapp"]["ready"] is True
+    assert \"miniapp\" not in payload.get(\"auth\", {})

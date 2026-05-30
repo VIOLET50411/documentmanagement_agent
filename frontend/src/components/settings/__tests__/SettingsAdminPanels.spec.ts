@@ -68,7 +68,6 @@ describe("SettingsAdminPanels", () => {
         pushProviderStatus: {
           providers: {
             fcm: { ready: false, reason: "missing credentials" },
-            wechat: { ready: true, reason: "" },
           },
         },
       }),
@@ -76,6 +75,5 @@ describe("SettingsAdminPanels", () => {
 
     expect(wrapper.text()).toContain("login.example.com/oidc")
     expect(wrapper.text()).toContain("关键配置缺失，通道暂时不可用。")
-    expect(wrapper.text()).toContain("订阅消息通道")
   })
 })

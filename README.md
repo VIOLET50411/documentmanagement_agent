@@ -41,7 +41,7 @@ DocMind Agent 是一个面向企业文档场景的文档管理与问答平台。
 默认面向两种使用方式：
 
 - Web / Docker 本地开发：开箱可跑，不依赖你自己的 Firebase 项目
-- Android / 推送联调：需要额外补自己的 Firebase 和移动端配置
+- Android 推送联调：需要额外补自己的 Firebase 和移动端配置
 
 1. 准备环境变量：
 

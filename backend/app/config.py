@@ -191,8 +191,8 @@ class Settings(BaseSettings):
     auth_allowlist_domains: str = ""
     auth_blocklist_domains: str = "mailinator.com,10minutemail.com,guerrillamail.com,temp-mail.org"
     auth_mobile_oauth_enabled: bool = True
-    auth_mobile_oauth_clients: str = "docmind-capacitor,docmind-miniapp"
-    auth_mobile_oauth_redirect_uris: str = "docmind://auth/callback,https://servicewechat.com/docmind/callback"
+    auth_mobile_oauth_clients: str = "docmind-capacitor"
+    auth_mobile_oauth_redirect_uris: str = "docmind://auth/callback"
     auth_mobile_authorization_code_expire_minutes: int = 5
 
     langfuse_public_key: str = ""
@@ -208,13 +208,7 @@ class Settings(BaseSettings):
     push_fcm_access_token: str = ""
     push_fcm_project_id: str = ""
     push_fcm_service_account_file: str = ""
-    push_wechat_access_token: str = ""
-    push_wechat_app_id: str = ""
-    push_wechat_app_secret: str = ""
-    push_wechat_template_id: str = ""
-    push_wechat_page: str = "pages/docs/index"
-    push_wechat_miniprogram_state: str = "developer"
-    push_wechat_lang: str = "zh_CN"
+
     ragas_api_base_url: str = ""
     ragas_api_key: str = ""
     ragas_timeout_seconds: int = 900

@@ -20,7 +20,6 @@ SCAN_ROOTS = (
     Path("frontend/src"),
     Path("docs"),
     Path("datasets"),
-    Path("docmind-miniapp"),
 )
 
 SCAN_FILES = (
