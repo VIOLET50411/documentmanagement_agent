@@ -1,4 +1,4 @@
-﻿"""Chat API with SSE streaming and persistent session/message records."""
+"""Chat API with SSE streaming and persistent session/message records."""
 
 from __future__ import annotations
 
@@ -502,9 +502,20 @@ async def chat_stream(
                         timestamp=watermark_timestamp,
                     )
 
+                _PHRASE_BREAKS = set("。，；！？、\n：）】」》")
+                batch: list[str] = []
                 for char in restored_answer:
-                    answer_parts.append(char)
-                    yield await emit({"status": "streaming", "token": char})
+                    batch.append(char)
+                    if len(batch) >= 4 or char in _PHRASE_BREAKS:
+                        chunk = "".join(batch)
+                        answer_parts.append(chunk)
+                        yield await emit({"status": "streaming", "token": chunk})
+                        await asyncio.sleep(0.02)
+                        batch.clear()
+                if batch:
+                    chunk = "".join(batch)
+                    answer_parts.append(chunk)
+                    yield await emit({"status": "streaming", "token": chunk})
 
                 visible_answer = "".join(answer_parts)
                 assistant_message.content = answer_to_store

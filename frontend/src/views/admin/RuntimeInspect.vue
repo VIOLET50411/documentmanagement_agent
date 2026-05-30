@@ -104,7 +104,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted } from "vue"
+import { onActivated, onDeactivated, onMounted, onUnmounted } from "vue"
 import EmptyState from "@/components/common/EmptyState.vue"
 import StatusMessage from "@/components/common/StatusMessage.vue"
 import { useRuntimeStore } from "@/stores/runtime"
@@ -112,26 +112,66 @@ import { checkpointNodeLabel, traceSourceLabel, traceStatusLabel } from "@/utils
 
 const runtimeStore = useRuntimeStore()
 let timer: number
+let visibilityHandler: (() => void) | null = null
+let isActive = false
 
 defineProps<{
   formatDate: (value?: string | null) => string
 }>()
 
-onMounted(async () => {
-  if (!runtimeStore.toolDecisionSummary) {
-    await runtimeStore.loadToolDecisionSummary()
+function stopPolling() {
+  if (timer) {
+    window.clearInterval(timer)
+    timer = 0
   }
-  if (!runtimeStore.checkpointSummary.length) {
-    await runtimeStore.loadCheckpointSummary()
-  }
+}
+
+function startPolling() {
+  stopPolling()
+  if (!isActive) return
+  if (typeof document !== "undefined" && document.visibilityState === "hidden") return
   timer = window.setInterval(() => {
-    runtimeStore.loadToolDecisionSummary()
-    runtimeStore.loadCheckpointSummary()
+    void runtimeStore.loadToolDecisionSummary()
+    void runtimeStore.loadCheckpointSummary()
   }, 10000)
+}
+
+async function activateInspect() {
+  await Promise.all([
+    runtimeStore.loadToolDecisionSummary(),
+    runtimeStore.loadCheckpointSummary(),
+  ])
+}
+
+onMounted(() => {
+  visibilityHandler = () => {
+    if (!isActive) return
+    if (document.visibilityState === "visible") {
+      void activateInspect()
+      startPolling()
+      return
+    }
+    stopPolling()
+  }
+  document.addEventListener("visibilitychange", visibilityHandler)
+})
+
+onActivated(() => {
+  isActive = true
+  void activateInspect()
+  startPolling()
+})
+
+onDeactivated(() => {
+  isActive = false
+  stopPolling()
 })
 
 onUnmounted(() => {
-  if (timer) window.clearInterval(timer)
+  stopPolling()
+  if (visibilityHandler) {
+    document.removeEventListener("visibilitychange", visibilityHandler)
+  }
 })
 
 function traceMessageLabel(event: Record<string, any>) {

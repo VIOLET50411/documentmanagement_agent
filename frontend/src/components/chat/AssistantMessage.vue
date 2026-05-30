@@ -60,9 +60,8 @@
         </div>
       </div>
 
-      <div v-if="structured.remainder" class="assistant-body">
+      <div v-if="structured.remainder || isStreaming" class="assistant-body" :class="{ 'is-streaming': isStreaming }">
         <div class="assistant-copy markdown-body" v-html="rendered"></div>
-        <span v-if="isStreaming" class="streaming-cursor" aria-hidden="true"></span>
       </div>
 
       <div class="assistant-actions">
@@ -194,8 +193,50 @@ const documentLayout = computed(() => {
   return paragraphs.length >= 2 || content.split("\n").filter((line) => line.trim()).length >= 8
 })
 
+const SAFE_TAGS = new Set([
+  'p', 'br', 'strong', 'em', 'b', 'i', 'u', 's', 'del', 'ins',
+  'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  'ul', 'ol', 'li', 'blockquote', 'pre', 'code',
+  'table', 'thead', 'tbody', 'tr', 'th', 'td',
+  'a', 'hr', 'div', 'span', 'sup', 'sub',
+])
+const SAFE_ATTRS = new Set(['href', 'title', 'class', 'id', 'target', 'rel'])
+
+function sanitizeHtml(html: string): string {
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  const clean = (node: Node): void => {
+    const children = Array.from(node.childNodes)
+    for (const child of children) {
+      if (child.nodeType === Node.ELEMENT_NODE) {
+        const el = child as Element
+        const tag = el.tagName.toLowerCase()
+        if (!SAFE_TAGS.has(tag)) {
+          // Replace unsafe element with its text content
+          el.replaceWith(document.createTextNode(el.textContent || ''))
+          continue
+        }
+        // Remove unsafe attributes
+        for (const attr of Array.from(el.attributes)) {
+          if (!SAFE_ATTRS.has(attr.name)) {
+            el.removeAttribute(attr.name)
+          } else if (attr.name === 'href') {
+            const val = attr.value.trim().toLowerCase()
+            if (val.startsWith('javascript:') || val.startsWith('data:')) {
+              el.removeAttribute(attr.name)
+            }
+          }
+        }
+        clean(el)
+      }
+    }
+  }
+  clean(doc.body)
+  return doc.body.innerHTML
+}
+
 function renderMarkdown(content: string) {
-  return marked.parse(normalizeAnswerContent(content || ""), { breaks: true }) as string
+  const raw = marked.parse(normalizeAnswerContent(content || ""), { breaks: true }) as string
+  return sanitizeHtml(raw)
 }
 
 function parseStructuredAnswer(content: string): StructuredAnswer {
@@ -469,15 +510,37 @@ function normalizeEvidenceSnippet(content: string) {
   font-size: 13px;
 }
 
-.streaming-cursor::after {
+.assistant-body.is-streaming .assistant-copy > p:last-child::after,
+.assistant-body.is-streaming .assistant-copy > li:last-child::after,
+.assistant-body.is-streaming .assistant-copy > pre:last-child code::after,
+.assistant-body.is-streaming .assistant-copy > h1:last-child::after,
+.assistant-body.is-streaming .assistant-copy > h2:last-child::after,
+.assistant-body.is-streaming .assistant-copy > h3:last-child::after,
+.assistant-body.is-streaming .assistant-copy > h4:last-child::after,
+.assistant-body.is-streaming .assistant-copy > h5:last-child::after,
+.assistant-body.is-streaming .assistant-copy > h6:last-child::after {
   content: "";
   display: inline-block;
   width: 8px;
-  height: 18px;
+  height: 15px;
   margin-left: 4px;
   border-radius: 999px;
   background: var(--color-primary);
   animation: blink 1s ease-in-out infinite;
+  vertical-align: middle;
+}
+
+.assistant-body.is-streaming .assistant-copy:empty::after,
+.assistant-body.is-streaming .assistant-copy > *:last-child:not(p):not(li):not(pre):not(h1):not(h2):not(h3):not(h4):not(h5):not(h6)::after {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 15px;
+  margin-left: 4px;
+  border-radius: 999px;
+  background: var(--color-primary);
+  animation: blink 1s ease-in-out infinite;
+  vertical-align: middle;
 }
 
 .evidence-collapse-enter-active,

@@ -1,4 +1,4 @@
-﻿import { ref, type Ref } from "vue"
+import { ref, type Ref } from "vue"
 import { useChatStore } from "@/stores/chat"
 import { chatApi } from "@/api/chat"
 
@@ -35,47 +35,73 @@ export function useSSE() {
     chatStore.addMessage({ role: "user", content: message, citations: [] })
     chatStore.addMessage({ role: "assistant", content: "", citations: [] })
 
-    try {
-      const response = await chatApi.streamChat(message, targetThreadId, modelName)
-      if (!response.ok || !response.body) throw new Error(`SSE request failed: ${response.status}`)
+    let retryCount = 0
+    const maxRetries = 1
 
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ""
+    const doStream = async (): Promise<void> => {
+      try {
+        const response = await chatApi.streamChat(message, targetThreadId, modelName)
+        if (!response.ok || !response.body) throw new Error(`SSE request failed: ${response.status}`)
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const chunks = buffer.split("\n\n")
-        buffer = chunks.pop() || ""
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ""
+        let receivedDone = false
 
-        for (const chunk of chunks) {
-          const idLine = chunk
-            .split("\n")
-            .find((line) => line.startsWith("id: "))
-          const dataLines = chunk
-            .split("\n")
-            .filter((line) => line.startsWith("data: "))
-            .map((line) => line.slice(6))
-          if (dataLines.length === 0) continue
-          try {
-            const parsed = JSON.parse(dataLines.join("\n")) as RuntimeEvent
-            if (idLine && !parsed.event_id) {
-              parsed.event_id = idLine.slice(4).trim()
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          const chunks = buffer.split("\n\n")
+          buffer = chunks.pop() || ""
+
+          for (const chunk of chunks) {
+            const idLine = chunk
+              .split("\n")
+              .find((line) => line.startsWith("id: "))
+            const dataLines = chunk
+              .split("\n")
+              .filter((line) => line.startsWith("data: "))
+              .map((line) => line.slice(6))
+            if (dataLines.length === 0) continue
+            try {
+              const parsed = JSON.parse(dataLines.join("\n")) as RuntimeEvent
+              if (idLine && !parsed.event_id) {
+                parsed.event_id = idLine.slice(4).trim()
+              }
+              if (parsed.status === "done") receivedDone = true
+              handleEvent(parsed)
+            } catch {
+              // Ignore malformed events from interrupted streams.
             }
-            handleEvent(parsed)
-          } catch {
-            // Ignore malformed events from interrupted streams.
           }
         }
+
+        // Stream ended without a "done" event — connection dropped
+        if (!receivedDone && retryCount < maxRetries) {
+          retryCount++
+          chatStore.setStreamState("thinking", "连接中断，正在重试...")
+          await doStream()
+        } else if (!receivedDone) {
+          chatStore.replaceLastAssistantMessage("连接中断，回答可能不完整。请点击重试按钮重新获取回答。")
+          chatStore.setStreamState("error", "连接中断")
+        }
+      } catch (caught) {
+        const messageText = caught instanceof Error ? caught.message : "连接失败"
+        if (retryCount < maxRetries) {
+          retryCount++
+          chatStore.setStreamState("thinking", "连接失败，正在重试...")
+          await new Promise((r) => setTimeout(r, 1000))
+          await doStream()
+        } else {
+          error.value = messageText
+          chatStore.replaceLastAssistantMessage("请求失败，请稍后重试。")
+          chatStore.setStreamState("error", messageText)
+        }
       }
-    } catch (caught) {
-      const messageText = caught instanceof Error ? caught.message : "连接失败"
-      error.value = messageText
-      chatStore.replaceLastAssistantMessage("请求失败，请稍后重试。")
-      chatStore.setStreamState("error", messageText)
     }
+
+    await doStream()
   }
 
   function handleEvent(event: RuntimeEvent) {

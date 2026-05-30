@@ -8,6 +8,7 @@ export interface ChatSession {
   title: string
   createdAt: string
   updatedAt: string
+  pinned?: boolean
 }
 
 export interface ChatMessage {
@@ -31,7 +32,16 @@ export interface ChatRuntimeEvent {
   fallbackReason?: string | null
 }
 
+export interface AttachedFile {
+  id: string
+  name: string
+  status: 'uploading' | 'queued' | 'parsing' | 'chunking' | 'indexing' | 'ready' | 'failed' | 'partial_failed'
+  progress: number
+  docId?: string
+}
+
 const ACTIVE_SESSION_STORAGE_KEY = "docmind.chat.activeSessionId"
+const PINNED_SESSIONS_STORAGE_KEY = "docmind.chat.pinnedSessions"
 const DEFAULT_SESSION_TITLE = "新对话"
 
 export const useChatStore = defineStore("chat", () => {
@@ -39,6 +49,7 @@ export const useChatStore = defineStore("chat", () => {
   const activeSessionId = ref<string | null>(null)
   const messages: Ref<ChatMessage[]> = ref([])
   const runtimeEvents: Ref<ChatRuntimeEvent[]> = ref([])
+  const attachedFiles: Ref<AttachedFile[]> = ref([])
   const isStreaming = ref(false)
   const streamStatus = ref("")
   const streamStatusMsg = ref("")
@@ -82,7 +93,36 @@ export const useChatStore = defineStore("chat", () => {
     if (content && session.title === DEFAULT_SESSION_TITLE) {
       session.title = formatSessionTitle(content)
     }
-    sessions.value = [...sessions.value].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    sessions.value = sortSessions([...sessions.value])
+  }
+
+  function sortSessions(list: ChatSession[]): ChatSession[] {
+    return list.sort((a, b) => {
+      if (a.pinned && !b.pinned) return -1
+      if (!a.pinned && b.pinned) return 1
+      return b.updatedAt.localeCompare(a.updatedAt)
+    })
+  }
+
+  function loadPinnedSet(): Set<string> {
+    if (!canUseStorage()) return new Set()
+    try {
+      const raw = window.localStorage.getItem(PINNED_SESSIONS_STORAGE_KEY)
+      return new Set(raw ? JSON.parse(raw) : [])
+    } catch { return new Set() }
+  }
+
+  function savePinnedSet(set: Set<string>) {
+    if (!canUseStorage()) return
+    window.localStorage.setItem(PINNED_SESSIONS_STORAGE_KEY, JSON.stringify([...set]))
+  }
+
+  function applyPinnedFlags() {
+    const pinned = loadPinnedSet()
+    for (const s of sessions.value) {
+      s.pinned = pinned.has(s.id)
+    }
+    sessions.value = sortSessions([...sessions.value])
   }
 
   function createSessionId() {
@@ -101,6 +141,7 @@ export const useChatStore = defineStore("chat", () => {
     saveActiveSessionId(id)
     messages.value = []
     runtimeEvents.value = []
+    attachedFiles.value = []
     return session
   }
 
@@ -109,6 +150,7 @@ export const useChatStore = defineStore("chat", () => {
     saveActiveSessionId(sessionId)
     messages.value = []
     runtimeEvents.value = []
+    attachedFiles.value = []
     try {
       const res = await chatApi.getHistory(sessionId)
       messages.value = (res.messages || []).map((msg) => ({
@@ -295,11 +337,72 @@ export const useChatStore = defineStore("chat", () => {
     await setActiveSession(activeSessionId.value)
   }
 
+  function clearAttachedFiles() {
+    attachedFiles.value = []
+  }
+
+  function resetToNew() {
+    activeSessionId.value = null
+    saveActiveSessionId(null)
+    messages.value = []
+    runtimeEvents.value = []
+    attachedFiles.value = []
+    historyLoadedSessionId.value = null
+  }
+
+  function removeLastMessage() {
+    if (messages.value.length > 0) {
+      messages.value.pop()
+    }
+  }
+
+  function renameSession(sessionId: string, newTitle: string) {
+    const session = sessions.value.find((s) => s.id === sessionId)
+    if (session) {
+      session.title = newTitle.trim() || DEFAULT_SESSION_TITLE
+    }
+  }
+
+  function togglePin(sessionId: string) {
+    const pinned = loadPinnedSet()
+    if (pinned.has(sessionId)) {
+      pinned.delete(sessionId)
+    } else {
+      pinned.add(sessionId)
+    }
+    savePinnedSet(pinned)
+    applyPinnedFlags()
+  }
+
+  function exportAsMarkdown(): string {
+    const session = sessions.value.find((s) => s.id === activeSessionId.value)
+    const title = session?.title || '未命名对话'
+    const date = new Date().toLocaleDateString('zh-CN')
+    let md = `# ${title}\n\n> 导出时间: ${date}\n\n---\n\n`
+    for (const msg of messages.value) {
+      if (msg.role === 'user') {
+        md += `### 🧑 用户\n\n${msg.content}\n\n`
+      } else {
+        md += `### 🤖 DocMind\n\n${msg.content}\n\n`
+        if (msg.citations?.length) {
+          md += `**引用来源:**\n`
+          for (const c of msg.citations) {
+            md += `- ${c.doc_title || '未知文档'} (${c.section_title || ''}, 页码 ${c.page_number || '-'})\n`
+          }
+          md += `\n`
+        }
+      }
+      md += `---\n\n`
+    }
+    return md
+  }
+
   return {
     sessions,
     activeSessionId,
     messages,
     runtimeEvents,
+    attachedFiles,
     isStreaming,
     streamStatus,
     streamStatusMsg,
@@ -318,5 +421,12 @@ export const useChatStore = defineStore("chat", () => {
     setStreamState,
     clearRuntimeEvents,
     ensureSessionById,
+    clearAttachedFiles,
+    resetToNew,
+    removeLastMessage,
+    renameSession,
+    togglePin,
+    exportAsMarkdown,
+    applyPinnedFlags,
   }
 })

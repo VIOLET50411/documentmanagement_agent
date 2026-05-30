@@ -16,7 +16,6 @@
             </svg>
           </button>
           <button class="brand-button" @click="$router.push('/chat')">
-            <img :src="brandLogoUrl" alt="DocMind 平台标志" class="brand-logo" />
             <div class="brand-copy">
               <span class="brand-text">DocMind</span>
               <span class="brand-subtitle">企业文档平台</span>
@@ -36,7 +35,6 @@
             <span class="nav-icon" v-html="item.icon"></span>
             <span class="nav-copy">
               <span class="nav-label">{{ item.label }}</span>
-              <span class="nav-description">{{ item.description }}</span>
             </span>
           </button>
         </nav>
@@ -51,13 +49,27 @@
               v-for="session in recentSessions"
               :key="session.id"
               class="recent-item-wrapper"
+              @contextmenu.prevent="openContextMenu($event, session.id)"
             >
               <button
                 class="recent-item"
                 :class="{ active: route.name === 'Chat' && chatStore.activeSessionId === session.id }"
                 @click="openRecentSession(session.id)"
               >
-                <strong>{{ session.title }}</strong>
+                <div class="recent-item-title">
+                  <span v-if="session.pinned" class="pin-indicator" title="已置顶">📌</span>
+                  <strong v-if="editingSessionId !== session.id">{{ session.title }}</strong>
+                  <input
+                    v-else
+                    ref="renameInputRef"
+                    class="rename-input"
+                    :value="session.title"
+                    @blur="finishRename(session.id, $event)"
+                    @keydown.enter="($event.target as HTMLInputElement).blur()"
+                    @keydown.escape="editingSessionId = null"
+                    @click.stop
+                  />
+                </div>
                 <span>{{ formatTime(session.updatedAt) }}</span>
               </button>
               <button
@@ -73,6 +85,18 @@
             </div>
             <p v-if="recentSessions.length === 0" class="empty-copy">还没有历史会话</p>
           </div>
+
+          <!-- Context menu -->
+          <teleport to="body">
+            <transition name="menu-pop">
+              <div v-if="ctxMenuOpen" class="session-ctx-menu" :style="ctxMenuStyle" @click.stop>
+                <button class="ctx-item" @click="startRename">✏️ 重命名</button>
+                <button class="ctx-item" @click="doTogglePin">{{ ctxSession?.pinned ? '📌 取消置顶' : '📌 置顶' }}</button>
+                <button class="ctx-item" @click="doExport">📥 导出 Markdown</button>
+                <button class="ctx-item danger" @click="doCtxDelete">🗑️ 删除</button>
+              </div>
+            </transition>
+          </teleport>
         </section>
 
         <div class="sidebar-spacer"></div>
@@ -154,7 +178,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useChatStore } from '@/stores/chat'
@@ -197,7 +221,6 @@ const svgIcons = {
 const navItems: NavItem[] = [
   { key: 'new', label: '新建对话', description: '开始一轮新的问答', icon: svgIcons.new, action: 'new' },
   { key: 'tasks', label: '任务中心', description: '查看运行、入库与训练任务', icon: svgIcons.tasks, route: '/tasks', adminOnly: true },
-  { key: 'search', label: '知识检索', description: '搜索索引、图谱与证据', icon: svgIcons.search, route: '/search' },
   { key: 'documents', label: '文档中心', description: '上传、解析与处理文档', icon: svgIcons.documents, route: '/documents' },
 ]
 
@@ -262,7 +285,7 @@ function isCurrent(item: NavItem) {
 }
 
 function startNewChat() {
-  chatStore.createSession()
+  chatStore.resetToNew()
   router.push('/chat')
   isSidebarOpen.value = false
 }
@@ -272,6 +295,75 @@ async function openRecentSession(sessionId: string) {
   router.push('/chat')
   isSidebarOpen.value = false
 }
+
+// --- Session context menu ---
+const ctxMenuOpen = ref(false)
+const ctxMenuSessionId = ref<string | null>(null)
+const ctxMenuStyle = ref<Record<string, string>>({})
+const editingSessionId = ref<string | null>(null)
+const renameInputRef = ref<HTMLInputElement[] | null>(null)
+
+const ctxSession = computed(() =>
+  chatStore.sessions.find((s) => s.id === ctxMenuSessionId.value)
+)
+
+function openContextMenu(e: MouseEvent, sessionId: string) {
+  ctxMenuSessionId.value = sessionId
+  ctxMenuStyle.value = { top: `${e.clientY}px`, left: `${e.clientX}px` }
+  ctxMenuOpen.value = true
+}
+
+function closeContextMenu() {
+  ctxMenuOpen.value = false
+  ctxMenuSessionId.value = null
+}
+
+function startRename() {
+  editingSessionId.value = ctxMenuSessionId.value
+  closeContextMenu()
+  nextTick(() => {
+    const inputs = renameInputRef.value
+    if (inputs && inputs.length) inputs[0].focus()
+  })
+}
+
+function finishRename(sessionId: string, e: Event) {
+  const val = (e.target as HTMLInputElement).value
+  chatStore.renameSession(sessionId, val)
+  editingSessionId.value = null
+}
+
+function doTogglePin() {
+  if (ctxMenuSessionId.value) chatStore.togglePin(ctxMenuSessionId.value)
+  closeContextMenu()
+}
+
+function doExport() {
+  closeContextMenu()
+  if (!ctxMenuSessionId.value) return
+  // Ensure the session is active so messages are loaded
+  const doIt = async () => {
+    if (chatStore.activeSessionId !== ctxMenuSessionId.value) {
+      await chatStore.setActiveSession(ctxMenuSessionId.value!)
+    }
+    const md = chatStore.exportAsMarkdown()
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${ctxSession.value?.title || '对话'}.md`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+  void doIt()
+}
+
+function doCtxDelete() {
+  if (ctxMenuSessionId.value) chatStore.deleteSession(ctxMenuSessionId.value)
+  closeContextMenu()
+}
+
+
 
 function openSettings(section: string) {
   accountMenuOpen.value = false
@@ -300,13 +392,46 @@ function handleGlobalClick() {
   accountMenuOpen.value = false
 }
 
+// Mobile swipe gestures
+let touchStartX = 0
+let touchStartY = 0
+
+function onTouchStart(e: TouchEvent) {
+  touchStartX = e.touches[0].clientX
+  touchStartY = e.touches[0].clientY
+}
+
+function onTouchEnd(e: TouchEvent) {
+  const dx = e.changedTouches[0].clientX - touchStartX
+  const dy = e.changedTouches[0].clientY - touchStartY
+  if (Math.abs(dy) > Math.abs(dx)) return // vertical scroll, ignore
+  if (Math.abs(dx) < 60) return // too short
+  if (dx > 0 && touchStartX < 40) {
+    // Swipe right from left edge → open sidebar
+    isSidebarOpen.value = true
+  } else if (dx < 0 && isSidebarOpen.value) {
+    // Swipe left on open sidebar → close
+    isSidebarOpen.value = false
+  }
+}
+
 onMounted(() => {
   window.addEventListener('click', handleGlobalClick)
+  document.addEventListener('click', closeContextMenu)
+  document.addEventListener('touchstart', onTouchStart, { passive: true })
+  document.addEventListener('touchend', onTouchEnd, { passive: true })
   void chatStore.initialize({ loadActiveHistory: route.name === 'Chat' })
+  // Load pinned flags after sessions are loaded
+  watch(() => chatStore.sessions.length, () => {
+    if (chatStore.sessions.length > 0) chatStore.applyPinnedFlags()
+  }, { immediate: true })
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('click', handleGlobalClick)
+  document.removeEventListener('click', closeContextMenu)
+  document.removeEventListener('touchstart', onTouchStart)
+  document.removeEventListener('touchend', onTouchEnd)
 })
 </script>
 
@@ -323,13 +448,12 @@ onBeforeUnmount(() => {
   height: 100vh;
   position: sticky;
   top: 0;
-  border-right: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(255, 255, 255, 0.45);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border-right: 1px solid var(--border-color);
+  background: var(--bg-sidebar);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   transition: width var(--transition-slow), min-width var(--transition-slow);
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden;
   z-index: 30;
 }
 
@@ -342,8 +466,8 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  padding: 18px 14px;
-  gap: 18px;
+  padding: 24px 16px;
+  gap: 20px;
 }
 
 .sidebar-top,
@@ -361,13 +485,14 @@ onBeforeUnmount(() => {
   display: grid;
   place-items: center;
   gap: 4px;
-  transition: opacity var(--transition-fast);
+  transition: all var(--transition-fast);
   cursor: pointer;
   color: var(--text-secondary);
 }
 
 .sidebar-toggle:hover {
   color: var(--text-primary);
+  transform: scale(1.05);
 }
 
 .brand-button {
@@ -382,21 +507,14 @@ onBeforeUnmount(() => {
   text-align: left;
   cursor: pointer;
   border-radius: 12px;
+  transition: all var(--transition-fast);
 }
 
 .brand-button:hover {
   background: var(--bg-surface-hover);
 }
 
-.brand-logo {
-  width: 40px;
-  height: 40px;
-  min-width: 40px;
-  object-fit: cover;
-  border-radius: 12px;
-  border: 1px solid var(--border-color-subtle);
-  box-shadow: 0 8px 18px rgba(79, 124, 255, 0.16);
-}
+
 
 .brand-copy {
   min-width: 0;
@@ -406,15 +524,15 @@ onBeforeUnmount(() => {
   display: block;
   font-family: var(--font-heading);
   font-size: 1.15rem;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-primary);
 }
 
 .brand-subtitle {
   display: block;
-  margin-top: 2px;
+  margin-top: 1px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .account-avatar,
@@ -442,11 +560,33 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
-.sidebar-nav,
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .recent-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 4px;
+}
+
+.recent-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.recent-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.recent-list::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 99px;
 }
 
 .nav-item,
@@ -464,31 +604,29 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px 14px;
+  padding: 12px 14px;
   border-radius: var(--radius-md);
-  color: var(--text-primary);
-  transition: background-color var(--transition-fast), padding var(--transition-fast);
+  color: var(--text-secondary);
+  transition: all var(--transition-fast);
   cursor: pointer;
   overflow: hidden;
 }
 
 .nav-item.icon-only {
   justify-content: center;
-  padding: 10px;
+  padding: 12px;
 }
 
-.nav-item:hover,
-.recent-item:hover,
-.account-trigger:hover,
-.menu-item:hover,
-.theme-chip:hover,
-.section-link:hover {
+.nav-item:hover {
   background: var(--bg-surface-hover);
+  color: var(--text-primary);
+  transform: translateY(-0.5px);
 }
 
 .nav-item.current {
   font-weight: 500;
-  background: color-mix(in srgb, var(--bg-surface-hover) 76%, rgba(79, 124, 255, 0.12));
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
 }
 
 .nav-icon {
@@ -503,8 +641,12 @@ onBeforeUnmount(() => {
 }
 
 .nav-item:hover .nav-icon {
-  transform: scale(1.15);
+  transform: scale(1.1);
   color: var(--text-primary);
+}
+
+.nav-item.current .nav-icon {
+  color: var(--color-primary);
 }
 
 .nav-icon :deep(svg) {
@@ -516,20 +658,20 @@ onBeforeUnmount(() => {
   display: block;
   font-weight: 500;
   font-size: 0.9rem;
-  color: var(--text-primary);
+  color: inherit;
 }
 
 .nav-description {
   display: block;
-  margin-top: 2px;
-  color: var(--text-secondary);
-  font-size: 12px;
+  margin-top: 1px;
+  color: var(--text-tertiary);
+  font-size: 11px;
 }
 
 .account-meta strong,
 .menu-profile-copy strong {
   display: block;
-  font-weight: 400;
+  font-weight: 500;
   font-size: 0.9rem;
   color: var(--text-primary);
 }
@@ -538,7 +680,7 @@ onBeforeUnmount(() => {
 .menu-profile-copy span {
   display: block;
   margin-top: 2px;
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
@@ -568,59 +710,78 @@ onBeforeUnmount(() => {
 }
 
 .sidebar-section {
-  margin-top: 16px;
+  margin-top: 12px;
   padding-top: 16px;
-  border-top: 1px solid var(--border-color-subtle);
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 .section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
+  padding: 0 4px;
 }
 
 .section-head p {
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
 }
 
 .section-link {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-link);
-  padding: 4px 8px;
+  padding: 2px 6px;
   border-radius: 999px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.section-link:hover {
+  background: var(--color-primary-soft);
 }
 
 .recent-item-wrapper {
+  position: relative;
   display: flex;
   gap: 4px;
   align-items: center;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+  padding-right: 4px;
+}
+
+.recent-item-wrapper:hover {
+  background: var(--bg-surface-hover);
 }
 
 .recent-item {
   flex: 1;
   min-width: 0;
   width: 100%;
-  padding: 8px 12px;
+  padding: 10px 12px;
   text-align: left;
-  border-radius: 8px;
-  transition: background-color var(--transition-fast), transform var(--transition-fast);
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
   cursor: pointer;
 }
 
 .recent-item:hover {
-  transform: translateX(4px);
-}
-
-.recent-item strong,
-.recent-item span {
-  display: block;
+  transform: translateX(2px);
 }
 
 .recent-item strong {
+  display: block;
   font-size: 13px;
   color: var(--text-primary);
+  font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -628,14 +789,29 @@ onBeforeUnmount(() => {
 
 .recent-item span,
 .empty-copy {
-  margin-top: 4px;
-  font-size: 12px;
+  margin-top: 2px;
+  font-size: 11px;
   color: var(--text-tertiary);
 }
 
 .recent-item.active {
-  background: var(--bg-surface-hover);
-  font-weight: 500;
+  background: var(--color-primary-soft);
+  position: relative;
+}
+
+.recent-item.active strong {
+  color: var(--color-primary);
+}
+
+.recent-item.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 20%;
+  height: 60%;
+  width: 3px;
+  background: var(--color-primary);
+  border-radius: 0 4px 4px 0;
 }
 
 .delete-session-btn {
@@ -643,14 +819,21 @@ onBeforeUnmount(() => {
   background: transparent;
   border: none;
   cursor: pointer;
-  color: var(--text-secondary);
-  transition: color var(--transition-fast), background-color var(--transition-fast);
-  border-radius: 8px;
+  color: var(--text-tertiary);
+  transition: all var(--transition-fast);
+  border-radius: 6px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.recent-item-wrapper:hover .delete-session-btn {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .delete-session-btn:hover {
-  color: var(--text-primary);
-  background: var(--bg-surface-hover);
+  color: var(--color-danger);
+  background: rgba(209, 36, 47, 0.08);
 }
 
 .account-menu {
@@ -725,7 +908,7 @@ onBeforeUnmount(() => {
   background: var(--bg-surface-hover);
 }
 
-.sidebar-spacer { flex: 1; }
+.sidebar-spacer { display: none; }
 
 .account-shell { position: relative; width: 100%; }
 
@@ -917,5 +1100,77 @@ onBeforeUnmount(() => {
   .content-body {
     padding: 0 16px 24px;
   }
+}
+
+/* Session context menu */
+.session-ctx-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 160px;
+  padding: 6px;
+  border-radius: 12px;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  text-align: left;
+}
+
+.ctx-item:hover {
+  background: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+
+.ctx-item.danger:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--color-danger, #ef4444);
+}
+
+/* Rename input */
+.rename-input {
+  width: 100%;
+  padding: 2px 6px;
+  border: 1px solid var(--color-primary);
+  border-radius: 4px;
+  background: var(--bg-input, var(--bg-app));
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+  outline: none;
+}
+
+.recent-item-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.recent-item-title strong {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pin-indicator {
+  font-size: 10px;
+  flex-shrink: 0;
 }
 </style>

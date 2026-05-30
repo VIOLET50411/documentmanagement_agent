@@ -55,13 +55,31 @@ async def self_correction(state: dict) -> dict:
         except Exception as exc:  # noqa: BLE001
             logger.warning("self_correction.llm_failed", error=str(exc))
 
+    # Rule-based fallback with stop-word filtering
+    _SELF_CORRECTION_STOP_WORDS = {
+        "的", "了", "在", "是", "有", "和", "与", "对", "为", "中",
+        "什么", "哪些", "怎么", "如何", "当前", "需要", "应该",
+        "管理", "制度", "办法", "规定", "相关", "情况", "问题",
+        "平台", "系统", "处理", "工作", "单位", "部门", "请",
+        "列出", "说明", "给出", "优先", "原因", "可以", "进行",
+    }
     text = " ".join(
         f"{item.get('document_title', '')} {item.get('section_title', '') or ''} {item.get('snippet', '')}"
         for item in docs[:3]
     )
-    query_terms = re.findall(r"[\u4e00-\u9fffA-Za-z0-9]{2,}", query)
+    query_terms = [
+        t for t in re.findall(r"[\u4e00-\u9fffA-Za-z0-9]{2,}", query)
+        if t not in _SELF_CORRECTION_STOP_WORDS
+    ]
+    if not query_terms:
+        # Query is entirely generic — can't assess relevance, let generator handle it
+        state["retrieval_sufficient"] = True
+        state["self_correction_reason"] = "generic_query_passthrough"
+        state["self_correction_source"] = "rule_fallback"
+        return state
     overlap = sum(1 for token in query_terms if token and token in text)
-    state["retrieval_sufficient"] = overlap > 0 or bool(docs)
+    min_overlap = max(1, len(query_terms) * 3 // 10)  # require >= 30% term overlap
+    state["retrieval_sufficient"] = overlap >= min_overlap
     state["self_correction_reason"] = "accepted" if state["retrieval_sufficient"] else "low_overlap"
     state["self_correction_source"] = "rule_fallback"
     return state

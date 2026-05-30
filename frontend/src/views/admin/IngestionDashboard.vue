@@ -115,7 +115,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch } from "vue"
+import { onActivated, onDeactivated, onMounted, onUnmounted, watch } from "vue"
 import EmptyState from "@/components/common/EmptyState.vue"
 import StatusMessage from "@/components/common/StatusMessage.vue"
 import { useAdminPipeline } from "./composables/useAdminPipeline"
@@ -137,25 +137,64 @@ const {
 } = useAdminPipeline()
 
 let timer: number
+let visibilityHandler: (() => void) | null = null
+let isActive = false
+
+function stopPolling() {
+  if (timer) {
+    window.clearInterval(timer)
+    timer = 0
+  }
+}
+
+function startPolling() {
+  stopPolling()
+  if (!isActive) return
+  if (typeof document !== "undefined" && document.visibilityState === "hidden") return
+  timer = window.setInterval(() => {
+    void loadPipelineStatus()
+    void loadPipelineJobs()
+  }, 10000)
+}
 
 onMounted(() => {
-  loadPipelineStatus()
-  loadPipelineJobs()
-  timer = window.setInterval(() => {
-    loadPipelineStatus()
-    loadPipelineJobs()
-  }, 10000)
+  visibilityHandler = () => {
+    if (!isActive) return
+    if (document.visibilityState === "visible") {
+      void loadPipelineStatus()
+      void loadPipelineJobs()
+      startPolling()
+      return
+    }
+    stopPolling()
+  }
+  document.addEventListener("visibilitychange", visibilityHandler)
+})
+
+onActivated(() => {
+  isActive = true
+  void loadPipelineStatus()
+  void loadPipelineJobs()
+  startPolling()
 })
 
 watch(
   () => state.pipelineFilterStatus,
   () => {
-    applyPipelineFilter()
+    void applyPipelineFilter()
   },
 )
 
+onDeactivated(() => {
+  isActive = false
+  stopPolling()
+})
+
 onUnmounted(() => {
-  if (timer) window.clearInterval(timer)
+  stopPolling()
+  if (visibilityHandler) {
+    document.removeEventListener("visibilitychange", visibilityHandler)
+  }
 })
 </script>
 

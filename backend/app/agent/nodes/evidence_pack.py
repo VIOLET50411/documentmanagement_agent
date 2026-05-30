@@ -1,4 +1,4 @@
-﻿"""Evidence organization helpers for document-grounded answering."""
+"""Evidence organization helpers for document-grounded answering."""
 
 from __future__ import annotations
 
@@ -106,6 +106,10 @@ def _looks_like_table(text: str) -> bool:
 
 def _normalize_text(text: str) -> str:
     normalized = re.sub(r"\s+", " ", str(text or "")).strip()
-    if len(normalized) > 260:
-        return normalized[:257].rstrip() + "..."
-    return normalized
+    if len(normalized) <= 400:
+        return normalized
+    sentence_ends = [m.end() for m in re.finditer(r'[。；！？\n]', normalized[:400])]
+    if sentence_ends:
+        return normalized[:sentence_ends[-1]]
+    return normalized[:397].rstrip() + "..."
+

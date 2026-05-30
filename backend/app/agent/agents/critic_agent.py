@@ -1,4 +1,4 @@
-﻿"""Critic agent: LLM-based answer review with deterministic fallback."""
+"""Critic agent: LLM-based answer review with deterministic fallback."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ class CriticAgent:
             state["critic_source"] = "rule_structure"
             state["critic_reason"] = structure_issue
             state["iteration"] = state.get("iteration", 0) + 1
-            state["answer"] = f"{answer}\n\n审查提示：{structure_issue}"
+            state["critic_notes"] = structure_issue
             return state
 
         llm = LLMService()
@@ -71,7 +71,7 @@ class CriticAgent:
                     state["critic_source"] = "llm"
                     if not decision["approved"]:
                         state["iteration"] = state.get("iteration", 0) + 1
-                        state["answer"] = f"{answer}\n\n审查提示：{decision.get('reason', '未通过审查')}"
+                        state["critic_notes"] = decision.get("reason", "")
                         logger.info("critic.llm_revision", reason=decision.get("reason", ""))
                     return state
             except Exception as exc:  # noqa: BLE001

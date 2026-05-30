@@ -1,4 +1,4 @@
-﻿"""Query rewriter with LLM rewrite and conversation fallback."""
+"""Query rewriter with LLM rewrite and conversation fallback."""
 
 from __future__ import annotations
 
@@ -328,7 +328,8 @@ def _merge_subject_and_query(subject: str, query: str) -> str:
         return clean_query
     if clean_subject in clean_query:
         return clean_query
-    return f"{clean_subject}；补充问题：{clean_query}"
+    # Produce a more natural merged query
+    return f"关于{clean_subject}，{clean_query}"
 
 
 def _rewrite_explicit_title_query(query: str, explicit_titles: list[str], *, task_mode: str) -> str:
@@ -367,13 +368,13 @@ def _rewrite_context_subject_query(query: str, context_subject: str, *, task_mod
 
     normalized = str(query or "").strip()
     if task_mode == "extract" or any(token in normalized for token in ("材料", "提交什么", "需要哪些", "需要什么", "证明", "附件")):
-        return f"《{title}》 材料 要求；补充问题：{normalized}"
+        return f"《{title}》的材料要求 {normalized}"
     if task_mode == "process" or any(token in normalized for token in ("流程", "步骤", "审批", "怎么办理", "怎么走")):
-        return f"《{title}》 流程 审批；补充问题：{normalized}"
+        return f"《{title}》的审批流程 {normalized}"
     if task_mode == "summary" or any(token in normalized for token in ("主要内容", "要点", "概括", "概述", "总结")):
-        return f"《{title}》 主要内容 要点；补充问题：{normalized}"
+        return f"《{title}》的主要内容和要点 {normalized}"
     if task_mode == "compare" or any(token in normalized for token in ("区别", "差异", "对比", "比较")):
-        return f"《{title}》 版本 差异；补充问题：{normalized}"
+        return f"《{title}》的版本差异 {normalized}"
     return ""
 
 

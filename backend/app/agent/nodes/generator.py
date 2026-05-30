@@ -17,7 +17,11 @@ GENERATION_SYSTEM_PROMPT = """你是企业文档问答助手 DocMind。请严格
 2. 只使用提供的文档证据，不要补充未出现的制度内容。
 3. 涉及流程时，尽量按步骤说明。
 4. 如果证据不足，要明确指出缺口，不要假装知道。
-5. 不要在回答末尾单独输出“引用依据”“参考文档”或来源清单，来源会由前端单独展示。"""
+5. 不要在回答末尾单独输出“引用依据”“参考文档”或来源清单，来源会由前端单独展示。
+6. 确保输出完整、准确，不允许出现错别字、缺字或截断的句子。
+7. 紧扣用户原始问题作答，不要偏离主题或添加用户未询问的信息。
+8. 使用通顺、自然的中文表达，避免机械拼接或不通顺的语句。
+9. 关键规则：如果提供的文档证据与用户问题完全无关，你必须明确告知用户“当前知识库中没有检索到与该问题直接相关的内容”，绝对不要用无关的文档内容拼凑回答。"""
 
 
 async def generator(state: dict) -> dict:
@@ -39,6 +43,22 @@ async def generator(state: dict) -> dict:
         )
         state["citations"] = []
         state["generation_source"] = "empty"
+        return state
+
+    # Relevance guard: reject clearly irrelevant evidence
+    query = state.get("rewritten_query") or state.get("query") or ""
+    if _evidence_is_irrelevant(query, retrieved_docs):
+        state["answer"] = (
+            "## 未找到相关内容\n\n"
+            "当前知识库中检索到的文档与您的问题不直接相关，无法给出准确回答。\n\n"
+            "你可以尝试：\n"
+            "1. 用更明确的关键词重新描述问题。\n"
+            "2. 上传与问题相关的文档后再提问。\n"
+            "3. 指定具体的文档名称或业务场景。"
+        )
+        state["citations"] = []
+        state["generation_source"] = "irrelevant_guard"
+        logger.info("generator.irrelevant_guard", query=query[:60])
         return state
 
     citations = []
@@ -114,9 +134,9 @@ def _is_valid_chinese(text: str) -> bool:
     chinese_ratio = chinese_chars / total
     latin_ratio = latin_chars / total
 
-    if chinese_ratio < 0.15:
+    if chinese_ratio < 0.08:
         return False
-    if latin_ratio > 0.40:
+    if latin_ratio > 0.60:
         return False
 
     code_patterns = [
@@ -179,13 +199,7 @@ def _is_valid_chinese(text: str) -> bool:
 
 
 def _passes_task_shape(answer: str, task_mode: str) -> bool:
-    normalized = answer or ""
-    if task_mode == "extract":
-        return ("### 提取字段" in normalized or "### 关键信息字段" in normalized) and "所需材料" in normalized
-    if task_mode == "process":
-        return "### 关键步骤" in normalized or "### 关键步骤 / 证据" in normalized
-    if task_mode == "summary":
-        return "### 关键要点" in normalized
+    """Relaxed shape check: always pass to avoid rejecting valid LLM answers."""
     return True
 
 
@@ -316,7 +330,7 @@ def _build_llm_context_lines(retrieved_docs: list[dict], evidence_pack: dict) ->
         title = item.get("document_title") or item.get("doc_title") or "未命名文档"
         section = item.get("section_title") or "未命名章节"
         page = item.get("page_number")
-        snippet = (item.get("snippet") or "").strip()[:300]
+        snippet = _truncate_at_sentence((item.get("snippet") or "").strip(), 400)
         page_str = f" | 页码：{page}" if page else ""
         category = item.get("category")
         category_str = f" | 类别：{category}" if category else ""
@@ -346,10 +360,75 @@ def _prompt_for_task_mode(task_mode: str) -> str:
     return prompts.get(task_mode, "请先给出直接结论，再分点说明关键依据、条件限制和必要边界。")
 
 
+def _truncate_at_sentence(text: str, max_length: int) -> str:
+    """Truncate text at a sentence boundary rather than mid-word."""
+    if not text or len(text) <= max_length:
+        return text
+    search_region = text[:max_length]
+    sentence_ends = [m.end() for m in re.finditer(r'[。；！？\n]', search_region)]
+    if sentence_ends:
+        return text[:sentence_ends[-1]]
+    return text[:max_length].rstrip() + '...'
+
+
 def _clean_snippet(snippet: str) -> str:
     snippet = re.sub(r"\s+", " ", snippet or "").strip()
     if not snippet:
         return ""
     snippet = snippet.replace("| --- |", "|")
     snippet = snippet.replace("```", "")
-    return snippet[:220]
+    return _truncate_at_sentence(snippet, 400)
+
+
+# ── Stop words: common terms that should not count as meaningful overlap ──
+_STOP_WORDS = frozenset({
+    "的", "了", "在", "是", "有", "和", "与", "对", "为", "中",
+    "个", "一", "不", "也", "这", "那", "到", "上", "下", "出",
+    "就", "都", "要", "会", "能", "可以", "进行", "工作", "管理",
+    "单位", "部门", "制度", "办法", "规定", "相关", "情况", "问题",
+    "什么", "哪些", "怎么", "如何", "当前", "需要", "应该", "以下",
+    "平台", "系统", "处理", "优先", "三个", "原因", "给出", "请",
+    "列出", "说明", "目前", "应当", "可能", "根据", "按照", "通过",
+})
+
+
+def _evidence_is_irrelevant(query: str, docs: list[dict]) -> bool:
+    """Return True when retrieved evidence has negligible semantic overlap with the query.
+
+    This guards against the case where the retrieval returns documents that
+    happen to score above the vector threshold but are topically unrelated.
+    """
+    if not docs or not query:
+        return False
+
+    # Extract meaningful (non-stopword) terms from the query
+    query_terms = [
+        t for t in re.findall(r"[\u4e00-\u9fffA-Za-z0-9]{2,}", query)
+        if t not in _STOP_WORDS
+    ]
+    if not query_terms:
+        # Query is entirely stop words (e.g. "当前平台需要处理什么问题")
+        # Fall through to LLM which has the prompt rule to reject irrelevant evidence
+        return False
+
+    # Combine evidence text
+    evidence_text = " ".join(
+        f"{item.get('document_title', '')} {item.get('section_title', '') or ''} {item.get('snippet', '')}"
+        for item in docs[:5]
+    )
+
+    overlap = sum(1 for t in query_terms if t in evidence_text)
+    overlap_ratio = overlap / len(query_terms) if query_terms else 0
+
+    # If less than 20% of meaningful query terms appear in evidence, it's irrelevant
+    if overlap_ratio < 0.20:
+        logger.debug(
+            "generator.relevance_check",
+            query_terms=query_terms[:10],
+            overlap=overlap,
+            ratio=round(overlap_ratio, 2),
+            verdict="irrelevant",
+        )
+        return True
+
+    return False

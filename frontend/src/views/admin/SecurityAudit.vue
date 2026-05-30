@@ -58,7 +58,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch } from "vue"
+import { onActivated, onDeactivated, onMounted, onUnmounted, watch } from "vue"
 import EmptyState from "@/components/common/EmptyState.vue"
 import StatusMessage from "@/components/common/StatusMessage.vue"
 import { useAdminSecurity } from "./composables/useAdminSecurity"
@@ -67,6 +67,7 @@ const { state, loadSecurityEvents, changeSecurityPage, formatDate, severityLabel
 
 let timer: number
 let visibilityHandler: (() => void) | null = null
+let isActive = false
 
 function stopPolling() {
   if (timer) {
@@ -77,16 +78,16 @@ function stopPolling() {
 
 function startPolling() {
   stopPolling()
+  if (!isActive) return
   if (typeof document !== "undefined" && document.visibilityState === "hidden") return
   timer = window.setInterval(() => {
-    loadSecurityEvents(false)
+    void loadSecurityEvents(false)
   }, 10000)
 }
 
 onMounted(() => {
-  loadSecurityEvents()
-  startPolling()
   visibilityHandler = () => {
+    if (!isActive) return
     if (document.visibilityState === "visible") {
       void loadSecurityEvents(false)
       startPolling()
@@ -97,13 +98,24 @@ onMounted(() => {
   document.addEventListener("visibilitychange", visibilityHandler)
 })
 
+onActivated(() => {
+  isActive = true
+  void loadSecurityEvents()
+  startPolling()
+})
+
 watch(
   () => state.securityFilters,
   () => {
-    loadSecurityEvents(true)
+    void loadSecurityEvents(true)
   },
   { deep: true },
 )
+
+onDeactivated(() => {
+  isActive = false
+  stopPolling()
+})
 
 onUnmounted(() => {
   stopPolling()

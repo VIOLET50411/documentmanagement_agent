@@ -42,8 +42,8 @@ class LLMService:
     or the provider is explicitly set to ``"rule"``.
     """
 
-    # Circuit-breaker: after a failure, skip remote calls for this duration.
-    _circuit_open_until: float = 0.0
+    # Circuit-breaker: per-model cooldown after a failure.
+    _circuit_open_until: dict[str, float] = {}
     _CIRCUIT_COOLDOWN_SECONDS: float = 15.0
 
     def __init__(self):
@@ -108,12 +108,14 @@ class LLMService:
         if self.is_rule_only:
             return None
 
-        # Circuit breaker
-        if time.monotonic() < self.__class__._circuit_open_until:
-            logger.debug("llm.circuit_open", provider=self.provider)
+        target = await self._resolve_runtime_target_async(system_prompt, user_prompt, tenant_key)
+
+        # Circuit breaker (per-model)
+        model_key = str(target.get("model", ""))
+        if time.monotonic() < self.__class__._circuit_open_until.get(model_key, 0):
+            logger.debug("llm.circuit_open", provider=self.provider, model=model_key)
             return None
 
-        target = await self._resolve_runtime_target_async(system_prompt, user_prompt, tenant_key)
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -139,7 +141,7 @@ class LLMService:
             return output
         except (httpx.HTTPError, OSError, RuntimeError, TypeError, ValueError) as exc:
             logger.warning("llm.generate_failed", error=str(exc), provider=target["provider"], model=target["model"], profile=target["profile"])
-            self.__class__._circuit_open_until = time.monotonic() + self._CIRCUIT_COOLDOWN_SECONDS
+            self.__class__._circuit_open_until[str(target["model"])] = time.monotonic() + self._CIRCUIT_COOLDOWN_SECONDS
             span.fail(error=str(exc), metadata={"status": "error", "profile": target["profile"]})
             self.langfuse.flush()
             return None
@@ -206,7 +208,7 @@ class LLMService:
             self.langfuse.flush()
         except (httpx.HTTPError, OSError, RuntimeError, TypeError, ValueError) as exc:
             logger.warning("llm.stream_failed", error=str(exc))
-            self.__class__._circuit_open_until = time.monotonic() + self._CIRCUIT_COOLDOWN_SECONDS
+            self.__class__._circuit_open_until[str(target.get("model", ""))] = time.monotonic() + self._CIRCUIT_COOLDOWN_SECONDS
             span.fail(error=str(exc), metadata={"status": "error", "profile": target["profile"]})
             self.langfuse.flush()
 

@@ -112,11 +112,24 @@ tmp_*.json
 tmp_*.txt
 tmp_*.csv
 
+# ---------- Scripts runtime logs ----------
+scripts/*.txt
+scripts/*.log
+
 # ---------- Snapshots / exports ----------
 openapi_snapshot.json
 *.out
 *.bak
 *.tmp
+
+# ---------- Miniapp local private config ----------
+docmind-miniapp/project.private.config.json
+
+# ---------- Android build artifacts ----------
+frontend/android/.gradle/
+frontend/android/app/build/
+frontend/android/build/
+frontend/android/capacitor-cordova-android-plugins/build/
 
 # ---------- Misc local generated ----------
 backend/68.0.0

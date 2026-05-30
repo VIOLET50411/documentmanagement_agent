@@ -300,7 +300,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch } from "vue"
+import { onActivated, onDeactivated, onMounted, onUnmounted, watch } from "vue"
 import { useRouter } from "vue-router"
 import EmptyState from "@/components/common/EmptyState.vue"
 import StatusMessage from "@/components/common/StatusMessage.vue"
@@ -329,17 +329,20 @@ const {
 let timer: number
 let stopToolFilterWatch: (() => void) | null = null
 let visibilityHandler: (() => void) | null = null
+let isActive = false
 
 function jumpToInspect() {
   router.push({ query: { tab: "inspect" } })
 }
 
-function reloadMonitor() {
-  loadBackends()
-  void loadRetrievalIntegrity()
-  void loadPublicCorpusLatest()
-  runtimeStore.loadToolDecisionSummary()
-  runtimeStore.loadCheckpointSummary()
+async function reloadMonitor() {
+  await Promise.all([
+    loadBackends(),
+    loadRetrievalIntegrity(),
+    loadPublicCorpusLatest(),
+    runtimeStore.loadToolDecisionSummary(),
+    runtimeStore.loadCheckpointSummary(),
+  ])
 }
 
 function stopPolling() {
@@ -351,42 +354,45 @@ function stopPolling() {
 
 function startPolling() {
   stopPolling()
+  if (!isActive) return
   if (typeof document !== "undefined" && document.visibilityState === "hidden") return
   timer = window.setInterval(() => {
-    loadBackends()
-    runtimeStore.loadToolDecisionSummary()
-    runtimeStore.loadCheckpointSummary()
+    void loadBackends()
+    void runtimeStore.loadToolDecisionSummary()
+    void runtimeStore.loadCheckpointSummary()
   }, 30000)
 }
 
-onMounted(async () => {
-  reloadMonitor()
-
-  if (!runtimeStore.toolDecisionSummary) {
-    await runtimeStore.loadToolDecisionSummary()
-  }
-  if (!runtimeStore.checkpointSummary.length) {
-    await runtimeStore.loadCheckpointSummary()
-  }
-
+onMounted(() => {
   stopToolFilterWatch = watch(
     () => ({ ...runtimeStore.toolFilters }),
     () => {
-      runtimeStore.loadToolDecisionSummary()
+      void runtimeStore.loadToolDecisionSummary({ force: true })
     },
     { deep: true },
   )
 
-  startPolling()
   visibilityHandler = () => {
+    if (!isActive) return
     if (document.visibilityState === "visible") {
-      reloadMonitor()
+      void reloadMonitor()
       startPolling()
       return
     }
     stopPolling()
   }
   document.addEventListener("visibilitychange", visibilityHandler)
+})
+
+onActivated(() => {
+  isActive = true
+  void reloadMonitor()
+  startPolling()
+})
+
+onDeactivated(() => {
+  isActive = false
+  stopPolling()
 })
 
 onUnmounted(() => {

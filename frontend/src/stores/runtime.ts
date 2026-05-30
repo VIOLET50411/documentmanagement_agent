@@ -6,6 +6,8 @@ import { getApiErrorMessage } from "@/utils/adminUi"
 type GenericRecord = Record<string, any>
 
 export const useRuntimeStore = defineStore("runtime", () => {
+  const TOOL_SUMMARY_MAX_AGE_MS = 10_000
+  const CHECKPOINT_SUMMARY_MAX_AGE_MS = 10_000
   const loadingToolSummary = ref(false)
   const loadingCheckpointSummary = ref(false)
   const loadingReplay = ref(false)
@@ -14,6 +16,8 @@ export const useRuntimeStore = defineStore("runtime", () => {
   const checkpointSummary = ref<GenericRecord[]>([])
   const replayTraceId = ref("")
   const replayEvents = ref<GenericRecord[]>([])
+  const lastToolSummaryLoadedAt = ref(0)
+  const lastCheckpointSummaryLoadedAt = ref(0)
   const toolFilters = ref({
     since_hours: 24,
     decision: "",
@@ -25,34 +29,98 @@ export const useRuntimeStore = defineStore("runtime", () => {
   const toolMatrixRows = computed(() => toolDecisionSummary.value?.matrix_by_tool || [])
   const reasonMatrixRows = computed(() => toolDecisionSummary.value?.matrix_by_reason || [])
   const trendRows = computed(() => toolDecisionSummary.value?.trend_by_hour || [])
+  let toolSummaryRequest: Promise<GenericRecord | null> | null = null
+  let checkpointSummaryRequest: Promise<GenericRecord[]> | null = null
+  let toolSummaryRequestKey = ""
+  let checkpointSummaryRequestKey = ""
+  let toolSummaryLoadedKey = ""
+  let checkpointSummaryLoadedKey = ""
 
-  async function loadToolDecisionSummary() {
-    if (loadingToolSummary.value) return
+  async function loadToolDecisionSummary(options: { force?: boolean; maxAgeMs?: number } = {}) {
+    const requestKey = JSON.stringify(toolFilters.value)
+    const maxAgeMs = Math.max(Number(options.maxAgeMs ?? TOOL_SUMMARY_MAX_AGE_MS), 0)
+    if (
+      !options.force &&
+      toolDecisionSummary.value &&
+      toolSummaryLoadedKey === requestKey &&
+      Date.now() - lastToolSummaryLoadedAt.value <= maxAgeMs
+    ) {
+      return toolDecisionSummary.value
+    }
+    if (toolSummaryRequest && toolSummaryRequestKey === requestKey) {
+      return toolSummaryRequest
+    }
 
     loadingToolSummary.value = true
     error.value = ""
-    try {
-      toolDecisionSummary.value = await adminApi.getRuntimeToolDecisionSummary(toolFilters.value)
-    } catch (caught: any) {
-      error.value = getApiErrorMessage(caught, "运行过程的工具使用情况暂时没加载出来，请稍后再试。")
-    } finally {
-      loadingToolSummary.value = false
-    }
+    toolSummaryRequestKey = requestKey
+    const request = (async () => {
+      try {
+        const payload = await adminApi.getRuntimeToolDecisionSummary(toolFilters.value)
+        if (toolSummaryRequestKey === requestKey) {
+          toolDecisionSummary.value = payload || null
+          lastToolSummaryLoadedAt.value = Date.now()
+          toolSummaryLoadedKey = requestKey
+        }
+      } catch (caught: any) {
+        if (toolSummaryRequestKey === requestKey) {
+          error.value = getApiErrorMessage(caught, "运行过程的工具使用情况暂时没加载出来，请稍后再试。")
+        }
+      } finally {
+        if (toolSummaryRequest === request) {
+          loadingToolSummary.value = false
+          toolSummaryRequest = null
+          toolSummaryRequestKey = ""
+        }
+      }
+      return toolDecisionSummary.value
+    })()
+    toolSummaryRequest = request
+    return request
   }
 
-  async function loadCheckpointSummary(limit = 50) {
-    if (loadingCheckpointSummary.value) return
+  async function loadCheckpointSummary(limit = 50, options: { force?: boolean; maxAgeMs?: number } = {}) {
+    const normalizedLimit = Math.max(limit, 1)
+    const requestKey = String(normalizedLimit)
+    const maxAgeMs = Math.max(Number(options.maxAgeMs ?? CHECKPOINT_SUMMARY_MAX_AGE_MS), 0)
+    if (
+      !options.force &&
+      checkpointSummary.value.length &&
+      checkpointSummaryLoadedKey === requestKey &&
+      Date.now() - lastCheckpointSummaryLoadedAt.value <= maxAgeMs
+    ) {
+      return checkpointSummary.value
+    }
+    if (checkpointSummaryRequest && checkpointSummaryRequestKey === requestKey) {
+      return checkpointSummaryRequest
+    }
 
     loadingCheckpointSummary.value = true
     error.value = ""
-    try {
-      const response = await adminApi.getRuntimeCheckpointSummary(limit)
-      checkpointSummary.value = response?.items || []
-    } catch (caught: any) {
-      error.value = getApiErrorMessage(caught, "恢复点信息暂时没加载出来，请稍后再试。")
-    } finally {
-      loadingCheckpointSummary.value = false
-    }
+    checkpointSummaryRequestKey = requestKey
+    const request = (async () => {
+      try {
+        const response = await adminApi.getRuntimeCheckpointSummary(normalizedLimit)
+        if (checkpointSummaryRequestKey === requestKey) {
+          checkpointSummary.value = response?.items || []
+          lastCheckpointSummaryLoadedAt.value = Date.now()
+          checkpointSummaryLoadedKey = requestKey
+        }
+      } catch (caught: any) {
+        if (checkpointSummaryRequestKey === requestKey) {
+          error.value = getApiErrorMessage(caught, "恢复点信息暂时没加载出来，请稍后再试。")
+        }
+      } finally {
+        if (checkpointSummaryRequest === request) {
+          loadingCheckpointSummary.value = false
+          checkpointSummaryRequest = null
+          checkpointSummaryRequestKey = ""
+        }
+      }
+      return checkpointSummary.value
+    })()
+    checkpointSummaryRequest = request
+    return request
   }
 
   async function loadReplay(traceId?: string) {
