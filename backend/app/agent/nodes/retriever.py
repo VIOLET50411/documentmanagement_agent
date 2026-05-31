@@ -1,4 +1,4 @@
-﻿"""Retriever node fallback implementation."""
+"""Retriever node fallback implementation."""
 
 from __future__ import annotations
 
@@ -9,11 +9,11 @@ from app.agent.nodes.evidence_pack import build_evidence_pack
 _searcher = None
 
 DEFAULT_PLAN_BY_INTENT = {
-    "qa": {"top_k": 6, "search_type": "hybrid", "max_per_doc": 2},
-    "compare": {"top_k": 10, "search_type": "hybrid", "max_per_doc": 2, "require_multi_doc": True},
-    "summarize": {"top_k": 10, "search_type": "hybrid", "max_per_doc": 4, "prefer_summary_details": True},
-    "graph_query": {"top_k": 6, "search_type": "graph", "max_per_doc": 3},
-    "statistics": {"top_k": 6, "search_type": "keyword", "max_per_doc": 2},
+    "qa": {"top_k": 10, "search_type": "hybrid", "max_per_doc": 3},
+    "compare": {"top_k": 12, "search_type": "hybrid", "max_per_doc": 3, "require_multi_doc": True},
+    "summarize": {"top_k": 12, "search_type": "hybrid", "max_per_doc": 5, "prefer_summary_details": True},
+    "graph_query": {"top_k": 8, "search_type": "graph", "max_per_doc": 3},
+    "statistics": {"top_k": 8, "search_type": "keyword", "max_per_doc": 3},
 }
 
 
