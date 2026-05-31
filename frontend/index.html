@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
@@ -29,6 +29,14 @@
 
     #boot-status[data-state="ready"] {
       display: none;
+    }
+
+    #boot-status[data-state="error"] {
+      animation: boot-fade-out 0.5s ease 2s forwards;
+    }
+
+    @keyframes boot-fade-out {
+      to { opacity: 0; pointer-events: none; }
     }
 
     .boot-card {
@@ -65,5 +73,14 @@
   </div>
   <div id="app"></div>
   <script type="module" src="/src/main.ts"></script>
+  <script>
+    // 保底：8 秒后无论如何都隐藏启动遮罩
+    setTimeout(function() {
+      var el = document.getElementById('boot-status');
+      if (el && el.getAttribute('data-state') !== 'ready') {
+        el.setAttribute('data-state', 'ready');
+      }
+    }, 8000);
+  </script>
 </body>
 </html>
