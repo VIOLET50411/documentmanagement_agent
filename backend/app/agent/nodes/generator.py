@@ -59,8 +59,9 @@ async def generator(state: dict) -> dict:
         return state
 
     # Relevance guard: reject clearly irrelevant evidence
+    # 如果已经重试过（degraded），跳过此检查，确保用户能收到回答
     query = state.get("rewritten_query") or state.get("query") or ""
-    if _evidence_is_irrelevant(query, retrieved_docs):
+    if not state.get("degraded") and _evidence_is_irrelevant(query, retrieved_docs):
         state["answer"] = (
             "## 未找到相关内容\n\n"
             "当前知识库中检索到的文档与您的问题不直接相关，无法给出准确回答。\n\n"
@@ -448,8 +449,8 @@ def _evidence_is_irrelevant(query: str, docs: list[dict]) -> bool:
     overlap = sum(1 for t in query_terms if t in evidence_text)
     overlap_ratio = overlap / len(query_terms) if query_terms else 0
 
-    # If less than 20% of meaningful query terms appear in evidence, it's irrelevant
-    if overlap_ratio < 0.20:
+    # If less than 10% of meaningful query terms appear in evidence, it's irrelevant
+    if overlap_ratio < 0.10:
         logger.debug(
             "generator.relevance_check",
             query_terms=query_terms[:10],

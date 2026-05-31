@@ -20,6 +20,14 @@ class CriticAgent:
         answer = (state.get("answer") or "").strip()
         citations = state.get("citations") or []
 
+        # 如果 generator 已经给出了「未找到」的模板回答，直接放行
+        # 不再做 LLM 审查和重试，避免无意义循环
+        generation_source = state.get("generation_source") or ""
+        if generation_source in ("irrelevant_guard", "empty"):
+            state["critic_approved"] = True
+            state["critic_source"] = "passthrough"
+            return state
+
         if not answer:
             state["critic_approved"] = False
             state["iteration"] = state.get("iteration", 0) + 1

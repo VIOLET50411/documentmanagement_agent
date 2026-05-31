@@ -87,14 +87,8 @@ async def self_correction(state: dict) -> dict:
                         "missing_info_type": missing_type,
                         "hint": decision.get("suggestion", ""),
                     }
-                    # 如果有建议的补充查询，更新 rewritten_query
-                    if retry_query and len(retry_query.strip()) > 5:
-                        state["rewritten_query"] = retry_query.strip()
-                        logger.info(
-                            "self_correction.retry_query_updated",
-                            original=query[:60],
-                            retry=retry_query[:60],
-                        )
+                    # 注意：不自动覆盖 rewritten_query，避免 LLM 生成的
+                    # retry_query 质量不可控导致后续检索偏离用户意图
 
                 return state
         except Exception as exc:  # noqa: BLE001
