@@ -411,14 +411,23 @@ def _clean_snippet(snippet: str) -> str:
 
 # ── Stop words: common terms that should not count as meaningful overlap ──
 _STOP_WORDS = frozenset({
+    # 虚词/助词
     "的", "了", "在", "是", "有", "和", "与", "对", "为", "中",
     "个", "一", "不", "也", "这", "那", "到", "上", "下", "出",
-    "就", "都", "要", "会", "能", "可以", "进行", "工作", "管理",
-    "单位", "部门", "制度", "办法", "规定", "相关", "情况", "问题",
-    "什么", "哪些", "怎么", "如何", "当前", "需要", "应该", "以下",
-    "平台", "系统", "处理", "优先", "三个", "原因", "给出", "请",
-    "列出", "说明", "目前", "应当", "可能", "根据", "按照", "通过",
+    "就", "都", "要", "会", "能", "可以", "进行", "以下", "其中",
+    # 泛指名词
+    "工作", "管理", "单位", "部门", "制度", "办法", "规定", "相关",
+    "情况", "问题", "平台", "系统", "内容", "方面", "一份", "文档",
+    # 动作词（泛化的，不指具体业务）
+    "处理", "优先", "三个", "原因", "给出", "请", "列出", "说明",
+    "目前", "应当", "可能", "根据", "按照", "通过", "包含", "包括",
+    "起草", "撰写", "生成", "写一", "草拟", "拟定", "编写",
+    # 疑问词
+    "什么", "哪些", "怎么", "如何", "当前", "需要", "应该",
 })
+
+# ── 生成式任务关键词：这些任务不应被 irrelevant_guard 拦截 ──
+_GENERATIVE_KEYWORDS = {"起草", "撰写", "生成", "写一", "草拟", "拟定", "编写", "编制", "制定", "拟写"}
 
 
 def _evidence_is_irrelevant(query: str, docs: list[dict]) -> bool:
@@ -430,20 +439,23 @@ def _evidence_is_irrelevant(query: str, docs: list[dict]) -> bool:
     if not docs or not query:
         return False
 
+    # 生成式任务（起草/撰写/编写等）不拦截，让 LLM 自由生成
+    if any(kw in query for kw in _GENERATIVE_KEYWORDS):
+        return False
+
     # Extract meaningful (non-stopword) terms from the query
     query_terms = [
         t for t in re.findall(r"[\u4e00-\u9fffA-Za-z0-9]{2,}", query)
         if t not in _STOP_WORDS
     ]
     if not query_terms:
-        # Query is entirely stop words (e.g. "当前平台需要处理什么问题")
-        # Fall through to LLM which has the prompt rule to reject irrelevant evidence
+        # Query is entirely stop words — let LLM handle it
         return False
 
     # Combine evidence text
     evidence_text = " ".join(
         f"{item.get('document_title', '')} {item.get('section_title', '') or ''} {item.get('snippet', '')}"
-        for item in docs[:5]
+        for item in docs[:8]
     )
 
     overlap = sum(1 for t in query_terms if t in evidence_text)
@@ -451,7 +463,7 @@ def _evidence_is_irrelevant(query: str, docs: list[dict]) -> bool:
 
     # If less than 10% of meaningful query terms appear in evidence, it's irrelevant
     if overlap_ratio < 0.10:
-        logger.debug(
+        logger.info(
             "generator.relevance_check",
             query_terms=query_terms[:10],
             overlap=overlap,
@@ -461,3 +473,4 @@ def _evidence_is_irrelevant(query: str, docs: list[dict]) -> bool:
         return True
 
     return False
+
