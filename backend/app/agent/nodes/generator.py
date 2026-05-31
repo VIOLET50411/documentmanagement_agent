@@ -11,30 +11,19 @@ from app.services.llm_service import LLMService
 
 logger = structlog.get_logger("docmind.generator")
 
-GENERATION_SYSTEM_PROMPT = """你是企业文档问答助手 DocMind，同时也是一位资深企业管理顾问和文档分析专家。
-请严格基于给定的文档证据，用简体中文输出专业、详尽、结构化的回答。
+GENERATION_SYSTEM_PROMPT = """你是企业文档问答助手 DocMind。请严格基于给定的文档证据，用简体中文输出专业、结构化的回答。
 
-## 核心原则
-1. **结论先行**：开篇直接回答用户的核心问题，不要铺垫。
-2. **论据充分**：每个关键论点必须有具体文档条款或原文片段支撑。
-3. **分析深入**：不仅说明"是什么"，还要分析"为什么"和"怎么做"。
-4. **实务导向**：结合实际工作场景给出可操作的建议和注意事项。
-5. **严格忠实**：只使用检索到的文档作为信息来源，绝不编造或臆测。
+核心原则：
+1. 结论先行，开篇直接回答问题
+2. 论据充分，引用具体文档条款支撑
+3. 分析深入，说明"是什么""为什么""怎么做"
+4. 严格忠实，不编造未在证据中出现的信息
 
-## 写作规范
-- 使用**简体中文**，语言风格正式、严谨但不晦涩，体现专业深度。
-- 使用 Markdown 格式组织内容：标题（##/###）、加粗（**）、编号列表、表格。
-- 回答篇幅应当**充实完整**，通常不少于 300 字，充分展开论述。
-- 关键术语、制度名称使用**加粗**或《》标注。
-- 涉及流程时，使用**编号步骤**逐步说明。
-- 涉及对比时，使用**表格**展示差异。
-
-## 质量底线
-- 不要在回答末尾输出"参考文档"或引用来源列表（前端会自动展示）。
-- 确保输出完整，不允许出现截断、错别字或逻辑跳跃。
-- 如果提供的文档证据与用户问题完全无关，必须明确告知，绝不拼凑。
-- 如果证据不足以完整回答，要明确指出缺口并建议补充材料。
-- 紧扣用户原始问题作答，不要偏离主题或添加未询问的信息。"""
+格式要求：
+- 使用 Markdown（标题、加粗、列表、表格）
+- 回答充实完整，不少于 200 字
+- 不要在末尾输出"参考文档"（前端自动展示）
+- 如果证据不足，明确指出缺口"""
 
 
 async def generator(state: dict) -> dict:
@@ -94,46 +83,48 @@ async def generator(state: dict) -> dict:
     llm = LLMService()
     if not llm.is_rule_only:
         try:
-            context_lines = _build_llm_context_lines(retrieved_docs, evidence_pack)
             query = state.get("rewritten_query") or state.get("query") or ""
-            conversation_state = state.get("conversation_state") if isinstance(state.get("conversation_state"), dict) else {}
             # 获取任务模式对应的回答风格指导
             answer_style = ANSWER_STYLES.get(task_mode, ANSWER_STYLES.get("qa", ""))
 
-            # 构建重试提示（如果有来自 critic 的改进方向）
+            # 构建精简的证据上下文（限制总长度，适配小模型）
+            context_lines = _build_llm_context_lines(retrieved_docs, evidence_pack)
+            context_text = "\n".join(context_lines)
+            # 限制证据总长度不超过 2000 字符
+            if len(context_text) > 2000:
+                context_text = context_text[:2000] + "\n...（证据已截断）"
+
+            # 构建重试提示
             retry_hint = state.get("critic_improvement_hint") or ""
-            retry_section = ""
-            if retry_hint:
-                retry_section = (
-                    f"\n## 改进要求（上一次回答被审查退回）\n"
-                    f"{retry_hint}\n"
-                    f"请针对以上问题重点改进。\n"
-                )
+            retry_section = f"\n【改进要求】{retry_hint}\n" if retry_hint else ""
 
             user_prompt = (
-                f"## 用户问题\n{query}\n\n"
-                f"## 任务模式\n{_describe_task_mode(task_mode)}\n\n"
-                f"## 回答风格要求\n{answer_style}\n\n"
-                "## 对话上下文\n"
-                f"主题：{conversation_state.get('subject') or '未识别'}\n"
-                f"追问：{'是' if conversation_state.get('is_follow_up') else '否'}\n"
-                f"版本：{conversation_state.get('version_scope') or '未指定'}\n\n"
-                f"## 文档证据\n{chr(10).join(context_lines)}\n\n"
-                f"## 输出要求\n{_prompt_for_task_mode(task_mode)}\n"
+                f"问题：{query}\n\n"
+                f"回答要求：{answer_style}\n\n"
+                f"文档证据：\n{context_text}\n\n"
+                f"请基于以上证据回答问题。{_prompt_for_task_mode(task_mode)}\n"
                 f"{retry_section}"
             )
+
+            # 动态计算 max_tokens：小模型用较小值
+            prompt_char_count = len(GENERATION_SYSTEM_PROMPT) + len(user_prompt)
+            # 粗略估算：中文每字约 1.5 token
+            estimated_prompt_tokens = int(prompt_char_count * 1.5)
+            # 为回答预留空间，但不超过 2048
+            max_tokens = min(2048, max(512, 4096 - estimated_prompt_tokens))
+
             answer = await llm.generate(
                 system_prompt=GENERATION_SYSTEM_PROMPT,
                 user_prompt=user_prompt,
-                temperature=0.2,
-                max_tokens=4096,
+                temperature=0.3,
+                max_tokens=max_tokens,
             )
             if answer and len(answer.strip()) > 10 and _is_valid_chinese(answer) and _passes_task_shape(answer, task_mode):
                 state["answer"] = answer.strip()
                 state["generation_source"] = "llm"
-                logger.info("generator.llm_ok", chars=len(state["answer"]))
+                logger.info("generator.llm_ok", chars=len(state["answer"]), max_tokens=max_tokens)
                 return state
-            logger.warning("generator.llm_low_quality", answer_len=len(answer or ""))
+            logger.warning("generator.llm_low_quality", answer_len=len(answer or ""), max_tokens=max_tokens)
         except Exception as exc:  # noqa: BLE001
             logger.warning("generator.llm_failed", error=str(exc))
 
@@ -354,16 +345,13 @@ def _extract_structured_fields(evidence_blocks: list[str]) -> list[str]:
 def _build_llm_context_lines(retrieved_docs: list[dict], evidence_pack: dict) -> list[str]:
     lines = []
     salient_points = evidence_pack.get("salient_points") if isinstance(evidence_pack.get("salient_points"), list) else []
-    source_items = salient_points[:10] if salient_points else retrieved_docs[:8]
+    source_items = salient_points[:5] if salient_points else retrieved_docs[:5]
     for idx, item in enumerate(source_items, start=1):
         title = item.get("document_title") or item.get("doc_title") or "未命名文档"
-        section = item.get("section_title") or "未命名章节"
-        page = item.get("page_number")
-        snippet = _truncate_at_sentence((item.get("snippet") or "").strip(), 400)
-        page_str = f" | 页码：{page}" if page else ""
-        category = item.get("category")
-        category_str = f" | 类别：{category}" if category else ""
-        lines.append(f"[证据{idx}] 《{title}》 {section}{page_str}{category_str}\n{snippet}")
+        section = item.get("section_title") or ""
+        snippet = _truncate_at_sentence((item.get("snippet") or "").strip(), 200)
+        section_str = f" {section}" if section else ""
+        lines.append(f"[{idx}] 《{title}》{section_str}\n{snippet}")
     return lines
 
 
