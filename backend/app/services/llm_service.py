@@ -144,6 +144,23 @@ class LLMService:
             self.__class__._circuit_open_until[str(target["model"])] = time.monotonic() + self._CIRCUIT_COOLDOWN_SECONDS
             span.fail(error=str(exc), metadata={"status": "error", "profile": target["profile"]})
             self.langfuse.flush()
+
+            # 回退：如果用户选的大模型失败，自动降级到默认小模型重试
+            fallback_model = settings.llm_model_name or "qwen2.5:1.5b"
+            if target["model"] != fallback_model and target["profile"] == "user_selected_model":
+                logger.info("llm.fallback_to_default", failed_model=target["model"], fallback_model=fallback_model)
+                fallback_target = {
+                    "provider": self.provider,
+                    "base_url": self.base_url,
+                    "model": fallback_model,
+                    "api_key": self.api_key,
+                    "profile": "fallback_from_user_selected",
+                }
+                try:
+                    return await self._call_chat_completions(messages, temperature=temperature, max_tokens=max_tokens, target=fallback_target)
+                except (httpx.HTTPError, OSError, RuntimeError, TypeError, ValueError) as fallback_exc:
+                    logger.warning("llm.fallback_also_failed", error=str(fallback_exc), model=fallback_model)
+
             return None
 
     async def generate_stream(
