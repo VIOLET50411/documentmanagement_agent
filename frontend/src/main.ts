@@ -1,4 +1,4 @@
-﻿import { createApp } from "vue"
+import { createApp } from "vue"
 import { createPinia } from "pinia"
 import router from "./router"
 import App from "./App.vue"
@@ -60,7 +60,8 @@ async function bootstrap() {
     })
     .catch((error) => {
       console.error("[DocMind] delayed hydrate failed", error)
-      setBootMessage("已进入应用，登录状态恢复失败。", "error")
+      // 即使登录恢复失败，也要隐藏遮罩层，让用户看到登录页
+      setBootMessage("启动完成", "ready")
     })
 }
 
