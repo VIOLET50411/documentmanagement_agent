@@ -386,6 +386,23 @@ def _build_conversation_state(state: dict, *, subject: str, previous_state: dict
     previous_titles = previous_state.get("explicit_titles") if isinstance(previous_state.get("explicit_titles"), list) else []
     current_subject = explicit_titles[-1] if explicit_titles else subject or previous_state.get("subject") or ""
     version_scope = _extract_version_scope(query) or previous_state.get("version_scope") or ""
+
+    # 从上一轮检索结果中提取 doc_id 和文档标题
+    retrieved_docs = state.get("retrieved_docs") if isinstance(state.get("retrieved_docs"), list) else []
+    last_retrieved_doc_ids = []
+    active_document_titles = []
+    seen_ids: set[str] = set()
+    seen_titles: set[str] = set()
+    for doc in retrieved_docs:
+        doc_id = str(doc.get("doc_id") or "").strip()
+        if doc_id and doc_id not in seen_ids:
+            seen_ids.add(doc_id)
+            last_retrieved_doc_ids.append(doc_id)
+        doc_title = str(doc.get("document_title") or "").strip()
+        if doc_title and doc_title not in seen_titles:
+            seen_titles.add(doc_title)
+            active_document_titles.append(doc_title)
+
     return {
         "subject": current_subject,
         "task_mode": task_mode,
@@ -393,7 +410,10 @@ def _build_conversation_state(state: dict, *, subject: str, previous_state: dict
         "version_scope": version_scope,
         "last_user_query": query,
         "explicit_titles": explicit_titles or previous_titles,
+        "last_retrieved_doc_ids": last_retrieved_doc_ids,
+        "active_document_titles": active_document_titles,
     }
+
 
 
 def _extract_version_scope(text: str) -> str:

@@ -1,4 +1,4 @@
-﻿"""Summary agent with grounded, evidence-first fallback behavior."""
+"""Summary agent with grounded, evidence-first fallback behavior."""
 
 from __future__ import annotations
 
@@ -41,27 +41,41 @@ class SummaryAgent:
 
     async def _try_llm_summary(self, docs: list[dict], tenant_key: str) -> str | None:
         context = []
-        for idx, item in enumerate(docs[:8], start=1):
+        for idx, item in enumerate(docs[:10], start=1):
             section = self._clean_section_title(item.get("section_title") or "未命名章节")
             snippet = self._clean_summary_snippet(item.get("snippet", ""), section_title=section)
             context.append(
                 f"[{idx}] {item.get('document_title') or '未知文档'} / {section} / 第 {item.get('page_number')} 页\n"
-                f"{snippet[:450]}"
+                f"{snippet[:600]}"
             )
 
         prompt = (
-            "请根据以下文档片段输出结构化摘要。\n\n"
+            "请根据以下文档片段，输出一份专业、充实的结构化摘要。\n\n"
             + "\n\n".join(context)
-            + "\n\n输出格式：\n"
-            "- 一句话总结\n"
-            "- 三条关键要点\n"
-            "- 两条执行建议"
+            + "\n\n## 输出要求\n"
+            "请按以下结构组织摘要，每个部分都要充分展开：\n\n"
+            "### 文档概述\n"
+            "用 2-3 句话概括文档的核心内容、适用对象和制定目的。\n\n"
+            "### 关键要点\n"
+            "列出 3-5 个最重要的要点，每个要点附 1-2 句说明，包含具体的条款、数据或流程。\n\n"
+            "### 适用范围与限制\n"
+            "说明文档的适用对象、时间范围和例外情况。\n\n"
+            "### 实务建议\n"
+            "给出 2-3 条可操作的建议，帮助读者快速理解和应用文档内容。\n\n"
+            "### 建议追问\n"
+            "列出 2-3 个值得进一步了解的相关问题。\n"
         )
         return await LLMService().generate(
-            system_prompt="你是企业知识管理助手。请输出清晰、可执行、严格基于证据的中文摘要。",
+            system_prompt=(
+                "你是一位资深企业管理顾问和知识管理专家。\n"
+                "请基于提供的文档证据，输出专业、详尽、结构化的中文摘要。\n"
+                "语言风格正式严谨，内容充实完整，通常不少于 400 字。\n"
+                "使用 Markdown 格式组织内容，关键术语用加粗标注。\n"
+                "严格基于文档证据，不编造信息。"
+            ),
             user_prompt=prompt,
-            temperature=0.15,
-            max_tokens=600,
+            temperature=0.2,
+            max_tokens=4096,
             tenant_key=tenant_key,
         )
 
@@ -395,11 +409,13 @@ class SummaryAgent:
         return normalized
 
     def _should_use_llm_summary(self, docs: list[dict]) -> bool:
-        if any("常见问题" in str(item.get("document_title") or "") for item in docs[:3]):
+        """判断是否使用 LLM 生成摘要。升级后默认优先使用 LLM。"""
+        if not docs:
             return False
-        joined = "\n".join(str(item.get("snippet") or "") for item in docs[:3])
-        heuristic_markers = ("万元", "情况说明", "项目绩效", "审批", "流程", "依据", "制度")
-        return not any(marker in joined for marker in heuristic_markers)
+        # 只有纯 FAQ 类文档跳过 LLM（规则摘要效果更好）
+        if all("常见问题" in str(item.get("document_title") or "") for item in docs[:3]):
+            return False
+        return True
 
     def _is_grounded_summary(self, answer: str) -> bool:
         text = " ".join((answer or "").split()).strip()

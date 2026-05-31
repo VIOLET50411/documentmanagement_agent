@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from importlib import import_module
@@ -12,11 +12,14 @@ from app.agent.agents.critic_agent import CriticAgent
 from app.agent.agents.data_agent import DataAgent
 from app.agent.agents.graph_agent import GraphAgent
 from app.agent.agents.summary_agent import SummaryAgent
+from app.agent.nodes.coreference_resolver import coreference_resolver
 from app.agent.nodes.generator import generator
 from app.agent.nodes.intent_router import intent_router
+from app.agent.nodes.query_planner import query_planner
 from app.agent.nodes.query_rewriter import query_rewriter
 from app.agent.nodes.retriever import retriever
 from app.agent.nodes.self_correction import self_correction
+from app.agent.nodes.synthesizer import synthesizer
 from app.agent.runtime.langgraph_compat import native_checkpoint_support_status
 from app.agent.runtime.checkpoint_store import RuntimeCheckpointStore
 from app.config import settings
@@ -25,10 +28,13 @@ from app.memory.long_term_memory import LongTermMemory
 
 NODE_STATUS_MAP = {
     "intent_router": ("thinking", "正在理解您的问题..."),
+    "coreference_resolver": ("thinking", "正在解析指代关系..."),
     "query_rewriter": ("reading", "正在补全文并改写查询..."),
+    "query_planner": ("thinking", "正在分析查询复杂度..."),
     "retriever": ("searching", "正在检索相关文档..."),
     "self_correction": ("reading", "正在评估检索质量..."),
     "generator": ("streaming", "正在生成回答..."),
+    "synthesizer": ("streaming", "正在综合分析多维结果..."),
     "critic": ("reading", "正在检查答案与引用..."),
     "compliance": ("searching", "正在检索相关文档..."),
     "summary": ("reading", "正在整理文档摘要..."),
@@ -163,10 +169,13 @@ class LangGraphRuntimeRunner:
     def _build_graph(self, *, checkpointer=None):
         graph = StateGraph(dict)
         graph.add_node("intent_router", self._route_intent)
+        graph.add_node("coreference_resolver", coreference_resolver)
         graph.add_node("query_rewriter", query_rewriter)
+        graph.add_node("query_planner", self._query_planner)
         graph.add_node("retriever", self._retriever)
         graph.add_node("self_correction", self_correction)
         graph.add_node("generator", generator)
+        graph.add_node("synthesizer", synthesizer)
         graph.add_node("critic", self._critic)
         graph.add_node("compliance", self._compliance)
         graph.add_node("summary", self._summary)
@@ -174,16 +183,25 @@ class LangGraphRuntimeRunner:
         graph.add_node("data", self._data)
 
         graph.set_entry_point("intent_router")
-        graph.add_edge("intent_router", "query_rewriter")
+        graph.add_edge("intent_router", "coreference_resolver")
+        graph.add_edge("coreference_resolver", "query_rewriter")
         graph.add_conditional_edges(
             "query_rewriter",
             self._route_after_rewrite,
             {
-                "retriever": "retriever",
+                "query_planner": "query_planner",
                 "compliance": "compliance",
                 "summary": "summary",
                 "graph": "graph",
                 "data": "data",
+            },
+        )
+        graph.add_conditional_edges(
+            "query_planner",
+            self._route_after_planner,
+            {
+                "retriever": "retriever",
+                "synthesizer": "synthesizer",
             },
         )
         graph.add_edge("retriever", "self_correction")
@@ -196,6 +214,7 @@ class LangGraphRuntimeRunner:
             },
         )
         graph.add_edge("generator", "critic")
+        graph.add_edge("synthesizer", "critic")
         graph.add_edge("compliance", "critic")
         graph.add_edge("summary", "critic")
         graph.add_edge("graph", "critic")
@@ -332,13 +351,20 @@ class LangGraphRuntimeRunner:
         state["selected_agent"] = "data"
         return state
 
+    async def _query_planner(self, state: dict) -> dict:
+        enriched = await query_planner(self._with_runtime_context(state))
+        return self._strip_runtime_context(enriched)
+
     def _node_handler(self, node_name: str):
         return {
             "intent_router": self._route_intent,
+            "coreference_resolver": coreference_resolver,
             "query_rewriter": query_rewriter,
+            "query_planner": self._query_planner,
             "retriever": self._retriever,
             "self_correction": self_correction,
             "generator": generator,
+            "synthesizer": synthesizer,
             "critic": self._critic,
             "compliance": self._compliance,
             "summary": self._summary,
@@ -348,14 +374,22 @@ class LangGraphRuntimeRunner:
 
     def _next_node_after(self, node_name: str, state: dict) -> str | None:
         if node_name == "intent_router":
+            return "coreference_resolver"
+        if node_name == "coreference_resolver":
             return "query_rewriter"
         if node_name == "query_rewriter":
-            return self._route_after_rewrite(state)
+            route = self._route_after_rewrite(state)
+            # query_rewriter 的 "retriever" 路由现在走 query_planner
+            if route == "query_planner":
+                return "query_planner"
+            return route
+        if node_name == "query_planner":
+            return self._route_after_planner(state)
         if node_name == "retriever":
             return "self_correction"
         if node_name == "self_correction":
             return self._route_after_self_correction(state)
-        if node_name in {"generator", "compliance", "summary", "graph", "data"}:
+        if node_name in {"generator", "synthesizer", "compliance", "summary", "graph", "data"}:
             return "critic"
         if node_name == "critic":
             branch = self._route_after_critic(state)
@@ -394,6 +428,12 @@ class LangGraphRuntimeRunner:
             return "graph"
         if intent == "compare":
             return "compliance"
+        return "query_planner"
+
+    def _route_after_planner(self, state: dict) -> str:
+        """条件路由：query_planner 之后，若需要分解走 synthesizer，否则走 retriever。"""
+        if state.get("needs_decomposition"):
+            return "synthesizer"
         return "retriever"
 
     def _route_after_self_correction(self, state: dict) -> str:

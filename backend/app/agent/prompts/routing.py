@@ -1,25 +1,48 @@
-"""Routing prompts for intent classification."""
+"""Routing prompts for intent classification and query rewriting."""
 
-# TODO: [AI_API] Used by Intent Router Node
+INTENT_CLASSIFICATION_PROMPT = """\
+请将以下用户查询分类到最匹配的类别。
 
-INTENT_CLASSIFICATION_PROMPT = """Classify the following user query into one category:
-- qa: Factual questions about company policies/documents
-- statistics: Data analysis, calculations, comparisons with numbers
-- summarize: Requests to summarize or extract key points from documents
-- graph: Questions about relationships between entities across documents
-- tool_call: Requests to check real-time data (leave balance, expense status)
+## 可选类别
 
-User query: {query}
-User profile: {user_profile}
+| 类别 | 说明 | 示例 |
+|------|------|------|
+| qa | 关于企业制度、政策、流程、规定的事实性问题 | "报销流程是什么""请假需要几级审批" |
+| statistics | 需要数据统计、计算、聚合的问题 | "各部门今年提交了多少文档""平均处理时间" |
+| summarize | 要求总结、摘要、提炼要点 | "帮我总结这个制度""这份文件讲了什么" |
+| graph | 关于实体关系、跨文档关联的问题 | "哪些制度和财务相关""这个文件引用了哪些" |
+| compare | 对比两个或多个制度、流程、标准的差异 | "A和B有什么区别""新旧制度对比" |
 
-Category:"""
+## 分类规则
+1. 如果问题同时涉及多个类别，选择最核心的那个
+2. 对比类问题（包含"区别""差异""对比""不同"）优先归为 compare
+3. 明确要求统计数据的归为 statistics
+4. 不确定时默认选择 qa
 
-QUERY_REWRITE_PROMPT = """Given the conversation history and user query, rewrite the query to be self-contained.
-Replace pronouns and references with specific names/documents.
+## 用户查询
+{query}
 
-Conversation history:
+## 用户画像
+{user_profile}
+
+## 分类结果（只输出类别名称）
+"""
+
+QUERY_REWRITE_PROMPT = """\
+你是查询改写专家。请根据对话历史，将用户当前的查询改写为一个自包含的、无歧义的查询。
+
+## 改写规则
+1. 将代词和指代词（"这个""那个""它""上面的"）替换为具体的文档名、制度名或实体名
+2. 保持用户的原始意图不变，不要改变问题的方向
+3. 补充对话上下文中明确提到的限定条件（如部门、时间范围等）
+4. 如果当前查询已经足够明确，保持原样
+5. 只输出改写后的查询，不要添加解释
+
+## 对话历史
 {history}
 
-Current query: {query}
+## 当前查询
+{query}
 
-Rewritten query:"""
+## 改写后的查询
+"""

@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from collections import OrderedDict
 
+from app.agent.prompts.generation import ANSWER_STYLES
+from app.agent.prompts.system import COMPLIANCE_SYSTEM_PROMPT
 from app.services.llm_service import LLMService
 
 LEAVE_ALIAS_MARKERS = ("年假", "请假", "休假")
@@ -77,42 +79,52 @@ class ComplianceAgent:
     async def _try_llm_answer(self, state: dict, query: str, results: list[dict], *, evidence_pack: dict, task_mode: str) -> str | None:
         context_lines = []
         salient_points = evidence_pack.get("salient_points") if isinstance(evidence_pack.get("salient_points"), list) else []
-        source_items = salient_points[:5] if salient_points else results[:5]
+        source_items = salient_points[:8] if salient_points else results[:8]
         for idx, item in enumerate(source_items, start=1):
             title = item.get("document_title") or "未知文档"
             section = item.get("section_title") or "未命名章节"
-            snippet = (item.get("snippet") or "").strip()[:300]
+            snippet = (item.get("snippet") or "").strip()[:500]
             category = item.get("category")
             context_lines.append(f"[证据{idx}] 《{title}》 {section}" + (f" / {category}" if category else "") + f"\n{snippet}")
 
         conversation_state = state.get("conversation_state") if isinstance(state.get("conversation_state"), dict) else {}
 
+        # 获取任务模式对应的回答风格指导
+        answer_style = ANSWER_STYLES.get(task_mode, ANSWER_STYLES.get("qa", ""))
+
+        # 构建重试提示
+        retry_hint = state.get("critic_improvement_hint") or ""
+        retry_section = ""
+        if retry_hint:
+            retry_section = (
+                f"\n## 改进要求（上一次回答被审查退回）\n"
+                f"{retry_hint}\n"
+                f"请针对以上问题重点改进。\n"
+            )
+
         prompt = (
             f"## 用户问题\n{query}\n\n"
             f"## 任务模式\n{task_mode}\n\n"
+            f"## 回答风格要求\n{answer_style}\n\n"
             f"## 对话上下文\n"
             f"主题：{conversation_state.get('subject') or '未识别'}\n"
             f"追问：{'是' if conversation_state.get('is_follow_up') else '否'}\n"
             f"版本：{conversation_state.get('version_scope') or '未指定'}\n\n"
             f"## 文档证据\n{chr(10).join(context_lines)}\n\n"
             "## 回答要求\n"
-            "请用结构化简体中文回答：\n"
-            "1. 先给出简明结论；\n"
-            "2. 再用 2-4 条编号列表展开关键要点；\n"
-            "3. 如果是流程题，要按步骤组织；如果是提取题，要列出字段、条件和边界；\n"
-            "4. 在对应要点后标注引用来源，格式为 [来源: 文档标题]；\n"
-            "5. 不要编造证据之外的信息。"
+            "请按照上述回答风格要求，提供一份专业、详尽、结构化的回答：\n"
+            "1. 结论先行，开篇直接回答核心问题；\n"
+            "2. 每个论点都要有具体的制度条款或文档原文支撑；\n"
+            "3. 深入分析适用条件、例外情况和实务操作要点；\n"
+            "4. 回答篇幅应充实完整，通常不少于 300 字；\n"
+            "5. 不要编造证据之外的信息。\n"
+            f"{retry_section}"
         )
         answer = await LLMService().generate(
-            system_prompt=(
-                "你是企业制度问答助手 DocMind。\n"
-                "请严格依据提供的文档证据回答用户问题。\n"
-                "使用清晰、专业的简体中文，必要时用 Markdown 组织结构。\n"
-                "如果证据不足，要明确说明，不得虚构。"
-            ),
+            system_prompt=COMPLIANCE_SYSTEM_PROMPT,
             user_prompt=prompt,
-            temperature=0.1,
-            max_tokens=800,
+            temperature=0.2,
+            max_tokens=4096,
             tenant_key=str(getattr(state.get("current_user"), "tenant_id", "default") or "default"),
         )
         if self._is_valid_chinese_answer(answer):
