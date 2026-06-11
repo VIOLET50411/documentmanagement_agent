@@ -41,6 +41,15 @@ export function useSSE() {
     const doStream = async (): Promise<void> => {
       try {
         const response = await chatApi.streamChat(message, targetThreadId, modelName)
+
+        // Handle 401 - token expired, force logout
+        if (response.status === 401) {
+          const { useAuthStore } = await import("@/stores/auth")
+          const authStore = useAuthStore()
+          authStore.logout()
+          return
+        }
+
         if (!response.ok || !response.body) throw new Error(`SSE request failed: ${response.status}`)
 
         const reader = response.body.getReader()
