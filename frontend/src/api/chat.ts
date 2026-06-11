@@ -8,6 +8,8 @@ export const chatApi = {
     const authStore = useAuthStore()
     const body = JSON.stringify({ message, thread_id: threadId, selected_model: selectedModel })
     const base = getAbsoluteApiBaseUrl()
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 120_000)
 
     return fetch(`${base}/chat/stream`, {
       method: "POST",
@@ -16,7 +18,8 @@ export const chatApi = {
         Authorization: `Bearer ${authStore.token}`,
       },
       body,
-    })
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeoutId))
   },
 
   async getHistory(threadId: string): Promise<ChatHistoryResponse> {

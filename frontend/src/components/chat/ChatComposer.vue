@@ -66,7 +66,6 @@
               @change="$emit('update:selectedModel', ($event.target as HTMLSelectElement).value)"
             >
               <option value="qwen2.5:1.5b">DocMind Smart 1.0 (1.5B)</option>
-              <option value="qwen2.5:7b">DocMind Smart 1.0 (7B)</option>
             </select>
           </label>
         </div>

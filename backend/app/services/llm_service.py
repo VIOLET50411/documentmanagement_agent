@@ -20,7 +20,7 @@ from app.services.canary_router import in_canary_bucket
 logger = structlog.get_logger("docmind.llm")
 
 REQUEST_MODEL_NAME: ContextVar[str | None] = ContextVar("docmind_request_model_name", default=None)
-ALLOWED_USER_SELECTED_MODELS = {"qwen2.5:1.5b", "qwen2.5:7b"}
+ALLOWED_USER_SELECTED_MODELS = {"qwen2.5:1.5b"}
 
 
 @contextmanager
@@ -49,7 +49,7 @@ class LLMService:
     def __init__(self):
         self.provider = (settings.llm_provider or "ollama").lower()
         self.base_url = (settings.llm_api_base_url or "").rstrip("/")
-        self.model = settings.llm_model_name or "qwen2.5:7b"
+        self.model = settings.llm_model_name or "qwen2.5:1.5b"
         self.api_key = settings.llm_api_key or ""
         self.langfuse = LangfuseObserver()
 
