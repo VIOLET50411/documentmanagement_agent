@@ -27,48 +27,48 @@
       />
 
       <section v-if="section === 'models'" class="settings-panel">
-        <h3>企业模型策略</h3>
+        <h3>AI 模型偏好</h3>
         <div class="status-grid two-col">
           <div class="status-card">
-            <span>企业模型开关</span>
+            <span>企业专属 AI</span>
             <strong>{{ llmDomainConfig?.enterprise_enabled ? "已开启" : "未开启" }}</strong>
-            <small>控制制度、审计、预算等场景是否优先走企业策略。</small>
+            <small>处理专业问题时是否使用企业专属的高级模型。</small>
           </div>
           <div class="status-card">
-            <span>企业模型名称</span>
+            <span>专属模型名称</span>
             <strong>{{ llmDomainConfig?.enterprise_model_name || "-" }}</strong>
-            <small>当前企业文档场景使用的主模型。</small>
+            <small>当前正在使用的核心大模型名称。</small>
           </div>
           <div class="status-card">
-            <span>灰度比例</span>
+            <span>体验测试比例</span>
             <strong>{{ llmDomainConfig?.enterprise_canary_percent ?? 0 }}%</strong>
-            <small>企业策略当前对租户放量的比例。</small>
+            <small>当前有多少比例的用户可以体验到最新模型。</small>
           </div>
           <div class="status-card">
-            <span>最小语料字数</span>
+            <span>最低字数要求</span>
             <strong>{{ llmDomainConfig?.enterprise_corpus_min_chars ?? "-" }}</strong>
-            <small>达到该阈值后，才适合启用企业文档专用策略。</small>
+            <small>文档字数超过多少时，才会激活企业级高级分析。</small>
           </div>
         </div>
       </section>
 
       <section v-if="section === 'models'" class="settings-panel">
-        <h3>检索体检</h3>
+        <h3>搜索健康度</h3>
         <div class="status-grid three-col">
           <div class="status-card">
             <span>当前状态</span>
             <strong>{{ retrievalIntegrity?.healthy ? "状态正常" : "需要处理" }}</strong>
-            <small>按抽样回查评估当前检索链路是否适合高置信回答。</small>
+            <small>评估系统现在能否准确、稳定地搜出答案。</small>
           </div>
           <div class="status-card">
             <span>体检评分</span>
             <strong>{{ retrievalIntegrity?.score ?? "-" }}</strong>
-            <small>综合 ES、Milvus、Graph 的链路完整性结果。</small>
+            <small>整体搜索系统的工作状态综合打分。</small>
           </div>
           <div class="status-card">
-            <span>向量召回率</span>
+            <span>语义理解准确率</span>
             <strong>{{ formatPercent(retrievalIntegrity?.stats?.milvus_sample_recall) }}</strong>
-            <small>向量检索抽样召回表现。</small>
+            <small>AI 根据意思查找文档的准确表现。</small>
           </div>
         </div>
         <ul v-if="retrievalIntegrity?.blockers?.length" class="compact-list">
@@ -80,22 +80,22 @@
       </section>
 
       <section v-if="section === 'runtime'" class="settings-panel">
-        <h3>运行指标</h3>
+        <h3>性能指标</h3>
         <div class="status-grid three-col">
           <div class="status-card">
-            <span>首字返回 P95</span>
+            <span>打字响应时间</span>
             <strong>{{ runtimeMetrics?.summary?.ttft_ms_p95 ?? "-" }} ms</strong>
-            <small>回答开始输出前的等待时间。</small>
+            <small>问完问题后，系统开始输出第一个字的等待时间。</small>
           </div>
           <div class="status-card">
-            <span>完成耗时 P95</span>
+            <span>整体回复耗时</span>
             <strong>{{ runtimeMetrics?.summary?.completion_ms_p95 ?? "-" }} ms</strong>
-            <small>整轮回答结束的耗时。</small>
+            <small>系统完整说完一段话所需要的耗时。</small>
           </div>
           <div class="status-card">
-            <span>断连次数</span>
+            <span>掉线次数</span>
             <strong>{{ runtimeMetrics?.summary?.sse_disconnects ?? 0 }}</strong>
-            <small>最近采样窗口内的连接中断次数。</small>
+            <small>最近一段时间内网络断开连接的次数。</small>
           </div>
           <div class="status-card">
             <span>降级比例</span>
@@ -137,7 +137,7 @@
       </section>
 
       <section v-if="section === 'security'" class="settings-panel">
-        <h3>安全策略状态</h3>
+        <h3>系统安全保护</h3>
         <div class="status-grid three-col">
           <div class="status-card">
             <span>整体级别</span>
@@ -294,19 +294,25 @@ function providerReasonLabel(reason?: string | null) {
 }
 
 .settings-panel {
-  border: none;
-  background: transparent;
-  padding: 0;
-  box-shadow: none;
-  backdrop-filter: none;
-  border-radius: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color-subtle);
+  border-radius: 20px;
+  padding: 24px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.03);
+  backdrop-filter: blur(24px);
   margin-bottom: 32px;
+  transition: box-shadow 0.3s ease, transform 0.3s ease;
+}
+
+.settings-panel:hover {
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.06);
 }
 
 .settings-panel h3 {
-  font-size: 0.95rem;
+  font-size: 1.05rem;
   font-weight: 600;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
+  color: var(--text-primary);
 }
 
 .status-grid {

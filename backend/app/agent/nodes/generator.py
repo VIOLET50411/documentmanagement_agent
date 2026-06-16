@@ -8,6 +8,8 @@ import structlog
 
 from app.agent.prompts.generation import ANSWER_STYLES
 from app.services.llm_service import LLMService
+from langchain_core.callbacks.manager import dispatch_custom_event
+from langchain_core.runnables.config import RunnableConfig
 
 logger = structlog.get_logger("docmind.generator")
 
@@ -26,43 +28,82 @@ GENERATION_SYSTEM_PROMPT = """你是企业文档问答助手 DocMind。请严格
 - 如果证据不足，明确指出缺口"""
 
 
-async def generator(state: dict) -> dict:
-    """Generate final answer from retrieved docs."""
-    retrieved_docs = state.get("retrieved_docs") or []
-    evidence_pack = state.get("evidence_pack") if isinstance(state.get("evidence_pack"), dict) else {}
-    task_mode = str(state.get("task_mode") or "qa")
-    if state.get("answer"):
-        return state
-
-    if not retrieved_docs:
-        state["answer"] = (
-            "## 未找到可用证据\n\n"
-            "当前知识库中没有检索到与该问题直接相关的文档内容。\n\n"
-            "你可以尝试：\n"
-            "1. 换用更具体的关键词后重新提问。\n"
-            "2. 先上传相关制度、流程或说明文档。\n"
-            "3. 指定文档名称、部门名称或业务场景后再问。"
-        )
-        state["citations"] = []
-        state["generation_source"] = "empty"
-        return state
-
-    # Relevance guard: reject clearly irrelevant evidence
-    # 如果已经重试过（degraded），跳过此检查，确保用户能收到回答
-    query = state.get("rewritten_query") or state.get("query") or ""
-    if not state.get("degraded") and _evidence_is_irrelevant(query, retrieved_docs):
+async def _generate_general_knowledge_answer(query: str, state: dict, config: RunnableConfig, reason: str) -> dict:
+    llm = LLMService()
+    if llm.is_rule_only:
+        msg = "当前知识库中没有检索到与该问题直接相关的文档内容。" if reason == "empty" else "当前知识库中检索到的文档与您的问题不直接相关，无法给出准确回答。"
         state["answer"] = (
             "## 未找到相关内容\n\n"
-            "当前知识库中检索到的文档与您的问题不直接相关，无法给出准确回答。\n\n"
+            f"{msg}\n\n"
             "你可以尝试：\n"
             "1. 用更明确的关键词重新描述问题。\n"
             "2. 上传与问题相关的文档后再提问。\n"
             "3. 指定具体的文档名称或业务场景。"
         )
         state["citations"] = []
-        state["generation_source"] = "irrelevant_guard"
-        logger.info("generator.irrelevant_guard", query=query[:60])
+        state["generation_source"] = reason
         return state
+
+    disclaimer = (
+        "> 💡 **提示：** 当前企业知识库中未检索到相关文档依据。\n"
+        "> 以下内容由 AI 助手基于通用知识库生成，不代表企业内部规定，仅供参考。\n\n"
+    )
+    
+    system_prompt = "你是智能问答助手。用户的问题在专属知识库中未找到答案，请你直接根据你的通用知识为用户提供专业、准确的回答。注意：直接回答问题，不要重复说“由于知识库中没有”等废话。"
+    user_prompt = f"问题：{query}"
+
+    answer_parts = [disclaimer]
+    stream_queue = config.get("configurable", {}).get("stream_queue")
+    
+    if stream_queue:
+        stream_queue.put_nowait(("custom", {"name": "llm_stream", "data": {"chunk": disclaimer}}))
+    else:
+        dispatch_custom_event("llm_stream", {"chunk": disclaimer}, config=config)
+
+    try:
+        async for chunk in llm.generate_stream(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.7,
+            max_tokens=2048,
+        ):
+            if chunk:
+                answer_parts.append(chunk)
+                if stream_queue:
+                    stream_queue.put_nowait(("custom", {"name": "llm_stream", "data": {"chunk": chunk}}))
+                else:
+                    dispatch_custom_event("llm_stream", {"chunk": chunk}, config=config)
+                    
+        answer = "".join(answer_parts)
+        state["answer"] = answer.strip()
+        state["citations"] = []
+        state["generation_source"] = "general_knowledge"
+        return state
+    except Exception as exc:
+        logger.warning("generator.general_knowledge_failed", error=str(exc))
+        state["answer"] = disclaimer + "抱歉，生成通用回答时遇到了网络或服务异常，请稍后重试。"
+        state["citations"] = []
+        state["generation_source"] = reason
+        return state
+
+
+async def generator(state: dict, config: RunnableConfig) -> dict:
+    """Generate a final answer using retrieved context and system rules."""
+    retrieved_docs = state.get("retrieved_docs") or []
+    evidence_pack = state.get("evidence_pack") if isinstance(state.get("evidence_pack"), dict) else {}
+    task_mode = str(state.get("task_mode") or "qa")
+    if state.get("answer"):
+        return state
+
+    query = state.get("rewritten_query") or state.get("query") or ""
+
+    if not retrieved_docs:
+        return await _generate_general_knowledge_answer(query, state, config, "empty")
+
+    # Relevance guard: reject clearly irrelevant evidence
+    if _evidence_is_irrelevant(query, retrieved_docs):
+        logger.info("generator.irrelevant_guard", query=query[:60])
+        return await _generate_general_knowledge_answer(query, state, config, "irrelevant_guard")
 
     citations = []
     for item in retrieved_docs[:5]:
@@ -113,13 +154,24 @@ async def generator(state: dict) -> dict:
             # 为回答预留空间，但不超过 2048
             max_tokens = min(2048, max(512, 4096 - estimated_prompt_tokens))
 
-            answer = await llm.generate(
+            answer_parts = []
+            stream_queue = config.get("configurable", {}).get("stream_queue")
+            
+            async for chunk in llm.generate_stream(
                 system_prompt=GENERATION_SYSTEM_PROMPT,
                 user_prompt=user_prompt,
                 temperature=0.3,
                 max_tokens=max_tokens,
-            )
-            if answer and len(answer.strip()) > 10 and _is_valid_chinese(answer) and _passes_task_shape(answer, task_mode):
+            ):
+                if chunk:
+                    answer_parts.append(chunk)
+                    if stream_queue:
+                        stream_queue.put_nowait(("custom", {"name": "llm_stream", "data": {"chunk": chunk}}))
+                    else:
+                        dispatch_custom_event("llm_stream", {"chunk": chunk}, config=config)
+            
+            answer = _strip_repeated_blocks("".join(answer_parts))
+            if answer and len(answer.strip()) > 20 and _is_valid_chinese(answer) and _passes_task_shape(answer, task_mode):
                 state["answer"] = answer.strip()
                 state["generation_source"] = "llm"
                 logger.info("generator.llm_ok", chars=len(state["answer"]), max_tokens=max_tokens)
@@ -136,6 +188,43 @@ async def generator(state: dict) -> dict:
     )
     state["generation_source"] = "rule_fallback"
     return state
+
+
+def _strip_repeated_blocks(text: str, min_block_len: int = 80) -> str:
+    """Detect and remove repeated large blocks of text.
+
+    Small models often repeat entire paragraphs or sections verbatim.
+    This function finds the longest repeated substring >= *min_block_len*
+    characters and truncates the answer right before the second occurrence.
+    """
+    if not text or len(text) < min_block_len * 2:
+        return text
+
+    # Strategy: slide a window of decreasing size to find repeated blocks
+    best_pos = len(text)
+    for block_len in range(len(text) // 2, min_block_len - 1, -20):
+        for start in range(0, len(text) - block_len * 2 + 1, 10):
+            block = text[start : start + block_len]
+            second = text.find(block, start + block_len)
+            if second != -1:
+                # Found a repeat – truncate just before it
+                candidate = second
+                if candidate < best_pos:
+                    best_pos = candidate
+                # No need to check smaller blocks for this start
+                break
+        if best_pos < len(text):
+            break
+
+    if best_pos < len(text):
+        truncated = text[:best_pos].rstrip()
+        # Clean up trailing incomplete markdown
+        if truncated.endswith("##") or truncated.endswith("###"):
+            truncated = truncated.rsplit("\n", 1)[0].rstrip()
+        logger.info("generator.stripped_repeat", original_len=len(text), truncated_len=len(truncated))
+        return truncated
+
+    return text
 
 
 def _is_valid_chinese(text: str) -> bool:
@@ -431,9 +520,13 @@ def _evidence_is_irrelevant(query: str, docs: list[dict]) -> bool:
     if any(kw in query for kw in _GENERATIVE_KEYWORDS):
         return False
 
-    # Extract meaningful (non-stopword) terms from the query
+    raw_terms = re.findall(r"[A-Za-z0-9]{2,}", query)
+    zh_chars = "".join(re.findall(r"[\u4e00-\u9fff]+", query))
+    for i in range(len(zh_chars) - 1):
+        raw_terms.append(zh_chars[i:i+2])
+
     query_terms = [
-        t for t in re.findall(r"[\u4e00-\u9fffA-Za-z0-9]{2,}", query)
+        t for t in raw_terms
         if t not in _STOP_WORDS
     ]
     if not query_terms:
@@ -449,8 +542,8 @@ def _evidence_is_irrelevant(query: str, docs: list[dict]) -> bool:
     overlap = sum(1 for t in query_terms if t in evidence_text)
     overlap_ratio = overlap / len(query_terms) if query_terms else 0
 
-    # If less than 10% of meaningful query terms appear in evidence, it's irrelevant
-    if overlap_ratio < 0.10:
+    # If less than 25% of meaningful query terms appear in evidence, it's irrelevant
+    if overlap_ratio < 0.25:
         logger.info(
             "generator.relevance_check",
             query_terms=query_terms[:10],

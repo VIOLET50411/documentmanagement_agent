@@ -98,9 +98,7 @@ async def query_rewriter(state: dict) -> dict:
         has_ambiguous
         or is_follow_up
         or has_version_follow_up
-        or len(query) < 8
-        or bool(explicit_titles_in_query)
-        or (bool(context_subject) and len(query) < 24)
+        or (bool(context_subject) and len(query) < 15)
     )
 
     llm = LLMService()

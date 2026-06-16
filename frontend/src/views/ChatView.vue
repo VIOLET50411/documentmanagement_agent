@@ -27,7 +27,7 @@
     <section v-else class="conversation-state">
       <div class="conversation-stream" ref="messagesRef">
         <!-- Skeleton loading -->
-        <div v-if="isLoadingHistory" class="skeleton-wrapper">
+        <div v-if="chatStore.isHistoryLoading" class="skeleton-wrapper">
           <div class="skeleton-bubble skeleton-user"><div class="skeleton-line w60"></div></div>
           <div class="skeleton-bubble skeleton-assistant">
             <div class="skeleton-line w90"></div>
@@ -64,18 +64,20 @@
       </transition>
 
       <div class="floating-composer">
-        <ChatComposer
-          ref="convComposerRef"
-          class="hero-composer compact card-shell"
-          v-model="inputMessage"
-          v-model:selected-model="selectedModel"
-          :placeholder="followupPlaceholder"
-          :disabled="chatStore.isStreaming"
-          compact
-          @submit="handleSend"
-        />
+        <div class="floating-composer-inner">
+          <ChatComposer
+            ref="convComposerRef"
+            class="hero-composer compact card-shell"
+            v-model="inputMessage"
+            v-model:selected-model="selectedModel"
+            :placeholder="followupPlaceholder"
+            :disabled="chatStore.isStreaming"
+            compact
+            @submit="handleSend"
+          />
 
-        <p class="footer-note">{{ footerNote }}</p>
+          <p class="footer-note">{{ footerNote }}</p>
+        </div>
       </div>
     </section>
 
@@ -83,7 +85,7 @@
     <transition name="panel-slide">
       <aside v-if="searchPanelOpen" class="search-panel">
         <div class="search-panel-header">
-          <span class="search-panel-title">知识检索</span>
+          <span class="search-panel-title">查资料</span>
           <button class="search-panel-close" @click="searchPanelOpen = false" title="关闭">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>
@@ -92,16 +94,16 @@
         </div>
         <div class="search-panel-body">
           <div class="search-input-row">
-            <input v-model="searchQuery" class="search-input" placeholder="输入关键词检索知识库..." @keydown.enter="doSearch" />
+            <input v-model="searchQuery" class="search-input" placeholder="输入关键词查找资料..." @keydown.enter="doSearch" />
             <select v-model="searchType" class="search-type-select">
-              <option value="hybrid">混合</option>
-              <option value="vector">向量</option>
+              <option value="hybrid">智能综合</option>
+              <option value="vector">语义理解</option>
               <option value="keyword">关键词</option>
-              <option value="graph">图谱</option>
+              <option value="graph">关系图谱</option>
             </select>
-            <button class="search-go-btn" @click="doSearch" :disabled="isSearching || !searchQuery.trim()">检索</button>
+            <button class="search-go-btn" @click="doSearch" :disabled="isSearching || !searchQuery.trim()">查找</button>
           </div>
-          <div v-if="isSearching" class="search-loading">正在检索...</div>
+          <div v-if="isSearching" class="search-loading">正在查找...</div>
           <div v-else-if="searchResults.length" class="search-results">
             <div v-for="(result, idx) in searchResults" :key="idx" class="search-result-card">
               <div class="search-result-head">
@@ -122,7 +124,7 @@
     </transition>
 
     <!-- Search toggle button (fixed) -->
-    <button class="search-toggle-btn" @click="searchPanelOpen = !searchPanelOpen" :class="{ active: searchPanelOpen }" title="知识检索面板">
+    <button class="search-toggle-btn" @click="searchPanelOpen = !searchPanelOpen" :class="{ active: searchPanelOpen }" title="查资料面板">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
       </svg>
@@ -159,7 +161,6 @@ const heroComposerRef = ref<InstanceType<typeof ChatComposer> | null>(null)
 const convComposerRef = ref<InstanceType<typeof ChatComposer> | null>(null)
 const inputMessage = ref("")
 const selectedModel = ref("qwen2.5:1.5b")
-const isLoadingHistory = ref(false)
 const { isAtBottom, scrollToBottom } = useAutoScroll(messagesRef)
 
 // Search panel state
@@ -184,25 +185,13 @@ const quickPrompts = [
 ]
 
 const hasMessages = computed(() => chatStore.messages.length > 0)
-const showHeroState = computed(() => !hasMessages.value)
+const showHeroState = computed(() => !hasMessages.value && !chatStore.isHistoryLoading)
 const lastUserPrompt = computed(() => [...chatStore.messages].reverse().find((msg) => msg.role === "user")?.content || "")
 
 onMounted(async () => {
-  isLoadingHistory.value = true
-  try {
+  if (!chatStore.initialized) {
     await chatStore.initialize({ loadActiveHistory: true })
     await chatStore.ensureActiveSessionLoaded()
-  } finally {
-    isLoadingHistory.value = false
-  }
-})
-
-// Show skeleton when switching sessions
-watch(() => chatStore.activeSessionId, async (newId, oldId) => {
-  if (newId && newId !== oldId && chatStore.messages.length === 0) {
-    isLoadingHistory.value = true
-    await nextTick()
-    setTimeout(() => { isLoadingHistory.value = false }, 300)
   }
 })
 watch(() => chatStore.messages.length, () => {
@@ -255,13 +244,19 @@ function copyMessage(content: string) {
 }
 
 function retryLastPrompt() {
-  if (lastUserPrompt.value && !chatStore.isStreaming) {
+  const promptToRetry = lastUserPrompt.value
+  if (promptToRetry && !chatStore.isStreaming) {
     // Remove the failed assistant message before retrying
     const lastMsg = chatStore.messages[chatStore.messages.length - 1]
     if (lastMsg && lastMsg.role === "assistant") {
       chatStore.removeLastMessage()
+      // Also remove the user message to prevent duplicates, since sendMessage will add it back
+      const prevMsg = chatStore.messages[chatStore.messages.length - 1]
+      if (prevMsg && prevMsg.role === "user") {
+        chatStore.removeLastMessage()
+      }
     }
-    sendMessage(lastUserPrompt.value, chatStore.activeSessionId, selectedModel.value)
+    sendMessage(promptToRetry, chatStore.activeSessionId, selectedModel.value)
   }
 }
 
@@ -324,7 +319,9 @@ function handleGlobalKeydown(e: KeyboardEvent) {
   font-family: var(--font-heading);
   font-weight: 700;
   letter-spacing: -0.03em;
-  background: linear-gradient(135deg, var(--text-primary) 30%, var(--color-primary) 100%);
+  background: linear-gradient(-45deg, var(--color-primary), #d28863, #dfb17d, #b85c3f);
+  background-size: 300% 300%;
+  animation: breathing-gradient 8s ease-in-out infinite;
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -332,6 +329,12 @@ function handleGlobalKeydown(e: KeyboardEvent) {
   align-items: center;
   justify-content: center;
   gap: 12px;
+}
+
+@keyframes breathing-gradient {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
 }
 
 .hero-state {
@@ -433,7 +436,11 @@ function handleGlobalKeydown(e: KeyboardEvent) {
 }
 
 .conversation-state {
-  gap: 16px;
+  gap: 0;
+  min-height: calc(100vh - 120px);
+  display: flex;
+  flex-direction: column;
+  position: relative;
 }
 
 .conversation-stream {
@@ -441,16 +448,38 @@ function handleGlobalKeydown(e: KeyboardEvent) {
   width: 100%;
   margin: 0 auto;
   padding: 28px 0 22px;
+  flex: 1 1 auto;
 }
 
 .floating-composer {
   position: sticky;
   bottom: 0;
-  max-width: 900px;
   width: 100%;
-  margin: 0 auto;
+  padding-top: 32px;
   padding-bottom: 24px;
-  background: linear-gradient(180deg, transparent, var(--bg-app) 24px);
+  z-index: 10;
+  flex-shrink: 0;
+}
+
+.floating-composer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(to bottom, transparent 0%, var(--bg-app) 40%, var(--bg-app) 100%);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  mask-image: linear-gradient(to bottom, transparent 0%, black 40%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 40%);
+  z-index: -1;
+  pointer-events: none;
+}
+
+.floating-composer-inner {
+  max-width: 900px;
+  margin: 0 auto;
 }
 
 .footer-note {

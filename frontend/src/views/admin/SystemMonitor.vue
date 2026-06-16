@@ -18,28 +18,37 @@
       @action="reloadMonitor"
     />
 
-    <div class="card section-card">
+    <div class="card section-card hover-lift">
       <div class="section-header">
         <h2>公开语料导出</h2>
         <div class="action-group">
-          <button class="refresh-btn" @click="exportPublicCorpusAsync" :disabled="state.exportingPublicCorpus">
+          <button class="btn btn-primary btn-sm" @click="exportPublicCorpusAsync" :disabled="state.exportingPublicCorpus">
             {{ state.exportingPublicCorpus ? "导出中..." : "开始导出" }}
           </button>
         </div>
       </div>
-      <div class="filters-grid public-corpus-grid">
-        <input v-model="state.publicCorpusForm.dataset_name" class="input" type="text" placeholder="数据集名称" />
-        <input v-model="state.publicCorpusForm.tenant_id" class="input" type="text" placeholder="租户 ID" />
-        <input v-model.number="state.publicCorpusForm.train_ratio" class="input" type="number" min="0.5" max="0.98" step="0.01" />
+      <div class="form-grid" style="margin-bottom: 24px;">
+        <label class="field" style="display: flex; flex-direction: column; gap: 8px;">
+          <span style="font-size: 0.9rem; color: var(--text-secondary);">数据集名称</span>
+          <input v-model="state.publicCorpusForm.dataset_name" class="input" type="text" placeholder="如 swu_public_docs" />
+        </label>
+        <label class="field" style="display: flex; flex-direction: column; gap: 8px;">
+          <span style="font-size: 0.9rem; color: var(--text-secondary);">目标租户 ID</span>
+          <input v-model="state.publicCorpusForm.tenant_id" class="input" type="text" placeholder="如 public_cold_start" />
+        </label>
+        <label class="field" style="display: flex; flex-direction: column; gap: 8px;">
+          <span style="font-size: 0.9rem; color: var(--text-secondary);">训练集比例</span>
+          <input v-model.number="state.publicCorpusForm.train_ratio" class="input" type="number" min="0.5" max="0.98" step="0.01" />
+        </label>
       </div>
-      <div class="stats-grid pipeline-grid">
-        <div class="stat-card card compact"><span class="stat-value small">{{ state.publicCorpusLatest?.record_count ?? 0 }}</span><span class="stat-label">原始记录数</span></div>
-        <div class="stat-card card compact"><span class="stat-value small">{{ state.publicCorpusLatest?.chunk_count ?? 0 }}</span><span class="stat-label">切分后片段数</span></div>
-        <div class="stat-card card compact"><span class="stat-value small">{{ state.publicCorpusLatest?.training_readiness?.train_records ?? 0 }}</span><span class="stat-label">训练样本数</span></div>
-        <div class="stat-card card compact"><span class="stat-value small">{{ state.publicCorpusLatest?.training_readiness?.ready_for_sft ? "可以训练" : "暂不可训练" }}</span><span class="stat-label">训练准备情况</span></div>
+      <div class="stats-grid pipeline-grid" style="margin-bottom: 24px;">
+        <div class="stat-card card compact hover-lift"><span class="stat-value small">{{ state.publicCorpusLatest?.record_count ?? 0 }}</span><span class="stat-label">原始记录数</span></div>
+        <div class="stat-card card compact hover-lift"><span class="stat-value small">{{ state.publicCorpusLatest?.chunk_count ?? 0 }}</span><span class="stat-label">切分后片段数</span></div>
+        <div class="stat-card card compact hover-lift"><span class="stat-value small">{{ state.publicCorpusLatest?.training_readiness?.train_records ?? 0 }}</span><span class="stat-label">训练样本数</span></div>
+        <div class="stat-card card compact hover-lift"><span class="stat-value small">{{ state.publicCorpusLatest?.training_readiness?.ready_for_sft ? "可以训练" : "暂不可训练" }}</span><span class="stat-label">训练准备情况</span></div>
       </div>
       <ul v-if="state.publicCorpusLatest?.exists" class="list">
-        <li class="list-item stacked">
+        <li class="list-item stacked hover-lift">
           <span class="list-title">最近一次导出</span>
           <span class="list-meta">数据集：{{ state.publicCorpusLatest?.dataset_name || state.publicCorpusForm.dataset_name }}</span>
           <span class="list-meta">导出目录：{{ state.publicCorpusLatest?.export_dir || "-" }}</span>
@@ -51,15 +60,15 @@
       <EmptyState v-else title="当前还没有公开语料导出结果。" />
     </div>
 
-    <div class="card section-card">
+    <div class="card section-card hover-lift">
       <h2>平台准备情况</h2>
       <div class="stats-grid pipeline-grid">
-        <div class="stat-card card compact"><span class="stat-value small">{{ state.readiness?.score ?? "-" }}</span><span class="stat-label">总体评分</span></div>
-        <div class="stat-card card compact"><span class="stat-value small">{{ state.readiness?.ready ? "已就绪" : "未就绪" }}</span><span class="stat-label">当前状态</span></div>
-        <div class="stat-card card compact"><span class="stat-value small">{{ state.readiness?.blockers?.length ?? 0 }}</span><span class="stat-label">阻塞项</span></div>
+        <div class="stat-card card compact hover-lift"><span class="stat-value small">{{ state.readiness?.score ?? "-" }}</span><span class="stat-label">总体评分</span></div>
+        <div class="stat-card card compact hover-lift"><span class="stat-value small">{{ state.readiness?.ready ? "已就绪" : "未就绪" }}</span><span class="stat-label">当前状态</span></div>
+        <div class="stat-card card compact hover-lift"><span class="stat-value small">{{ state.readiness?.blockers?.length ?? 0 }}</span><span class="stat-label">阻塞项</span></div>
       </div>
       <ul v-if="state.readiness?.blockers?.length" class="list">
-        <li v-for="item in state.readiness.blockers" :key="item.id" class="list-item">
+        <li v-for="item in state.readiness.blockers" :key="item.id" class="list-item hover-lift">
           <span class="list-title">{{ blockerLabel(item.id) }}</span>
           <span class="list-meta">{{ item.message }}</span>
         </li>
@@ -67,7 +76,7 @@
       <EmptyState v-else title="当前没有阻塞项，平台可以正常工作。" />
     </div>
 
-    <div class="card section-card">
+    <div class="card section-card hover-lift">
       <div class="section-header">
         <h2>检索健康度</h2>
         <div class="action-group">
@@ -75,13 +84,13 @@
         </div>
       </div>
       <div class="stats-grid pipeline-grid">
-        <div class="stat-card card compact"><span class="stat-value small">{{ state.retrievalIntegrity?.score ?? "-" }}</span><span class="stat-label">健康评分</span></div>
-        <div class="stat-card card compact"><span class="stat-value small">{{ state.retrievalIntegrity?.healthy ? "正常" : "有风险" }}</span><span class="stat-label">当前状态</span></div>
-        <div class="stat-card card compact"><span class="stat-value small">{{ state.retrievalIntegrity?.stats?.sample_size ?? 0 }}</span><span class="stat-label">抽查样本数</span></div>
-        <div class="stat-card card compact"><span class="stat-value small">{{ formatPercent(state.retrievalIntegrity?.stats?.milvus_sample_recall) }}</span><span class="stat-label">向量召回率</span></div>
+        <div class="stat-card card compact hover-lift"><span class="stat-value small">{{ state.retrievalIntegrity?.score ?? "-" }}</span><span class="stat-label">健康评分</span></div>
+        <div class="stat-card card compact hover-lift"><span class="stat-value small">{{ state.retrievalIntegrity?.healthy ? "正常" : "有风险" }}</span><span class="stat-label">当前状态</span></div>
+        <div class="stat-card card compact hover-lift"><span class="stat-value small">{{ state.retrievalIntegrity?.stats?.sample_size ?? 0 }}</span><span class="stat-label">抽查样本数</span></div>
+        <div class="stat-card card compact hover-lift"><span class="stat-value small">{{ formatPercent(state.retrievalIntegrity?.stats?.milvus_sample_recall) }}</span><span class="stat-label">向量召回率</span></div>
       </div>
       <ul v-if="state.retrievalIntegrity?.blockers?.length" class="list">
-        <li v-for="item in state.retrievalIntegrity.blockers" :key="item.id" class="list-item">
+        <li v-for="item in state.retrievalIntegrity.blockers" :key="item.id" class="list-item hover-lift">
           <span class="list-title">{{ blockerLabel(item.id) }}</span>
           <span class="list-meta">{{ item.message }}</span>
         </li>

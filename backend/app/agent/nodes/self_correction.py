@@ -106,8 +106,13 @@ async def self_correction(state: dict) -> dict:
         f"{item.get('document_title', '')} {item.get('section_title', '') or ''} {item.get('snippet', '')}"
         for item in docs[:5]
     )
+    raw_terms = re.findall(r"[A-Za-z0-9]{2,}", query)
+    zh_chars = "".join(re.findall(r"[\u4e00-\u9fff]+", query))
+    for i in range(len(zh_chars) - 1):
+        raw_terms.append(zh_chars[i:i+2])
+
     query_terms = [
-        t for t in re.findall(r"[\u4e00-\u9fffA-Za-z0-9]{2,}", query)
+        t for t in raw_terms
         if t not in _SELF_CORRECTION_STOP_WORDS
     ]
     if not query_terms:

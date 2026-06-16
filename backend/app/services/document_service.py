@@ -167,8 +167,15 @@ class DocumentService:
         rows = await self.db.execute(query.order_by(Document.updated_at.desc()).offset((page - 1) * size).limit(size))
         redis = get_redis()
         documents = []
-        for item in rows.scalars().all():
-            progress = await redis.hgetall(f"doc_progress:{item.id}") if redis is not None else {}
+        items = list(rows.scalars().all())
+        
+        progresses = []
+        if redis is not None and items:
+            progresses = await asyncio.gather(*(redis.hgetall(f"doc_progress:{item.id}") for item in items))
+        else:
+            progresses = [{} for _ in items]
+
+        for item, progress in zip(items, progresses):
             documents.append(
                 {
                     "id": item.id,

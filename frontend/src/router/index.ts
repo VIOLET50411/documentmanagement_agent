@@ -1,30 +1,39 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from "vue-router"
 import { useAuthStore } from "@/stores/auth"
 
+import AppLayout from "@/layouts/AppLayout.vue"
+import LoginView from "@/views/LoginView.vue"
+import ChatView from "@/views/ChatView.vue"
+import TasksView from "@/views/TasksView.vue"
+import DocumentsView from "@/views/DocumentsView.vue"
+import AdminView from "@/views/AdminView.vue"
+import SettingsView from "@/views/SettingsView.vue"
+import NotFoundView from "@/views/NotFoundView.vue"
+
 const routes: RouteRecordRaw[] = [
   {
     path: "/login",
     name: "Login",
-    component: () => import("@/views/LoginView.vue"),
+    component: LoginView,
     meta: { guest: true, title: "登录" },
   },
   {
     path: "/",
-    component: () => import("@/layouts/AppLayout.vue"),
+    component: AppLayout,
     meta: { requiresAuth: true },
     children: [
       { path: "", redirect: "/chat" },
-      { path: "chat", name: "Chat", component: () => import("@/views/ChatView.vue"), meta: { title: "智能问答" } },
-      { path: "tasks", name: "Tasks", component: () => import("@/views/TasksView.vue"), meta: { title: "任务中心", role: "ADMIN" } },
-      { path: "documents", name: "Documents", component: () => import("@/views/DocumentsView.vue"), meta: { title: "文档中心" } },
-      { path: "admin", name: "Admin", component: () => import("@/views/AdminView.vue"), meta: { title: "平台管理", role: "ADMIN" } },
-      { path: "settings", name: "Settings", component: () => import("@/views/SettingsView.vue"), meta: { title: "个人设置" } },
+      { path: "chat", name: "Chat", component: ChatView, meta: { title: "智能问答" } },
+      { path: "tasks", name: "Tasks", component: TasksView, meta: { title: "任务中心", role: "ADMIN" } },
+      { path: "documents", name: "Documents", component: DocumentsView, meta: { title: "文档中心" } },
+      { path: "admin", name: "Admin", component: AdminView, meta: { title: "平台管理", role: "ADMIN" } },
+      { path: "settings", name: "Settings", component: SettingsView, meta: { title: "个人设置" } },
     ],
   },
   {
     path: "/:pathMatch(.*)*",
     name: "NotFound",
-    component: () => import("@/views/NotFoundView.vue"),
+    component: NotFoundView,
     meta: { title: "页面不存在" },
   },
 ]

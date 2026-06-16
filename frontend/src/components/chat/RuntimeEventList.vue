@@ -9,7 +9,7 @@
         <span class="runtime-count">{{ events.length }} {{ stageUnit }}</span>
         <span class="runtime-expand">{{ expanded ? collapseLabel : expandLabel }}</span>
       </div>
-      <p v-if="!expanded" class="runtime-preview">{{ previewText }}</p>
+      <p v-if="!expanded && isStreaming" class="runtime-preview">{{ previewText }}</p>
     </button>
 
     <transition name="runtime-collapse">
@@ -54,10 +54,11 @@ const runningLabel = "\u8fdb\u884c\u4e2d"
 
 const props = defineProps<{
   events: ChatRuntimeEvent[]
+  isStreaming: boolean
 }>()
 
 const expanded = ref(false)
-const activeEvent = computed(() => props.events[props.events.length - 1] ?? null)
+const activeEvent = computed(() => (props.isStreaming ? props.events[props.events.length - 1] ?? null : null))
 
 const previewText = computed(() =>
   props.events

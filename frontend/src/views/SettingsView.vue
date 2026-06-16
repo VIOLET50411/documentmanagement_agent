@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="settings-page">
     <div class="settings-shell">
       <aside class="settings-nav">
@@ -29,16 +29,16 @@
               <div class="form-grid">
                 <label class="field">
                   <span>登录账号</span>
-                  <input class="input" :value="user?.username || ''" readonly />
+                  <input class="input" :value="user?.username || ''" readonly placeholder="-" />
                 </label>
                 <label class="field">
                   <span>显示名称</span>
-                  <input class="input" :value="user?.username || ''" readonly />
+                  <input class="input" :value="user?.username || ''" readonly placeholder="-" />
                 </label>
               </div>
-              <label class="field">
+              <label class="field" style="margin-top: 20px;">
                 <span>部门</span>
-                <input class="input" :value="user?.department || '未设置'" readonly />
+                <input class="input" :value="user?.department || '未设置'" readonly placeholder="未设置" />
               </label>
             </section>
 
@@ -64,8 +64,8 @@
             <div class="toggle-list">
               <div class="toggle-item">
                 <div>
-                  <strong>处理完成通知</strong>
-                  <p>文档入库、索引重建或批处理结束后给出提醒。</p>
+                  <strong>任务完成通知</strong>
+                  <p>当文件上传完毕、整理好或系统处理完时提醒我。</p>
                 </div>
                 <button class="toggle-switch" :class="{ on: notificationsEnabled }" @click="notificationsEnabled = !notificationsEnabled">
                   <span></span>
@@ -97,7 +97,7 @@
               <div class="info-row"><span>角色</span><strong>{{ roleLabel(user?.role) }}</strong></div>
               <div class="info-row"><span>邮箱</span><strong>{{ user?.email || "-" }}</strong></div>
               <div class="info-row"><span>邮箱状态</span><strong>{{ user?.email_verified ? "已验证" : "未验证" }}</strong></div>
-              <div class="info-row"><span>租户 ID</span><strong>{{ user?.tenant_id || "-" }}</strong></div>
+              <div class="info-row"><span>团队编号</span><strong>{{ user?.tenant_id || "-" }}</strong></div>
             </div>
           </section>
         </div>
@@ -130,7 +130,7 @@
             </div>
 
             <label class="field">
-              <span>附加要求</span>
+              <span>默认回答偏好</span>
               <select class="input" v-model="responseRequirement">
                 <option value="default">优先给结论，并附带引用来源</option>
                 <option value="detailed">详细展开，按步骤说明</option>
@@ -264,14 +264,14 @@ const {
 
 const sections = [
   { key: "general", label: "通用", description: "外观、资料与提示" },
-  { key: "account", label: "账号", description: "身份、角色与租户" },
+  { key: "account", label: "账号", description: "身份、角色与团队" },
   { key: "preferences", label: "偏好", description: "回答风格与语言" },
-  { key: "models", label: "模型策略", description: "模型路由与检索体检" },
-  { key: "runtime", label: "运行状态", description: "恢复、断连与后端状态" },
-  { key: "security", label: "安全", description: "策略、审计与异常阻断" },
-  { key: "mobile", label: "移动端", description: "登录、推送与接入就绪度" },
-  { key: "devices", label: "设备", description: "推送登记与状态" },
-  { key: "events", label: "通知", description: "最近推送事件" },
+  { key: "models", label: "AI模型设置", description: "模型与搜索测试" },
+  { key: "runtime", label: "系统状态", description: "恢复、断连与后端状态" },
+  { key: "security", label: "安全设置", description: "策略、审计与异常拦截" },
+  { key: "mobile", label: "手机端登录", description: "登录、推送与准备情况" },
+  { key: "devices", label: "设备管理", description: "推送登记与状态" },
+  { key: "events", label: "消息记录", description: "最近的消息通知" },
 ] as const
 
 type SectionKey = (typeof sections)[number]["key"]
@@ -394,16 +394,16 @@ onMounted(async () => {
 
 .settings-tab {
   width: 100%;
-  border: none;
+  border: 1px solid transparent;
   background: transparent;
-  border-radius: 6px;
-  padding: 10px 14px;
+  border-radius: 12px;
+  padding: 12px 16px;
   text-align: left;
   color: var(--text-primary);
   cursor: pointer;
   display: flex;
   align-items: center;
-  transition: background-color var(--transition-fast), transform var(--transition-fast);
+  transition: all var(--transition-fast) ease;
 }
 
 .settings-tab:active {
@@ -411,16 +411,20 @@ onMounted(async () => {
 }
 
 .settings-tab + .settings-tab {
-  margin-top: 2px;
+  margin-top: 4px;
 }
 
-.settings-tab:hover,
-.settings-tab.active {
+.settings-tab:hover {
   background: var(--bg-surface-hover);
+  backdrop-filter: blur(8px);
 }
 
 .settings-tab.active {
-  font-weight: 500;
+  background: var(--bg-surface);
+  border-color: var(--border-color-subtle);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  backdrop-filter: blur(20px);
+  font-weight: 600;
 }
 
 .settings-tab-title {
@@ -463,19 +467,25 @@ onMounted(async () => {
 }
 
 .settings-panel {
-  border: none;
-  background: transparent;
-  padding: 0;
-  box-shadow: none;
-  backdrop-filter: none;
-  border-radius: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color-subtle);
+  border-radius: 20px;
+  padding: 24px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.03);
+  backdrop-filter: blur(24px);
   margin-bottom: 32px;
+  transition: box-shadow 0.3s ease, transform 0.3s ease;
+}
+
+.settings-panel:hover {
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.06);
 }
 
 .settings-panel h3 {
-  font-size: 0.95rem;
+  font-size: 1.05rem;
   font-weight: 600;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
+  color: var(--text-primary);
 }
 
 .form-grid {
@@ -507,23 +517,30 @@ onMounted(async () => {
 }
 
 .theme-card {
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-color-subtle);
   border-radius: 24px;
-  background: transparent;
-  padding: 14px;
+  background: var(--bg-surface);
+  padding: 16px;
   text-align: left;
   color: var(--text-primary);
   cursor: pointer;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  transition: transform var(--transition-fast), border-color var(--transition-fast), background-color var(--transition-fast);
+  gap: 12px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.02);
 }
 
-.theme-card:hover,
+.theme-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.05);
+  border-color: var(--border-color);
+}
+
 .theme-card.active {
-  border-color: var(--border-color-strong);
-  background: var(--bg-surface-hover);
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  box-shadow: 0 8px 24px rgba(var(--color-primary-rgb), 0.15);
   transform: translateY(-1px);
 }
 

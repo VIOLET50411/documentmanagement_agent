@@ -1,4 +1,4 @@
-﻿"""AgentRuntime v2 engine with SSE-friendly events."""
+"""AgentRuntime v2 engine with SSE-friendly events."""
 
 from __future__ import annotations
 
@@ -86,7 +86,8 @@ class AgentRuntime:
                 max_iterations=2,
             )
             timeout_seconds = max(settings.runtime_stage_timeout_seconds, 5)
-            async with asyncio.timeout(timeout_seconds):
+            loop = asyncio.get_running_loop()
+            async with asyncio.timeout(timeout_seconds) as cm:
                 async for event in graph_runner.astream(
                     {
                         "messages": request.history,
@@ -126,8 +127,12 @@ class AgentRuntime:
                     )
                     await self._persist_event(state.tenant_id, trace_id, runtime_event.as_payload())
                     first_event_sent = True
+                    cm.reschedule(loop.time() + timeout_seconds)
                     yield runtime_event.as_payload()
-        except TimeoutError:
+        except TimeoutError as exc:
+            import structlog
+            logger = structlog.get_logger("docmind.runtime")
+            logger.error("Graph execution timed out", exc_info=exc)
             runtime_error = "runtime_timeout"
             retry_count = 1
             if not first_event_sent:
@@ -160,6 +165,11 @@ class AgentRuntime:
             await self._persist_event(state.tenant_id, trace_id, done_event.as_payload())
             yield done_event.as_payload()
         except Exception as exc:  # pragma: no cover - defensive path
+            import traceback
+            import structlog
+            logger = structlog.get_logger("docmind.runtime")
+            logger.error("Graph execution failed", exc_info=exc)
+            
             runtime_error = str(exc)
             if not first_event_sent:
                 degraded_event = self._event(

@@ -233,19 +233,25 @@ function messageTitle(message: string, fallback: string) {
 }
 
 .settings-panel {
-  border: none;
-  background: transparent;
-  padding: 0;
-  box-shadow: none;
-  backdrop-filter: none;
-  border-radius: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color-subtle);
+  border-radius: 20px;
+  padding: 24px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.03);
+  backdrop-filter: blur(24px);
   margin-bottom: 32px;
+  transition: box-shadow 0.3s ease, transform 0.3s ease;
+}
+
+.settings-panel:hover {
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.06);
 }
 
 .settings-panel h3 {
-  font-size: 0.95rem;
+  font-size: 1.05rem;
   font-weight: 600;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
+  color: var(--text-primary);
 }
 
 .status-grid,

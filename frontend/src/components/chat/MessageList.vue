@@ -1,7 +1,5 @@
 <template>
   <div class="message-list">
-    <RuntimeEventList v-if="runtimeEvents.length" :events="runtimeEvents" />
-
     <div
       v-for="(msg, index) in messages"
       :key="msg.id"
@@ -11,14 +9,20 @@
     >
       <template v-if="visibleSet.has(index) || index >= messages.length - 6">
         <UserMessage v-if="msg.role === 'user'" :message="msg" />
-        <AssistantMessage
-          v-else
-          :message="msg"
-          :is-streaming="isStreaming && index === messages.length - 1"
-          @copy="$emit('copy', $event)"
-          @feedback="(messageId, rating) => $emit('feedback', messageId, rating)"
-          @retry="$emit('retry')"
-        />
+        <template v-else>
+          <RuntimeEventList
+            v-if="index === messages.length - 1 && runtimeEvents.length"
+            :events="runtimeEvents"
+            :is-streaming="isStreaming"
+          />
+          <AssistantMessage
+            :message="msg"
+            :is-streaming="isStreaming && index === messages.length - 1"
+            @copy="$emit('copy', $event)"
+            @feedback="(messageId, rating) => $emit('feedback', messageId, rating)"
+            @retry="$emit('retry')"
+          />
+        </template>
       </template>
       <div v-else class="message-placeholder" :style="{ minHeight: '60px' }"></div>
     </div>

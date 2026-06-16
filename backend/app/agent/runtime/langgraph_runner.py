@@ -145,16 +145,48 @@ class LangGraphRuntimeRunner:
         yield self._done_event(state, agent_fallback="langgraph_runtime_resume", resume_strategy="manual")
 
     async def _run_until_complete(self, graph, initial_input, *, config: dict) -> AsyncIterator[dict]:
+        import asyncio
         pending_input = initial_input
+        stream_queue = asyncio.Queue()
+        config.setdefault("configurable", {})["stream_queue"] = stream_queue
+        
         while True:
-            async for update in graph.astream(pending_input, config=config, stream_mode="updates"):
-                for node_name, node_state in update.items():
-                    if not isinstance(node_state, dict):
-                        continue
-                    yield {
-                        "state": node_state,
-                        "payload": await self._emit_node_event(node_name, node_state),
-                    }
+            # Create a task for running the graph so we can consume the queue concurrently
+            async def run_graph():
+                try:
+                    async for chunk in graph.astream(pending_input, config=config, stream_mode="updates"):
+                        await stream_queue.put(("updates", chunk))
+                except Exception as e:
+                    await stream_queue.put(("error", e))
+                finally:
+                    await stream_queue.put(("done", None))
+            
+            graph_task = asyncio.create_task(run_graph())
+            
+            while True:
+                event_type, event_data = await stream_queue.get()
+                if event_type == "done":
+                    break
+                elif event_type == "error":
+                    raise event_data
+                elif event_type == "custom":
+                    custom_event = event_data
+                    if custom_event.get("name") == "llm_stream":
+                        yield {
+                            "state": {},
+                            "payload": {"status": "streaming", "token": custom_event.get("data", {}).get("chunk", "")}
+                        }
+                elif event_type == "updates":
+                    update = event_data
+                    for node_name, node_state in update.items():
+                        if not isinstance(node_state, dict):
+                            continue
+                        yield {
+                            "state": node_state,
+                            "payload": await self._emit_node_event(node_name, node_state),
+                        }
+            
+            await graph_task
             snapshot = await self._safe_get_state(graph, config)
             if snapshot is None:
                 break

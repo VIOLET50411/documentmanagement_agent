@@ -57,6 +57,7 @@ export const useChatStore = defineStore("chat", () => {
   const historyLoadedSessionId = ref<string | null>(null)
 
   const activeSession = computed(() => sessions.value.find((session) => session.id === activeSessionId.value) ?? null)
+  const isHistoryLoading = computed(() => activeSessionId.value !== historyLoadedSessionId.value)
 
   function canUseStorage() {
     return typeof window !== "undefined" && typeof window.localStorage !== "undefined"
@@ -142,10 +143,14 @@ export const useChatStore = defineStore("chat", () => {
     messages.value = []
     runtimeEvents.value = []
     attachedFiles.value = []
+    historyLoadedSessionId.value = id
     return session
   }
 
   async function setActiveSession(sessionId: string) {
+    // Don't reset if we're currently streaming in this session
+    if (isStreaming.value && activeSessionId.value === sessionId) return
+
     activeSessionId.value = sessionId
     saveActiveSessionId(sessionId)
     messages.value = []
@@ -168,11 +173,7 @@ export const useChatStore = defineStore("chat", () => {
   }
 
   async function deleteSession(sessionId: string) {
-    try {
-      await chatApi.deleteSession(sessionId)
-    } catch {
-      // Keep local state consistent even if backend deletion fails.
-    }
+    // Optimistic: remove from local state immediately for instant UI feedback
     sessions.value = sessions.value.filter((session) => session.id !== sessionId)
     if (activeSessionId.value === sessionId) {
       const nextSessionId = sessions.value[0]?.id || null
@@ -185,6 +186,17 @@ export const useChatStore = defineStore("chat", () => {
         runtimeEvents.value = []
       }
     }
+    // Fire backend deletion in background (don't block UI)
+    chatApi.deleteSession(sessionId).catch(() => {})
+  }
+
+  async function clearAllSessions() {
+    sessions.value = []
+    activeSessionId.value = null
+    saveActiveSessionId(null)
+    messages.value = []
+    runtimeEvents.value = []
+    chatApi.deleteAllSessions().catch(() => {})
   }
 
   function addMessage(message: Omit<ChatMessage, "id" | "timestamp"> & Partial<Pick<ChatMessage, "id" | "timestamp">>) {
@@ -308,23 +320,18 @@ export const useChatStore = defineStore("chat", () => {
     if (initialized.value) return
     try {
       await loadSessions()
-      const storedId = loadStoredActiveSessionId()
-      const firstAvailableId = sessions.value[0]?.id || null
-      const nextSessionId = storedId && sessions.value.some((item) => item.id === storedId) ? storedId : firstAvailableId
-      if (nextSessionId) {
-        activeSessionId.value = nextSessionId
-        saveActiveSessionId(nextSessionId)
+      // Start a new session on launch
+      const firstSession = sessions.value[0]
+      if (firstSession && firstSession.title === DEFAULT_SESSION_TITLE) {
+        // Reuse the existing empty session at the top
+        activeSessionId.value = firstSession.id
+        saveActiveSessionId(firstSession.id)
         if (options.loadActiveHistory) {
-          await setActiveSession(nextSessionId)
-        } else {
-          touchActiveSession()
+          await setActiveSession(firstSession.id)
         }
       } else {
-        activeSessionId.value = null
-        saveActiveSessionId(null)
-        messages.value = []
-        runtimeEvents.value = []
-        historyLoadedSessionId.value = null
+        // Create a new session and activate it
+        createSession()
       }
     } finally {
       initialized.value = true
@@ -335,6 +342,38 @@ export const useChatStore = defineStore("chat", () => {
     if (!activeSessionId.value) return
     if (historyLoadedSessionId.value === activeSessionId.value) return
     await setActiveSession(activeSessionId.value)
+  }
+
+  async function reloadActiveSession() {
+    if (!activeSessionId.value) return
+    if (isStreaming.value) return
+    try {
+      const res = await chatApi.getHistory(activeSessionId.value)
+      const freshMessages = (res.messages || []).map((msg) => ({
+        id: msg.id,
+        role: msg.role,
+        content: msg.content,
+        citations: msg.citations || [],
+        timestamp: msg.created_at,
+      }))
+      // Only replace if backend has non-empty assistant content
+      // that our in-memory state is missing
+      const lastInMemory = messages.value[messages.value.length - 1]
+      const lastFromDb = freshMessages[freshMessages.length - 1]
+      if (
+        lastFromDb &&
+        lastFromDb.role === "assistant" &&
+        lastFromDb.content &&
+        (!lastInMemory || !lastInMemory.content || lastInMemory.content.length < lastFromDb.content.length)
+      ) {
+        messages.value = freshMessages
+      } else if (freshMessages.length > 0 && messages.value.length === 0) {
+        messages.value = freshMessages
+      }
+      historyLoadedSessionId.value = activeSessionId.value
+    } catch {
+      // Silently fail — don't disrupt the user experience
+    }
   }
 
   function clearAttachedFiles() {
@@ -408,12 +447,15 @@ export const useChatStore = defineStore("chat", () => {
     streamStatusMsg,
     initialized,
     activeSession,
+    isHistoryLoading,
     initialize,
     ensureActiveSessionLoaded,
+    reloadActiveSession,
     loadSessions,
     createSession,
     setActiveSession,
     deleteSession,
+    clearAllSessions,
     addMessage,
     updateLastAssistantMessage,
     replaceLastAssistantMessage,

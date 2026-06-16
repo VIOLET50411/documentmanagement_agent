@@ -11,13 +11,13 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.middleware.auth import get_current_user
 from app.api.middleware.rate_limit import rate_limit_check
 from app.config import settings
-from app.dependencies import get_db, get_redis
+from app.dependencies import get_db, get_redis, get_session_factory
 from app.models.db.session import ChatMessage, ChatSession
 from app.models.db.user import User
 from app.models.schemas.chat import ChatRequest, ChatResponse
@@ -359,6 +359,19 @@ async def chat_stream(
     db.add(assistant_message)
     await db.flush()
 
+    # Capture IDs before the dependency-injected session closes
+    _session_id = session.id
+    _assistant_message_id = assistant_message.id
+    _user_id = current_user.id
+    _tenant_id = current_user.tenant_id
+    _user_role = current_user.role
+
+    # Commit the initial messages NOW, before the StreamingResponse runs,
+    # because the `db` session will be closed by FastAPI's dependency cleanup
+    # as soon as this endpoint function returns.
+    db.info["has_writes"] = True
+    await db.commit()
+
     async def event_generator():
         from app.agent.runtime import AgentRuntime, RuntimeRequest
         from app.retrieval.semantic_cache import SemanticCache
@@ -367,6 +380,10 @@ async def chat_stream(
         from app.security.pii_masker import PIIMasker
         from app.security.watermark import Watermarker
         from app.services.dlp_forensics_service import DLPForensicsService
+
+        # Create our own DB session for use inside the generator,
+        # since the injected `db` session is no longer valid here.
+        session_factory = get_session_factory(http_request)
 
         with use_request_model_name(request.selected_model):
             answer_parts: list[str] = []
@@ -379,7 +396,7 @@ async def chat_stream(
             final_fallback_reason: str | None = None
             watermarker = Watermarker()
             cache = SemanticCache(redis_client)
-            audit = SecurityAuditService(redis_client, db)
+            audit = SecurityAuditService(redis_client, None)
 
             async def emit(data: dict) -> str:
                 nonlocal first_event_emitted
@@ -388,7 +405,7 @@ async def chat_stream(
                     first_event_emitted = True
                     latency_ms = int((time.perf_counter() - started_at) * 1000)
                     if redis_client is not None:
-                        key = f"metrics:sse_first_event_ms:{current_user.tenant_id}"
+                        key = f"metrics:sse_first_event_ms:{_tenant_id}"
                         await redis_client.lpush(key, str(latency_ms))
                         await redis_client.ltrim(key, 0, 999)
                         await redis_client.expire(key, 14 * 24 * 3600)
@@ -400,83 +417,122 @@ async def chat_stream(
                 payload.setdefault("source", "chat_api")
                 payload.setdefault("degraded", False)
                 payload.setdefault("fallback_reason", None)
-                await _persist_replay_event(redis_client, current_user.tenant_id, payload)
+                await _persist_replay_event(redis_client, _tenant_id, payload)
                 return _sse_event(payload)
 
             try:
                 yield await emit({"status": "thinking", "msg": "正在接收并校验请求..."})
-                cached = await cache.get(request.message, user_id=current_user.id)
+                cached = await cache.get(request.message, user_id=_user_id)
                 if cached:
                     visible_answer = watermarker.strip(cached["answer"])
                     cached_citations = _dedupe_citations(cached.get("citations", []))
                     yield await emit({"status": "reading", "msg": "命中语义缓存，正在返回结果..."})
                     yield await emit({"status": "streaming", "content": visible_answer, "citations": cached_citations})
-                    assistant_message.content = visible_answer
-                    assistant_message.citations_json = json.dumps(cached_citations, ensure_ascii=False)
-                    assistant_message.agent_used = "cache"
+                    async with session_factory() as gen_db:
+                        await gen_db.execute(
+                            update(ChatMessage)
+                            .where(ChatMessage.id == _assistant_message_id)
+                            .values(
+                                content=visible_answer,
+                                citations_json=json.dumps(cached_citations, ensure_ascii=False),
+                                agent_used="cache"
+                            )
+                        )
+                        await gen_db.commit()
                     yield await emit(
-                        {"status": "done", "citations": cached_citations, "message_id": assistant_message.id, "thread_id": session.id}
+                        {"status": "done", "citations": cached_citations, "message_id": _assistant_message_id, "thread_id": _session_id}
                     )
                     return
 
                 guard_result = await InputGuard().check(request.message)
-                await _audit_guard_decision(
-                    audit,
-                    tenant_id=current_user.tenant_id,
-                    user_id=current_user.id,
-                    trace_id=request_trace_id,
-                    guard_name="input",
-                    target="chat.query",
-                    message=request.message,
-                    guard_result=guard_result,
-                )
+                async with session_factory() as guard_db:
+                    guard_audit = SecurityAuditService(redis_client, guard_db)
+                    await _audit_guard_decision(
+                        guard_audit,
+                        tenant_id=_tenant_id,
+                        user_id=_user_id,
+                        trace_id=request_trace_id,
+                        guard_name="input",
+                        target="chat.query",
+                        message=request.message,
+                        guard_result=guard_result,
+                    )
+                    await guard_db.commit()
                 if not guard_result["safe"]:
-                    assistant_message.content = guard_result["reason"]
-                    assistant_message.agent_used = "input_guard"
+                    async with session_factory() as gen_db:
+                        await gen_db.execute(
+                            update(ChatMessage)
+                            .where(ChatMessage.id == _assistant_message_id)
+                            .values(
+                                content=guard_result["reason"],
+                                agent_used="input_guard"
+                            )
+                        )
+                        await gen_db.commit()
                     yield await emit({"status": "error", "msg": guard_result["reason"]})
-                    yield await emit({"status": "done", "citations": [], "message_id": assistant_message.id, "thread_id": session.id})
+                    yield await emit({"status": "done", "citations": [], "message_id": _assistant_message_id, "thread_id": _session_id})
                     return
 
                 masker = PIIMasker()
                 masked_query, pii_mapping = masker.mask(request.message)
-                history_rows = await db.execute(select(ChatMessage).where(ChatMessage.session_id == session.id).order_by(ChatMessage.created_at.asc()))
-                history_messages = truncate_history(
-                    [_format_history_message(item) for item in history_rows.scalars().all() if item.id != assistant_message.id]
-                )
+
+                # Load history with a fresh session
+                async with session_factory() as hist_db:
+                    history_rows = await hist_db.execute(select(ChatMessage).where(ChatMessage.session_id == _session_id).order_by(ChatMessage.created_at.asc()))
+                    history_messages = truncate_history(
+                        [_format_history_message(item) for item in history_rows.scalars().all() if item.id != _assistant_message_id]
+                    )
 
                 runtime = AgentRuntime(redis_client)
                 runtime_request = RuntimeRequest(
                     query=masked_query,
-                    thread_id=session.id,
+                    thread_id=_session_id,
                     search_type=request.search_type,
-                    user_context={"user_id": current_user.id, "tenant_id": current_user.tenant_id, "role": current_user.role},
+                    user_context={"user_id": _user_id, "tenant_id": _tenant_id, "role": _user_role},
                     history=history_messages,
                 )
                 final_answer = ""
                 final_agent = "agent_runtime_v2"
-                async for event in runtime.run(runtime_request, db=db, current_user=current_user):
-                    if event.get("status") == "done":
-                        request_trace_id = event.get("trace_id", request_trace_id)
-                        final_answer = event.get("answer", "")
-                        citations = _dedupe_citations(event.get("citations", []))
-                        final_agent = event.get("agent_used") or final_agent
-                        final_degraded = bool(event.get("degraded", False))
-                        final_fallback_reason = event.get("fallback_reason")
-                        break
-                    yield await emit(event)
+                has_native_stream = False
+                accumulated_content = ""
+                citations = []
+                final_degraded = False
+                final_fallback_reason = None
+                
+                async with session_factory() as runtime_db:
+                    async for event in runtime.run(runtime_request, db=runtime_db, current_user=current_user):
+                        if event.get("status") == "done":
+                            request_trace_id = event.get("trace_id", request_trace_id)
+                            final_answer = event.get("answer", "")
+                            citations = _dedupe_citations(event.get("citations", []))
+                            final_agent = event.get("agent_used") or final_agent
+                            final_degraded = bool(event.get("degraded", False))
+                            final_fallback_reason = event.get("fallback_reason")
+                            break
+                        if event.get("status") == "streaming":
+                            has_native_stream = True
+                            if "content" in event:
+                                accumulated_content = event["content"]
+                            elif "token" in event:
+                                accumulated_content += event["token"]
+                        yield await emit(event)
 
+                final_answer = final_answer or accumulated_content
                 restored_answer = masker.restore(final_answer, pii_mapping)
                 guarded_output = await OutputGuard().check(restored_answer)
-                await _audit_guard_decision(
-                    audit,
-                    tenant_id=current_user.tenant_id,
-                    user_id=current_user.id,
-                    trace_id=request_trace_id,
-                    guard_name="output",
-                    target="chat.answer",
-                    message=restored_answer,
-                    guard_result=guarded_output,
-                )
+                async with session_factory() as out_audit_db:
+                    out_audit = SecurityAuditService(redis_client, out_audit_db)
+                    await _audit_guard_decision(
+                        out_audit,
+                        tenant_id=_tenant_id,
+                        user_id=_user_id,
+                        trace_id=request_trace_id,
+                        guard_name="output",
+                        target="chat.answer",
+                        message=restored_answer,
+                        guard_result=guarded_output,
+                    )
+                    await out_audit_db.commit()
                 if not guarded_output["safe"]:
                     if guarded_output.get("degraded") and guarded_output.get("mode") == "garbled_detection":
                         from app.agent.nodes.generator import _build_rule_fallback
@@ -489,52 +545,80 @@ async def chat_stream(
                         final_agent = "output_guard"
 
                 answer_to_store = restored_answer
-                if current_user.role in {"ADMIN", "MANAGER"}:
+                if _user_role in {"ADMIN", "MANAGER"}:
                     watermark_timestamp = datetime.now(timezone.utc).isoformat()
-                    fingerprint = watermarker.build_fingerprint(current_user.id, watermark_timestamp)
-                    answer_to_store = watermarker.inject(restored_answer, current_user.id, timestamp=watermark_timestamp)
-                    await DLPForensicsService(redis_client, db).record_issue(
-                        tenant_id=current_user.tenant_id,
-                        user_id=current_user.id,
-                        thread_id=session.id,
-                        message_id=assistant_message.id,
-                        fingerprint=fingerprint,
-                        timestamp=watermark_timestamp,
-                    )
+                    fingerprint = watermarker.build_fingerprint(_user_id, watermark_timestamp)
+                    answer_to_store = watermarker.inject(restored_answer, _user_id, timestamp=watermark_timestamp)
+                    async with session_factory() as dlp_db:
+                        await DLPForensicsService(redis_client, dlp_db).record_issue(
+                            tenant_id=_tenant_id,
+                            user_id=_user_id,
+                            thread_id=_session_id,
+                            message_id=_assistant_message_id,
+                            fingerprint=fingerprint,
+                            timestamp=watermark_timestamp,
+                        )
+                        await dlp_db.commit()
 
-                _PHRASE_BREAKS = set("。，；！？、\n：）】」》")
-                batch: list[str] = []
-                for char in restored_answer:
-                    batch.append(char)
-                    if len(batch) >= 4 or char in _PHRASE_BREAKS:
+                if not has_native_stream or not guarded_output["safe"]:
+                    _PHRASE_BREAKS = set("。，；！？、\n：）】」》")
+                    batch: list[str] = []
+                    for char in answer_to_store:
+                        batch.append(char)
+                        if len(batch) >= 4 or char in _PHRASE_BREAKS:
+                            chunk = "".join(batch)
+                            yield await emit({"status": "streaming", "token": chunk})
+                            await asyncio.sleep(0.02)
+                            batch.clear()
+                    if batch:
                         chunk = "".join(batch)
-                        answer_parts.append(chunk)
                         yield await emit({"status": "streaming", "token": chunk})
-                        await asyncio.sleep(0.02)
-                        batch.clear()
-                if batch:
-                    chunk = "".join(batch)
-                    answer_parts.append(chunk)
-                    yield await emit({"status": "streaming", "token": chunk})
 
-                visible_answer = "".join(answer_parts)
-                assistant_message.content = answer_to_store
-                assistant_message.citations_json = json.dumps(citations, ensure_ascii=False)
-                assistant_message.agent_used = final_agent
+                # Save the final answer to DB with a fresh session
+                async with session_factory() as save_db:
+                    await save_db.execute(
+                        update(ChatMessage)
+                        .where(ChatMessage.id == _assistant_message_id)
+                        .values(
+                            content=answer_to_store,
+                            citations_json=json.dumps(citations, ensure_ascii=False),
+                            agent_used=final_agent
+                        )
+                    )
+                    await save_db.commit()
 
                 if not final_degraded:
                     await cache.put(
                         request.message,
-                        visible_answer,
+                        answer_to_store,
                         citations,
-                        user_id=current_user.id,
+                        user_id=_user_id,
                         degraded=False,
                         fallback_reason=final_fallback_reason,
                         agent_used=final_agent,
                     )
-                yield await emit({"status": "done", "citations": citations, "message_id": assistant_message.id, "thread_id": session.id})
+                yield await emit({"status": "done", "answer": answer_to_store, "citations": citations, "message_id": _assistant_message_id, "thread_id": _session_id})
             except asyncio.CancelledError:
-                await _incr_runtime_counter(redis_client, current_user.tenant_id, "sse_disconnects")
+                await _incr_runtime_counter(redis_client, _tenant_id, "sse_disconnects")
+                # Save partial content if the stream is interrupted
+                partial_answer = final_answer or accumulated_content
+                if partial_answer:
+                    try:
+                        restored_partial = masker.restore(partial_answer, pii_mapping)
+                        async with session_factory() as cancel_db:
+                            await cancel_db.execute(
+                                update(ChatMessage)
+                                .where(ChatMessage.id == _assistant_message_id)
+                                .values(
+                                    content=restored_partial,
+                                    citations_json=json.dumps(citations, ensure_ascii=False),
+                                    agent_used=final_agent
+                                )
+                            )
+                            await cancel_db.commit()
+                    except Exception as e:
+                        import logging
+                        logging.error(f"Failed to save partial message on cancel: {e}")
                 raise
 
     return StreamingResponse(
@@ -617,12 +701,31 @@ async def delete_chat_session(
     if session is None:
         return {"deleted": False, "thread_id": thread_id}
 
-    rows = await db.execute(select(ChatMessage).where(ChatMessage.session_id == thread_id))
-    for message in rows.scalars().all():
-        await db.delete(message)
+    # Bulk delete messages without loading them into memory
+    from sqlalchemy import delete as sa_delete
+    await db.execute(sa_delete(ChatMessage).where(ChatMessage.session_id == thread_id))
     await db.delete(session)
     await db.flush()
     return {"deleted": True, "thread_id": thread_id}
+
+
+@router.delete("/sessions")
+async def delete_all_chat_sessions(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete all chat sessions and messages for the current user."""
+    from sqlalchemy import delete as sa_delete
+    # First, bulk delete all messages for this user's sessions
+    session_ids = select(ChatSession.id).where(ChatSession.user_id == current_user.id)
+    await db.execute(sa_delete(ChatMessage).where(ChatMessage.session_id.in_(session_ids)))
+    # Then bulk delete the sessions
+    await db.execute(sa_delete(ChatSession).where(ChatSession.user_id == current_user.id))
+    
+    # Explicitly commit the transaction to ensure changes are saved
+    await db.commit()
+    db.info["has_writes"] = True
+    return {"deleted": True}
 
 
 @router.post("/feedback")

@@ -23,7 +23,7 @@ class CriticAgent:
         # 如果 generator 已经给出了「未找到」的模板回答，直接放行
         # 不再做 LLM 审查和重试，避免无意义循环
         generation_source = state.get("generation_source") or ""
-        if generation_source in ("irrelevant_guard", "empty"):
+        if generation_source in ("irrelevant_guard", "empty", "general_knowledge"):
             state["critic_approved"] = True
             state["critic_source"] = "passthrough"
             return state

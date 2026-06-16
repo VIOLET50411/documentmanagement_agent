@@ -23,7 +23,11 @@ export const chatApi = {
   },
 
   async getHistory(threadId: string): Promise<ChatHistoryResponse> {
-    return chatHistorySchema.parse(await apiGet<ChatHistoryResponse>("/chat/history", { params: { thread_id: threadId } }))
+    return chatHistorySchema.parse(
+      await apiGet<ChatHistoryResponse>("/chat/history", { 
+        params: { thread_id: threadId, _t: Date.now() } 
+      })
+    )
   },
 
   async getSessions(): Promise<ChatSessionListResponse> {
@@ -32,6 +36,10 @@ export const chatApi = {
 
   async deleteSession(threadId: string) {
     return apiDelete(`/chat/sessions/${threadId}`)
+  },
+
+  async deleteAllSessions() {
+    return apiDelete("/chat/sessions")
   },
 
   submitFeedback(messageId: string, rating: number, correction: string | null = null) {

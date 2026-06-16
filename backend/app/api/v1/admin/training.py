@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -150,7 +151,7 @@ async def get_latest_public_corpus_export(
 
     dataset_root = PUBLIC_DATASETS_DIR / dataset_name
     service = PublicCorpusService(dataset_root if dataset_root.exists() else PUBLIC_DATASETS_DIR)
-    summary = service.latest_export_summary(REPORTS_DIR, tenant_id=tenant_id)
+    summary = await asyncio.to_thread(service.latest_export_summary, REPORTS_DIR, tenant_id=tenant_id)
     summary["dataset_name"] = dataset_name
     summary["requested_by"] = current_user.id
     return summary

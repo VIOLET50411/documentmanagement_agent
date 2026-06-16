@@ -315,15 +315,39 @@ function parseStructuredAnswer(content: string): StructuredAnswer {
 
 function normalizeAnswerContent(content: string) {
   if (!content) return ""
-  return content
+  content = content
     .replace(/\r\n/g, "\n")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/([。；：])\s*(\d+\.\s*)/g, "$1\n$2")
     .replace(/([。；：])\s*(-\s+)/g, "$1\n$2")
-    .replace(/(?<!\n)(所需材料：|办理条件：|时间要求：|关键依据：|提取字段|提示：|待确认事项：|建议追问：)/g, "\n$1")
+    .replace(/(?<!\n)(所需材料：|办理条件：|时间要求：|关键依据：|提取字段|待确认事项：|建议追问：)/g, "\n$1")
     .replace(/(\d+\.\s*[^\n]+?)\s+(?=\d+\.\s)/g, "$1\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim()
+
+  let counter = 0
+  let inList = false
+  content = content
+    .split("\n")
+    .map((line) => {
+      if (/^\d+\.\s/.test(line)) {
+        if (!inList) {
+          counter = 1
+          inList = true
+        } else {
+          counter++
+        }
+        return line.replace(/^\d+/, String(counter))
+      } else if (line.trim() === "" || /^\s/.test(line) || /^[-*]\s/.test(line)) {
+        return line
+      } else {
+        inList = false
+        return line
+      }
+    })
+    .join("\n")
+
+  return content
 }
 
 function normalizeEvidenceSnippet(content: string) {

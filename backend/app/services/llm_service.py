@@ -140,7 +140,7 @@ class LLMService:
             self.langfuse.flush()
             return output
         except (httpx.HTTPError, OSError, RuntimeError, TypeError, ValueError) as exc:
-            logger.warning("llm.generate_failed", error=str(exc), provider=target["provider"], model=target["model"], profile=target["profile"])
+            logger.warning("llm.generate_failed", error=str(exc) or type(exc).__name__, provider=target["provider"], model=target["model"], profile=target["profile"])
             self.__class__._circuit_open_until[str(target["model"])] = time.monotonic() + self._CIRCUIT_COOLDOWN_SECONDS
             span.fail(error=str(exc), metadata={"status": "error", "profile": target["profile"]})
             self.langfuse.flush()
@@ -185,6 +185,8 @@ class LLMService:
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
+            "presence_penalty": 0.3,
+            "frequency_penalty": 0.3,
             "stream": True,
         }
         span = self.langfuse.start_generation(
@@ -240,9 +242,11 @@ class LLMService:
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
+            "presence_penalty": 0.3,
+            "frequency_penalty": 0.3,
             "stream": False,
         }
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(90.0, connect=10.0)) as client:
             resp = await client.post(str(target["base_url"]) + "/chat/completions", json=payload, headers=self._headers(str(target["api_key"])))
             resp.raise_for_status()
             data = resp.json()

@@ -48,10 +48,9 @@ _COMPLEX_KEYWORDS = (
 
 
 def _is_complex_query(query: str) -> bool:
-    """判断查询是否为复杂查询（可能需要分解）。"""
-    if any(keyword in query for keyword in _COMPLEX_KEYWORDS):
-        return True
-    if _MULTI_SUBJECT_PATTERN.search(query):
+    """粗略判断是否需要调用大模型进行意图规划。"""
+    keywords = ["对比", "差异", "区别", "哪些情况", "分别", "不同版本", "适用范围", "条件", "比较"]
+    if any(k in query for k in keywords) or len(query) > 50:
         return True
     return False
 

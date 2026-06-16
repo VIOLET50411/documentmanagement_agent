@@ -18,7 +18,8 @@ SYNTHESIS_SYSTEM_PROMPT = """你是企业文档问答助手 DocMind 的综合分
 5. 分主题展开时，每个主题独立成段且信息完整。
 6. 不要在回答末尾单独输出"引用依据""参考文档"或来源清单。
 7. 确保回答完整、准确、逻辑清晰。
-8. 使用通顺自然的中文表达。"""
+8. **绝对不要**输出两遍相同的内容，一旦总结完成立即停止生成。
+9. 使用通顺自然的中文表达。"""
 
 # ── 策略 prompt 模板 ──
 _STRATEGY_PROMPTS = {
@@ -161,7 +162,9 @@ def _merge_citations(sub_results: list[dict]) -> list[dict]:
     return citations[:10]
 
 
-async def synthesizer(state: dict) -> dict:
+from langchain_core.runnables.config import RunnableConfig
+
+async def synthesizer(state: dict, config: RunnableConfig) -> dict:
     """合成器节点：合并多个子查询的检索结果生成最终回答。"""
     sub_results = state.get("sub_results") or []
     strategy = state.get("synthesis_strategy") or "merge"
@@ -184,14 +187,26 @@ async def synthesizer(state: dict) -> dict:
     # 尝试 LLM 合成
     llm = LLMService()
     if not llm.is_rule_only:
+        from langchain_core.callbacks.manager import dispatch_custom_event
         try:
             user_prompt = _build_synthesis_prompt(query, sub_results, strategy)
-            answer = await llm.generate(
+            answer_parts = []
+            stream_queue = config.get("configurable", {}).get("stream_queue")
+            
+            async for chunk in llm.generate_stream(
                 system_prompt=SYNTHESIS_SYSTEM_PROMPT,
                 user_prompt=user_prompt,
-                temperature=0.2,
-                max_tokens=4096,
-            )
+                temperature=0.3,
+                max_tokens=2048,
+            ):
+                if chunk:
+                    answer_parts.append(chunk)
+                    if stream_queue:
+                        stream_queue.put_nowait(("custom", {"name": "llm_stream", "data": {"chunk": chunk}}))
+                    else:
+                        dispatch_custom_event("llm_stream", {"chunk": chunk}, config=config)
+            
+            answer = "".join(answer_parts)
             if answer and len(answer.strip()) > 20:
                 state["answer"] = answer.strip()
                 state["synthesis_source"] = "llm"

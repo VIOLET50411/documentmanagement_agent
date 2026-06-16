@@ -29,7 +29,7 @@
         <span class="stat-value">{{ processingCount }}</span><span class="stat-label">处理中</span>
       </div>
       <div class="stat-card card">
-        <span class="stat-value">{{ failedCount }}</span><span class="stat-label">异常与失败</span>
+        <span class="stat-value">{{ failedCount }}</span><span class="stat-label">遇到问题</span>
       </div>
     </div>
 
@@ -46,7 +46,7 @@
           <button class="chip" :class="{ active: filters.status === '' }" @click="setStatusFilter('')">全部</button>
           <button class="chip" :class="{ active: filters.status === 'ready' }" @click="setStatusFilter('ready')">已完成</button>
           <button class="chip" :class="{ active: filters.status === 'processing' }" @click="setStatusFilter('processing')">处理中</button>
-          <button class="chip" :class="{ active: filters.status === 'failed' }" @click="setStatusFilter('failed')">异常</button>
+          <button class="chip" :class="{ active: filters.status === 'failed' }" @click="setStatusFilter('failed')">遇到问题</button>
         </div>
 
         <select v-model="filters.file_type" class="input" @change="fetchDocuments" style="max-width: 140px;">
@@ -68,16 +68,16 @@
 
         <select v-model="filters.sortBy" class="input" @change="fetchDocuments" style="max-width: 180px;">
           <option value="latest">按最近上传</option>
-          <option value="failed_first">异常优先</option>
+          <option value="failed_first">优先看问题</option>
           <option value="processing_first">处理中优先</option>
         </select>
       </div>
 
       <div class="bulk-actions" v-if="selectedDocIds.length > 0">
         <div class="selection-badge">已选择 {{ selectedDocIds.length }} 项</div>
-        <button class="btn btn-secondary btn-sm" @click="bulkRetry">批量重试</button>
-        <button class="btn btn-secondary btn-sm" @click="bulkCheckStatus">状态同步</button>
-        <button class="btn btn-secondary btn-sm btn-danger-ghost" @click="bulkDelete">批量删除</button>
+        <button class="btn btn-secondary btn-sm" @click="bulkRetry">全部重试</button>
+        <button class="btn btn-secondary btn-sm" @click="bulkCheckStatus">刷新状态</button>
+        <button class="btn btn-secondary btn-sm btn-danger-ghost" @click="bulkDelete">全部删除</button>
       </div>
     </div>
 
@@ -110,9 +110,23 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-if="loading">
-            <td colspan="8" class="empty-table">加载中...</td>
-          </tr>
+          <template v-if="loading">
+            <tr v-for="i in 5" :key="i">
+              <td><div class="skeleton skeleton-text" style="width: 18px; height: 18px; margin: 0"></div></td>
+              <td>
+                <div style="display: flex; gap: 10px; align-items: center">
+                  <div class="skeleton" style="width: 42px; height: 42px; border-radius: 14px"></div>
+                  <div class="skeleton skeleton-text short" style="margin: 0"></div>
+                </div>
+              </td>
+              <td><div class="skeleton skeleton-text" style="width: 60px; margin: 0"></div></td>
+              <td><div class="skeleton skeleton-text" style="width: 80px; margin: 0"></div></td>
+              <td><div class="skeleton skeleton-text" style="width: 60px; margin: 0; border-radius: 12px"></div></td>
+              <td><div class="skeleton skeleton-text" style="width: 40px; margin: 0"></div></td>
+              <td><div class="skeleton skeleton-text" style="width: 120px; margin: 0"></div></td>
+              <td><div class="skeleton skeleton-text" style="width: 80px; margin: 0"></div></td>
+            </tr>
+          </template>
           <tr v-else-if="filteredAndSortedDocuments.length === 0">
             <td colspan="8" class="empty-table">暂无文档，先上传一个文件开始处理。</td>
           </tr>
@@ -150,7 +164,7 @@
               >
                 重试
               </button>
-              <button v-if="doc.status === 'ready'" class="btn btn-ghost btn-sm" @click="$router.push('/chat')">问答测试</button>
+              <button v-if="doc.status === 'ready'" class="btn btn-ghost btn-sm" @click="$router.push('/chat')">去提问</button>
             </td>
           </tr>
         </tbody>
@@ -201,7 +215,7 @@
             </div>
 
             <div v-if="batchFailures.length" class="structured-failures">
-              <h5>批次失败详情</h5>
+              <h5>失败原因详情</h5>
               <ul>
                 <li v-for="(err, idx) in batchFailures" :key="idx">{{ err }}</li>
               </ul>
@@ -209,7 +223,7 @@
           </div>
 
           <div class="detail-block" v-if="selectedEvents.length">
-            <h4>执行追踪（Trace）</h4>
+            <h4>处理过程记录</h4>
             <ul class="event-list">
               <li v-for="(event, index) in selectedEvents" :key="index">
                 <strong>{{ progressLabel(event.status) }}</strong>
@@ -224,8 +238,8 @@
           <button class="btn btn-secondary" :disabled="openingOriginalDocId === selectedDocForDetails.id" @click="openOriginalDocument(selectedDocForDetails)">
             {{ openingOriginalDocId === selectedDocForDetails.id ? "打开中..." : "查看原文" }}
           </button>
-          <button v-if="selectedDocStatus === 'ready'" class="btn btn-primary" @click="$router.push('/search')">去检索验证</button>
-          <button v-if="['failed', 'partial_failed'].includes(selectedDocStatus)" class="btn btn-secondary" @click="retryDoc(selectedDocForDetails.id)">重试处理</button>
+          <button v-if="selectedDocStatus === 'ready'" class="btn btn-primary" @click="$router.push('/search')">去搜一搜测试</button>
+          <button v-if="['failed', 'partial_failed'].includes(selectedDocStatus)" class="btn btn-secondary" @click="retryDoc(selectedDocForDetails.id)">再试一次</button>
         </div>
       </div>
     </aside>
@@ -609,6 +623,19 @@ function extractBatchFailures(events: DocEvent[], errorMessage: string) {
 </script>
 
 <style scoped>
+.card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color-subtle);
+  border-radius: 20px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.03);
+  backdrop-filter: blur(24px);
+  transition: box-shadow 0.3s ease, transform 0.3s ease;
+}
+
+.card:hover {
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.06);
+}
+
 .workbench-page {
   padding: 0 12px 12px;
   overflow-y: auto;
@@ -884,9 +911,9 @@ input[type="checkbox"]:checked::after {
   height: 100vh;
   background: var(--bg-body);
   border-left: 1px solid var(--border-color);
-  box-shadow: -10px 0 30px rgba(0, 0, 0, 0.1);
+  box-shadow: -10px 0 40px rgba(0, 0, 0, 0.08);
   z-index: 50;
-  transition: right 300ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: right 400ms cubic-bezier(0.16, 1, 0.3, 1);
   display: flex;
   flex-direction: column;
 }

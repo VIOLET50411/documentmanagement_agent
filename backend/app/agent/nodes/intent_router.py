@@ -1,4 +1,4 @@
-﻿"""Deterministic intent router for runtime graph execution."""
+"""Deterministic intent router for runtime graph execution."""
 
 from __future__ import annotations
 
@@ -120,6 +120,6 @@ def _derive_task_mode(query: str, intent: str) -> str:
         return "draft"
     if any(token in normalized for token in ("流程", "步骤", "怎么走", "如何办理", "审批链", "链路")):
         return "process"
-    if any(token in normalized for token in ("材料", "条件", "金额", "标准", "负责人", "依据", "适用范围")):
+    if any(token in normalized for token in ("提取", "抽取", "抓取", "结构化提取")):
         return "extract"
     return "qa"

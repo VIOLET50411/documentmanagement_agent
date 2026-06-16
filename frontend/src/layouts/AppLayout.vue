@@ -15,7 +15,7 @@
               <line x1="9" y1="3" x2="9" y2="21"></line>
             </svg>
           </button>
-          <button class="brand-button" @click="$router.push('/chat')">
+          <button class="brand-button" @click="startNewChat">
             <div class="brand-copy">
               <span class="brand-text">DocMind</span>
               <span class="brand-subtitle">企业文档平台</span>
@@ -41,8 +41,11 @@
 
         <section class="sidebar-section">
           <div class="section-head">
-            <p>最近会话</p>
-            <button class="section-link" @click="startNewChat">新建</button>
+            <p>最近对话</p>
+            <div style="display: flex; gap: 8px;">
+              <button class="section-link" @click="startNewChat">新建</button>
+              <button v-if="chatStore.sessions.some(s => s.id !== 'new')" class="section-link danger-link" @click="confirmClearAll" style="color: var(--danger-color, #ef4444);">清空</button>
+            </div>
           </div>
           <div class="recent-list">
             <div
@@ -75,7 +78,7 @@
               <button
                 class="delete-session-btn"
                 @click.stop="chatStore.deleteSession(session.id)"
-                title="删除会话"
+                title="删除对话"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <polyline points="3 6 5 6 21 6"></polyline>
@@ -83,7 +86,7 @@
                 </svg>
               </button>
             </div>
-            <p v-if="recentSessions.length === 0" class="empty-copy">还没有历史会话</p>
+            <p v-if="recentSessions.length === 0" class="empty-copy">还没有历史对话</p>
           </div>
 
           <!-- Context menu -->
@@ -92,7 +95,7 @@
               <div v-if="ctxMenuOpen" class="session-ctx-menu" :style="ctxMenuStyle" @click.stop>
                 <button class="ctx-item" @click="startRename">✏️ 重命名</button>
                 <button class="ctx-item" @click="doTogglePin">{{ ctxSession?.pinned ? '📌 取消置顶' : '📌 置顶' }}</button>
-                <button class="ctx-item" @click="doExport">📥 导出 Markdown</button>
+                <button class="ctx-item" @click="doExport">📥 导出文字记录</button>
                 <button class="ctx-item danger" @click="doCtxDelete">🗑️ 删除</button>
               </div>
             </transition>
@@ -242,13 +245,14 @@ const pageTitle = computed(() => {
 })
 
 watch(
-  () => ({ name: route.name, messageCount: chatStore.messages.length }),
-  ({ name, messageCount }) => {
-    if (name === 'Chat' && messageCount > 0) {
+  () => chatStore.messages.length,
+  (newLen, oldLen) => {
+    // Only auto-close when a NEW message arrives on the Chat page,
+    // not whenever messages already exist (which fights manual open).
+    if (route.name === 'Chat' && newLen > (oldLen ?? 0)) {
       isSidebarOpen.value = false
     }
   },
-  { immediate: true },
 )
 
 watch(
@@ -277,6 +281,9 @@ function handleNav(item: NavItem) {
   }
   if (item.route) {
     router.push(item.route)
+    if (window.innerWidth <= 1024) {
+      isSidebarOpen.value = false
+    }
   }
 }
 
@@ -363,7 +370,11 @@ function doCtxDelete() {
   closeContextMenu()
 }
 
-
+function confirmClearAll() {
+  if (window.confirm("确定要清空所有对话吗？此操作不可恢复。")) {
+    chatStore.clearAllSessions()
+  }
+}
 
 function openSettings(section: string) {
   accountMenuOpen.value = false
@@ -475,6 +486,13 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.sidebar:not(.expanded) .sidebar-top,
+.sidebar:not(.expanded) .sidebar-bottom,
+.sidebar:not(.expanded) .account-trigger {
+  gap: 0;
+  justify-content: center;
 }
 
 .sidebar-toggle {
@@ -615,6 +633,7 @@ onBeforeUnmount(() => {
 .nav-item.icon-only {
   justify-content: center;
   padding: 12px;
+  gap: 0;
 }
 
 .nav-item:hover {
@@ -707,6 +726,14 @@ onBeforeUnmount(() => {
   margin: 0;
   padding: 0;
   pointer-events: none;
+}
+
+.sidebar:not(.expanded) .brand-button {
+  display: none;
+}
+
+.sidebar:not(.expanded) .sidebar-top {
+  justify-content: center;
 }
 
 .sidebar-section {
@@ -823,12 +850,10 @@ onBeforeUnmount(() => {
   transition: all var(--transition-fast);
   border-radius: 6px;
   opacity: 0;
-  pointer-events: none;
 }
 
 .recent-item-wrapper:hover .delete-session-btn {
   opacity: 1;
-  pointer-events: auto;
 }
 
 .delete-session-btn:hover {

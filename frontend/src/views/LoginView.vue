@@ -1,15 +1,11 @@
 <template>
   <div class="login-page">
+    <div class="bg-blob blob-1"></div>
+    <div class="bg-blob blob-2"></div>
+    <div class="bg-blob blob-3"></div>
     <div class="login-container animate-fade-in">
       <div class="login-header">
-        <div class="brand-lockup">
-          <img :src="brandLogoUrl" alt="DocMind 平台标志" class="login-logo" />
-          <div>
-            <p class="brand-eyebrow">DocMind</p>
-            <h1 class="login-logo-text">企业文档管理与智能问答平台</h1>
-          </div>
-        </div>
-        <p class="login-subtitle">统一文档资产、知识检索、运行监控与安全治理。</p>
+        <h1 class="login-hero-title">DocMind</h1>
       </div>
 
       <form class="login-form" @submit.prevent="handleSubmit">
@@ -80,10 +76,6 @@
           <a href="#" class="secondary-link" v-if="mode === 'login'" @click.prevent="switchMode('reset')">忘记密码</a>
         </div>
 
-        <div class="demo-tip" v-if="mode === 'login'">
-          <p>首次进入可使用演示账号：</p>
-          <p><code>admin_demo</code> / <code>Password123</code></p>
-        </div>
       </form>
     </div>
   </div>
@@ -225,61 +217,80 @@ async function sendCode() {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background:
-    radial-gradient(circle at top, rgba(79, 124, 255, 0.08), transparent 38%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.96));
+  background: var(--bg-body);
+  position: relative;
+  overflow: hidden;
+}
+
+.bg-blob {
+  position: absolute;
+  filter: blur(80px);
+  z-index: 0;
+  opacity: 0.5;
+  border-radius: 50%;
+  animation: blob-float 20s infinite alternate ease-in-out;
+  pointer-events: none;
+}
+
+.blob-1 {
+  width: 500px;
+  height: 500px;
+  background: color-mix(in srgb, var(--color-primary) 40%, transparent);
+  top: -100px;
+  left: -100px;
+  animation-delay: 0s;
+}
+
+.blob-2 {
+  width: 400px;
+  height: 400px;
+  background: color-mix(in srgb, var(--color-success) 30%, transparent);
+  bottom: -50px;
+  right: -50px;
+  animation-delay: -5s;
+}
+
+.blob-3 {
+  width: 300px;
+  height: 300px;
+  background: color-mix(in srgb, var(--color-warning) 30%, transparent);
+  top: 40%;
+  left: 60%;
+  animation-delay: -10s;
+}
+
+@keyframes blob-float {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(80px, 40px) scale(1.1); }
+  100% { transform: translate(-40px, 80px) scale(0.9); }
 }
 
 .login-container {
+  position: relative;
+  z-index: 1;
   width: 440px;
   max-width: 100%;
   padding: 40px;
-  background: color-mix(in srgb, var(--bg-surface) 94%, white);
-  border: 1px solid var(--border-color);
-  border-radius: 20px;
-  box-shadow: var(--shadow-lg);
+  background: color-mix(in srgb, var(--bg-surface) 70%, transparent);
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  border: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+  border-radius: 24px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.08);
 }
 
 .login-header {
   margin-bottom: 32px;
 }
 
-.brand-lockup {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.login-logo {
-  width: 64px;
-  height: 64px;
-  object-fit: cover;
-  border-radius: 16px;
-  border: 1px solid var(--border-color-subtle);
-  box-shadow: 0 10px 24px rgba(79, 124, 255, 0.14);
-  flex-shrink: 0;
-}
-
-.brand-eyebrow {
-  margin: 0 0 6px;
-  color: var(--text-secondary);
-  font-size: 0.82rem;
-  font-weight: 600;
-}
-
-.login-logo-text {
+.login-hero-title {
   margin: 0;
-  font-size: 1.85rem;
-  line-height: 1.15;
+  font-size: 2.5rem;
+  line-height: 1.2;
   font-family: var(--font-heading);
-  font-weight: 500;
-}
-
-.login-subtitle {
-  margin: 14px 0 0;
-  color: var(--text-secondary);
-  font-size: 0.95rem;
-  line-height: 1.6;
+  font-weight: 700;
+  text-align: center;
+  color: var(--color-primary);
 }
 
 .login-form {
@@ -336,20 +347,6 @@ async function sendCode() {
 .secondary-link {
   color: var(--text-link);
   text-decoration: none;
-}
-
-.demo-tip {
-  margin-top: 8px;
-  padding: 12px 14px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-color);
-  background: var(--bg-surface-hover);
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.demo-tip code {
-  font-family: var(--font-mono);
 }
 
 @media (max-width: 640px) {

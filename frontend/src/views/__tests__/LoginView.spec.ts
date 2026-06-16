@@ -32,8 +32,7 @@ describe("LoginView", () => {
   it("renders platform logo and subtitle", () => {
     const wrapper = mount(LoginView)
 
-    expect(wrapper.get("img.login-logo").attributes("src")).toBeTruthy()
-    expect(wrapper.text()).toContain("企业文档管理与智能问答平台")
+    expect(wrapper.text()).toContain("DocMind")
   })
 
   it("shows validation feedback through StatusMessage", async () => {
